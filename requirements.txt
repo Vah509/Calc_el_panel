@@ -1,14 +1,2 @@
-fastapi
-uvicorn[standard]
-sqlmodel
-sqlalchemy
-psycopg2-binary
-sqladmin
-weasyprint
-pdfplumber
-pytesseract
-pillow
-python-multipart
-jinja2
-openpyxl
-python-dotenv
+fastapi==0.141.1
+uvicorn[standard]==0.52.1

@@ -1,0 +1,102 @@
+name: Ultimate AI Update Manager (FastAPI + TG)
+
+on:
+  push:
+    paths:
+      - 'ai-updates/**.zip'
+
+jobs:
+  unzip-and-validate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ВАЖНО: этот шаг — причина, почему workflow НЕ зацикливается сам
+      # на себя. Шаг "Commit and Push changes" ниже сам коммитит
+      # удаление ZIP из ai-updates/ — а это тоже изменение по пути
+      # "ai-updates/**.zip", которое снова подпадает под триггер
+      # on.push.paths выше. GitHub Actions запустил бы job ВТОРОЙ раз
+      # на собственный коммит бота. Вместо того чтобы распознавать
+      # "это коммит бота или нет" (не всегда надёжно), проверяем прямой
+      # факт: ЕСТЬ ли в ai-updates/ хоть один .zip файл ПРЯМО СЕЙЧАС,
+      # сразу после checkout. Если нет — все следующие шаги
+      # пропускаются (`if: steps.check-zip.outputs.found == 'true'`),
+      # job завершается быстро и без лишних действий.
+      - name: Check for ZIP archive
+        id: check-zip
+        run: |
+          if ls ai-updates/*.zip >/dev/null 2>&1; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "Архив не найден в ai-updates/ — job завершается без действий."
+          fi
+
+      - name: Setup Python
+        if: steps.check-zip.outputs.found == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup Git user
+        if: steps.check-zip.outputs.found == 'true'
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # Зависимостей у самого process_update.py нет — только стандартная
+      # библиотека Python (zipfile, subprocess, urllib и т.п.), поэтому
+      # отдельный "pip install" для скрипта автозагрузчика не нужен.
+      # requirements.txt появится в репозитории только ПОСЛЕ первой
+      # заливки рабочего архива приложения — pip install зависимостей
+      # ПРИЛОЖЕНИЯ происходит отдельно, ВНУТРИ staging, уже средствами
+      # test_build.py (см. scripts/lib/test_build.py).
+
+      # Главный сценарий: читает список файлов из архива → staging →
+      # тестовая сборка (pip install + uvicorn + /health) → (при
+      # успехе) перенос в реальный репозиторий → два сообщения в
+      # Telegram → удаление ZIP (гарантированно, даже если какой-то
+      # шаг упадёт — см. try/finally внутри process_update.py).
+      # Подробное описание шагов — внутри scripts/process_update.py.
+      - name: Process update (staging, test build, promote)
+        if: steps.check-zip.outputs.found == 'true'
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_TO: ${{ secrets.TELEGRAM_TO }}
+        run: python scripts/process_update.py
+
+      # Коммитим и пушим ВСЕГДА (always), независимо от того, упала
+      # сборка или нет.
+      #
+      # ПОЧЕМУ НЕ success(): process_update.py удаляет ZIP из
+      # ai-updates/ локально, на диске раннера, В ЛЮБОМ СЛУЧАЕ
+      # (try/finally внутри скрипта). Но это удаление — лишь
+      # изменение файловой системы временной машины. Чтобы оно
+      # попало в РЕАЛЬНЫЙ репозиторий на GitHub, его нужно
+      # закоммитить и запушить. Если коммит происходит только при
+      # success() — то при провале сборки (process_update.py
+      # завершается с exit code 1, job считается "не success") коммит
+      # просто НЕ ЗАПУСКАЕТСЯ, и ZIP на GitHub остаётся лежать, будто
+      # ничего не удалялось, хотя локально на раннере его уже нет.
+      #
+      # При success() (сборка прошла) — здесь же коммитится и промоут
+      # файлов проекта, и факт удаления ZIP — всё одним коммитом.
+      # При провале — коммитится ТОЛЬКО удаление ZIP (файлы проекта
+      # не менялись, т.к. promote_to_repo не вызывался при неудачной
+      # сборке).
+      - name: Commit and Push changes
+        if: always()
+        run: |
+          git add .
+          if git diff --staged --quiet; then
+            echo "Изменений нет."
+          else
+            git commit -m "🤖 Авто-обновление проекта"
+            git push origin ${{ github.ref_name }}
+          fi

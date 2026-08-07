@@ -1,0 +1,115 @@
+<div class="modal-backdrop" x-cloak @click.self="modalOpen = false">
+  <div class="modal"
+       x-data="{
+         priceExcl: {{ material.price_excl_vat if material else 0 }},
+         priceIncl: {{ material.price_incl_vat if material else 0 }},
+         vatRate: {{ material.vat_rate if material else 20 }},
+         lastChanged: 'price_excl_vat',
+         onExclChange() {
+           this.lastChanged = 'price_excl_vat';
+           this.priceIncl = Math.round(this.priceExcl * (1 + this.vatRate / 100) * 100) / 100;
+         },
+         onInclChange() {
+           this.lastChanged = 'price_incl_vat';
+           this.priceExcl = Math.round(this.priceIncl / (1 + this.vatRate / 100) * 100) / 100;
+         },
+         onVatChange() {
+           this.onExclChange();
+         }
+       }">
+    <form {% if material %}
+            hx-put="/materials/{{ material.id }}"
+          {% else %}
+            hx-post="/materials"
+          {% endif %}
+          hx-target="body"
+          hx-select="body > *"
+          hx-swap="innerHTML"
+          @submit="modalOpen = false">
+
+      <div class="modal-header">
+        <div>
+          <h2>{{ "Редактирование материала" if material else "Новый материал" }}</h2>
+          {% if material %}<div class="subtitle">{{ material.short_name }}</div>{% endif %}
+        </div>
+        <button type="button" class="modal-close" @click="modalOpen = false">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="field">
+          <label>Short name</label>
+          <input type="text" name="short_name" required
+                 placeholder="ABB S203 C16"
+                 value="{{ material.short_name if material else '' }}">
+          <span class="field-hint">Бренд-код + тип + параметры, через пробел</span>
+        </div>
+
+        <div class="field">
+          <label>Full name</label>
+          <input type="text" name="full_name" required
+                 placeholder="Автоматический выключатель 3P C16 6kA"
+                 value="{{ material.full_name if material else '' }}">
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label>Бренд</label>
+            <select name="brand_id">
+              <option value="">—</option>
+              {% for brand in brands %}
+              <option value="{{ brand.id }}"
+                {% if material and material.brand_id == brand.id %}selected{% endif %}>
+                {{ brand.name }}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label>Артикул производителя</label>
+            <input type="text" name="sku_article"
+                   placeholder="2CDS253001R0164"
+                   value="{{ material.sku_article if material else '' }}">
+          </div>
+        </div>
+
+        <div class="price-pair">
+          <div class="field">
+            <label>Цена без НДС</label>
+            <input type="number" step="0.01" name="price_excl_vat"
+                   x-model.number="priceExcl" @input="onExclChange()">
+          </div>
+          <div class="field">
+            <label>Цена с НДС</label>
+            <input type="number" step="0.01" name="price_incl_vat"
+                   x-model.number="priceIncl" @input="onInclChange()">
+          </div>
+          <div class="field" style="max-width:80px;">
+            <label>Ставка НДС</label>
+            <input type="number" step="0.1" name="vat_rate"
+                   x-model.number="vatRate" @input="onVatChange()">
+          </div>
+        </div>
+        <input type="hidden" name="price_source" x-bind:value="lastChanged">
+        <div class="vat-note">↻ Пересчитывается автоматически при изменении одной из цен — можно переопределить вручную.</div>
+      </div>
+
+      <div class="modal-footer">
+        {% if material %}
+        <button type="button" class="btn btn-danger-ghost"
+                hx-delete="/materials/{{ material.id }}"
+                hx-target="body"
+                hx-select="body > *"
+                hx-swap="innerHTML"
+                hx-confirm="Удалить материал «{{ material.short_name }}»?"
+                @click="modalOpen = false">Удалить</button>
+        {% else %}
+        <span></span>
+        {% endif %}
+        <div class="modal-footer-right">
+          <button type="button" class="btn btn-ghost" @click="modalOpen = false">Отмена</button>
+          <button type="submit" class="btn btn-primary">Сохранить</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>

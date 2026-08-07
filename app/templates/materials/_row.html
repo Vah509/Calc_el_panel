@@ -1,0 +1,40 @@
+<tr id="material-row-{{ material.id }}"
+    hx-get="/materials/{{ material.id }}/edit"
+    hx-target="#modal-slot"
+    hx-swap="innerHTML"
+    @click="modalOpen = true">
+  <td class="col-short">{{ material.short_name }}</td>
+  <td class="col-full">{{ material.full_name }}</td>
+  <td>
+    {% set brand = brands|selectattr("id", "equalto", material.brand_id)|first if brands else None %}
+    {% if material.brand_id %}
+      {% for b in brands %}
+        {% if b.id == material.brand_id %}
+          <span class="brand-badge {% if b.name == 'Universal' %}universal{% endif %}">{{ b.name }}</span>
+        {% endif %}
+      {% endfor %}
+    {% else %}
+      <span style="color:var(--ink-soft);">—</span>
+    {% endif %}
+  </td>
+  <td class="col-num" style="color:var(--ink-soft)">{{ material.sku_article or "—" }}</td>
+  <td class="col-num">{{ "%.2f"|format(material.price_excl_vat) }}</td>
+  <td class="col-num">{{ "%.2f"|format(material.price_incl_vat) }}</td>
+  <td><span class="vat-tag">{{ material.vat_rate|int }}%</span></td>
+  <td>
+    <div class="row-actions">
+      <button class="icon-btn" title="Изменить"
+              hx-get="/materials/{{ material.id }}/edit"
+              hx-target="#modal-slot"
+              hx-swap="innerHTML"
+              @click.stop="modalOpen = true">✎</button>
+      <button class="icon-btn" title="Удалить"
+              hx-delete="/materials/{{ material.id }}"
+              hx-target="body"
+              hx-select="body > *"
+              hx-swap="innerHTML"
+              hx-confirm="Удалить материал «{{ material.short_name }}»?"
+              @click.stop>🗑</button>
+    </div>
+  </td>
+</tr>

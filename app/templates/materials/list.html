@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block content %}
+<div x-data="{ modalOpen: false }" @open-modal.window="modalOpen = true" @close-modal.window="modalOpen = false">
+
+  <div class="topbar">
+    <div class="topbar-title">
+      <h1>Материалы</h1>
+      <span class="count">{{ materials|length }} позиций</span>
+    </div>
+    <div style="display:flex; gap:8px;">
+      <button class="btn">Импорт из Excel</button>
+      <button class="btn btn-primary"
+              hx-get="/materials/new"
+              hx-target="#modal-slot"
+              hx-swap="innerHTML"
+              @click="modalOpen = true">
+        + Материал
+      </button>
+    </div>
+  </div>
+
+  <div class="filterbar">
+    <input class="search-input" type="text" name="q" placeholder="Поиск по short_name или артикулу…"
+           hx-get="/materials"
+           hx-trigger="keyup changed delay:300ms"
+           hx-target="body"
+           hx-select="body > *"
+           hx-swap="innerHTML">
+    <span style="width:1px;height:20px;background:var(--line);margin:0 4px;"></span>
+    <span class="chip active">Все бренды</span>
+    {% for brand in brands %}
+    <span class="chip">{{ brand.name }}</span>
+    {% endfor %}
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:26%">Short name</th>
+          <th style="width:26%">Full name</th>
+          <th>Бренд</th>
+          <th style="width:90px">Артикул</th>
+          <th class="col-num" style="width:100px">Цена без НДС</th>
+          <th class="col-num" style="width:100px">Цена с НДС</th>
+          <th style="width:60px">НДС</th>
+          <th style="width:70px"></th>
+        </tr>
+      </thead>
+      <tbody id="materials-tbody">
+        {% for material in materials %}
+          {% include "materials/_row.html" %}
+        {% else %}
+        <tr>
+          <td colspan="8" style="text-align:center; color:var(--ink-soft); padding:30px;">
+            Материалов пока нет — добавьте первый через кнопку «+ Материал»
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div id="modal-slot"></div>
+
+</div>
+{% endblock %}

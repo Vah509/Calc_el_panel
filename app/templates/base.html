@@ -15,7 +15,21 @@
     if (window.Alpine) {
       window.Alpine.initTree(event.target);
     }
+    if (event.target && event.target.id === 'modal-slot') {
+      window.__modalDirty = false;
+    }
   });
+
+  // Закрытие модалки — НЕ зависит от Alpine. Alpine на мобильных сетях может
+  // ещё не успеть инициализироваться (defer + медленный CDN) к моменту клика,
+  // поэтому крестик/Отмена работают через обычный DOM API напрямую.
+  window.__modalDirty = false;
+  window.__tryCloseModal = function (el) {
+    if (window.__modalDirty && !confirm('Изменения не сохранены. Закрыть без сохранения?')) return;
+    window.__modalDirty = false;
+    const slot = document.getElementById('modal-slot');
+    if (slot) slot.innerHTML = '';
+  };
 </script>
 <link rel="stylesheet" href="/static/style.css">
 </head>

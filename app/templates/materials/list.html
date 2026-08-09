@@ -20,18 +20,23 @@
   <div class="filterbar">
     <div class="search-wrap">
       <input class="search-input" type="text" name="q" id="material-search" placeholder="Поиск по short_name или артикулу…"
-             hx-get="/materials"
+             value="{{ q }}"
+             hx-get="/materials{{ '?brand_id=' + active_brand_id|string if active_brand_id else '' }}"
              hx-trigger="keyup changed delay:300ms"
              hx-target="body"
              hx-select="body > *"
              hx-swap="innerHTML">
       <button type="button" class="search-clear" title="Сбросить поиск"
-              onclick="document.getElementById('material-search').value=''; htmx.trigger('#material-search', 'keyup');">✕</button>
+              onclick="document.getElementById('material-search').value=''; htmx.ajax('GET', '/materials{{ '?brand_id=' + active_brand_id|string if active_brand_id else '' }}', {target: 'body', select: 'body > *', swap: 'innerHTML'});">✕</button>
     </div>
     <span style="width:1px;height:20px;background:var(--line);margin:0 4px;"></span>
-    <span class="chip active">Все бренды</span>
+    <span class="chip {{ 'active' if not active_brand_id else '' }}"
+          hx-get="/materials{{ '?q=' + q if q else '' }}"
+          hx-target="body" hx-select="body > *" hx-swap="innerHTML">Все бренды</span>
     {% for brand in brands %}
-    <span class="chip">{{ brand.name }}</span>
+    <span class="chip {{ 'active' if active_brand_id == brand.id else '' }}"
+          hx-get="/materials?brand_id={{ brand.id }}{{ '&q=' + q if q else '' }}"
+          hx-target="body" hx-select="body > *" hx-swap="innerHTML">{{ brand.name }}</span>
     {% endfor %}
   </div>
 

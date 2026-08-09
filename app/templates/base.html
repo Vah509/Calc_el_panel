@@ -5,7 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{% block title %}ЭлектроЩит — Учёт калькуляций{% endblock %}</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/htmx/1.9.10/htmx.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.13.5/cdn.min.js" defer></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.13.5/cdn.min.js"></script>
+<script>
+  // HTMX подменяет часть DOM динамически (модалки, обновлённые списки).
+  // Alpine сам инициализирует только то, что было в HTML при первой загрузке страницы —
+  // всё, что HTMX вставляет ПОСЛЕ этого, нужно инициализировать вручную,
+  // иначе x-data/x-model/@click в новой разметке останутся "мёртвыми".
+  document.body.addEventListener('htmx:afterSwap', (event) => {
+    if (window.Alpine) {
+      window.Alpine.initTree(event.target);
+    }
+  });
+</script>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>

@@ -16,7 +16,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from sqlmodel import Session, select
+from sqlmodel import Session, select, func
 
 from app.database import get_session
 from app.models.material import Material
@@ -56,7 +56,13 @@ def list_materials(
 ):
     statement = select(Material)
     if q:
-        statement = statement.where(Material.short_name.contains(q))
+        # Регистронезависимый поиск: приводим и колонку, и запрос к нижнему регистру.
+        # Ищем и по short_name, и по артикулу — так поле поиска работает для обоих случаев.
+        q_lower = q.lower()
+        statement = statement.where(
+            func.lower(Material.short_name).contains(q_lower)
+            | func.lower(Material.sku_article).contains(q_lower)
+        )
     if brand_id:
         statement = statement.where(Material.brand_id == brand_id)
 
@@ -66,7 +72,7 @@ def list_materials(
     return templates.TemplateResponse(
         request,
         "materials/list.html",
-        {"materials": materials, "brands": brands},
+        {"materials": materials, "brands": brands, "active_brand_id": brand_id, "q": q or ""},
     )
 
 

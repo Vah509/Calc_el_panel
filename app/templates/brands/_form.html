@@ -1,0 +1,45 @@
+<div class="modal-backdrop"
+     x-data="{
+       initial: '{{ brand.name if brand else '' }}',
+       current: '{{ brand.name if brand else '' }}',
+       isDirty() { return this.current !== this.initial; },
+       tryClose() {
+         if (this.isDirty() && !confirm('Изменения не сохранены. Закрыть без сохранения?')) return;
+         document.getElementById('modal-slot').innerHTML = '';
+       }
+     }"
+     @click.self="tryClose()"
+     @keydown.escape.window="tryClose()">
+  <div class="modal">
+    <form hx-{% if brand %}put="/brands/{{ brand.id }}"{% else %}post="/brands"{% endif %}
+          hx-target="body"
+          hx-select="body > *"
+          hx-swap="innerHTML">
+
+      <div class="modal-header">
+        <div>
+          <h2>{{ "Редактирование бренда" if brand else "Новый бренд" }}</h2>
+        </div>
+        <button type="button" class="modal-close" @click="tryClose()">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="field">
+          <label>Название</label>
+          <input type="text" name="name" required
+                 placeholder="ABB"
+                 value="{{ brand.name if brand else '' }}"
+                 x-model="current">
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <span></span>
+        <div class="modal-footer-right">
+          <button type="button" class="btn btn-ghost" @click="tryClose()">Отмена</button>
+          <button type="submit" class="btn btn-primary">Сохранить</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>

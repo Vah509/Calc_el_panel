@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlmodel import Session, select, text
 
 from app.database import init_db, engine, get_session
-from app.routers import materials
+from app.routers import materials, brands
 
 app = FastAPI(title="ЭлектроЩит — Учёт калькуляций")
 
@@ -22,6 +22,7 @@ _static_dir = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
 app.include_router(materials.router)
+app.include_router(brands.router)
 
 
 @app.on_event("startup")

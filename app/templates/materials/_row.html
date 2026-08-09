@@ -1,8 +1,7 @@
 <tr id="material-row-{{ material.id }}"
     hx-get="/materials/{{ material.id }}/edit"
     hx-target="#modal-slot"
-    hx-swap="innerHTML"
-    @click="modalOpen = true">
+    hx-swap="innerHTML">
   <td class="col-short">{{ material.short_name }}</td>
   <td class="col-full">{{ material.full_name }}</td>
   <td>
@@ -27,7 +26,7 @@
               hx-get="/materials/{{ material.id }}/edit"
               hx-target="#modal-slot"
               hx-swap="innerHTML"
-              @click.stop="modalOpen = true">✎</button>
+              @click.stop>✎</button>
       <button class="icon-btn" title="Удалить"
               hx-delete="/materials/{{ material.id }}"
               hx-target="body"

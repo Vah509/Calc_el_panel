@@ -1,0 +1,23 @@
+<tr id="brand-row-{{ brand.id }}"
+    hx-get="/brands/{{ brand.id }}/edit"
+    hx-target="#modal-slot"
+    hx-swap="innerHTML">
+  <td class="col-short">{{ brand.name }}</td>
+  <td class="col-num">{{ materials_count.get(brand.id, 0) if materials_count else 0 }}</td>
+  <td>
+    <div class="row-actions">
+      <button class="icon-btn" title="Изменить"
+              hx-get="/brands/{{ brand.id }}/edit"
+              hx-target="#modal-slot"
+              hx-swap="innerHTML"
+              @click.stop>✎</button>
+      <button class="icon-btn" title="Удалить"
+              hx-delete="/brands/{{ brand.id }}"
+              hx-target="body"
+              hx-select="body > *"
+              hx-swap="innerHTML"
+              hx-confirm="{% if materials_count and materials_count.get(brand.id, 0) > 0 %}Бренд «{{ brand.name }}» используется в {{ materials_count.get(brand.id, 0) }} материалах — при удалении они останутся без бренда. Удалить?{% else %}Удалить бренд «{{ brand.name }}»?{% endif %}"
+              @click.stop>🗑</button>
+    </div>
+  </td>
+</tr>

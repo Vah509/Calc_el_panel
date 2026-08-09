@@ -1,22 +1,50 @@
-<div class="modal-backdrop" x-cloak @click.self="modalOpen = false">
-  <div class="modal"
-       x-data="{
-         priceExcl: {{ material.price_excl_vat if material else 0 }},
-         priceIncl: {{ material.price_incl_vat if material else 0 }},
-         vatRate: {{ material.vat_rate if material else 20 }},
-         lastChanged: 'price_excl_vat',
-         onExclChange() {
-           this.lastChanged = 'price_excl_vat';
-           this.priceIncl = Math.round(this.priceExcl * (1 + this.vatRate / 100) * 100) / 100;
-         },
-         onInclChange() {
-           this.lastChanged = 'price_incl_vat';
-           this.priceExcl = Math.round(this.priceIncl / (1 + this.vatRate / 100) * 100) / 100;
-         },
-         onVatChange() {
-           this.onExclChange();
-         }
-       }">
+<div class="modal-backdrop" x-cloak
+     x-data="{
+       priceExcl: {{ material.price_excl_vat if material else 0 }},
+       priceIncl: {{ material.price_incl_vat if material else 0 }},
+       vatRate: {{ material.vat_rate if material else 20 }},
+       lastChanged: 'price_excl_vat',
+       initial: {
+         short_name: {{ (material.short_name if material else '')|tojson }},
+         full_name: {{ (material.full_name if material else '')|tojson }},
+         brand_id: {{ (material.brand_id if material else '')|tojson }},
+         sku_article: {{ (material.sku_article if material else '')|tojson }},
+         price_excl_vat: {{ material.price_excl_vat if material else 0 }},
+         price_incl_vat: {{ material.price_incl_vat if material else 0 }}
+       },
+       current: {
+         short_name: {{ (material.short_name if material else '')|tojson }},
+         full_name: {{ (material.full_name if material else '')|tojson }},
+         brand_id: {{ (material.brand_id if material else '')|tojson }},
+         sku_article: {{ (material.sku_article if material else '')|tojson }}
+       },
+       onExclChange() {
+         this.lastChanged = 'price_excl_vat';
+         this.priceIncl = Math.round(this.priceExcl * (1 + this.vatRate / 100) * 100) / 100;
+       },
+       onInclChange() {
+         this.lastChanged = 'price_incl_vat';
+         this.priceExcl = Math.round(this.priceIncl / (1 + this.vatRate / 100) * 100) / 100;
+       },
+       onVatChange() {
+         this.onExclChange();
+       },
+       isDirty() {
+         return this.current.short_name !== this.initial.short_name
+             || this.current.full_name !== this.initial.full_name
+             || String(this.current.brand_id || '') !== String(this.initial.brand_id || '')
+             || this.current.sku_article !== this.initial.sku_article
+             || this.priceExcl !== this.initial.price_excl_vat
+             || this.priceIncl !== this.initial.price_incl_vat;
+       },
+       tryClose() {
+         if (this.isDirty() && !confirm('Изменения не сохранены. Закрыть без сохранения?')) return;
+         document.getElementById('modal-slot').innerHTML = '';
+       }
+     }"
+     @click.self="tryClose()"
+     @keydown.escape.window="tryClose()">
+  <div class="modal">
     <form {% if material %}
             hx-put="/materials/{{ material.id }}"
           {% else %}
@@ -24,15 +52,14 @@
           {% endif %}
           hx-target="body"
           hx-select="body > *"
-          hx-swap="innerHTML"
-          @submit="modalOpen = false">
+          hx-swap="innerHTML">
 
       <div class="modal-header">
         <div>
           <h2>{{ "Редактирование материала" if material else "Новый материал" }}</h2>
           {% if material %}<div class="subtitle">{{ material.short_name }}</div>{% endif %}
         </div>
-        <button type="button" class="modal-close" @click="modalOpen = false">✕</button>
+        <button type="button" class="modal-close" @click="tryClose()">✕</button>
       </div>
 
       <div class="modal-body">
@@ -40,7 +67,8 @@
           <label>Short name</label>
           <input type="text" name="short_name" required
                  placeholder="ABB S203 C16"
-                 value="{{ material.short_name if material else '' }}">
+                 value="{{ material.short_name if material else '' }}"
+                 x-model="current.short_name">
           <span class="field-hint">Бренд-код + тип + параметры, через пробел</span>
         </div>
 
@@ -48,13 +76,14 @@
           <label>Full name</label>
           <input type="text" name="full_name" required
                  placeholder="Автоматический выключатель 3P C16 6kA"
-                 value="{{ material.full_name if material else '' }}">
+                 value="{{ material.full_name if material else '' }}"
+                 x-model="current.full_name">
         </div>
 
         <div class="field-row">
           <div class="field">
             <label>Бренд</label>
-            <select name="brand_id">
+            <select name="brand_id" x-model="current.brand_id">
               <option value="">—</option>
               {% for brand in brands %}
               <option value="{{ brand.id }}"
@@ -68,7 +97,8 @@
             <label>Артикул производителя</label>
             <input type="text" name="sku_article"
                    placeholder="2CDS253001R0164"
-                   value="{{ material.sku_article if material else '' }}">
+                   value="{{ material.sku_article if material else '' }}"
+                   x-model="current.sku_article">
           </div>
         </div>
 
@@ -100,13 +130,12 @@
                 hx-target="body"
                 hx-select="body > *"
                 hx-swap="innerHTML"
-                hx-confirm="Удалить материал «{{ material.short_name }}»?"
-                @click="modalOpen = false">Удалить</button>
+                hx-confirm="Удалить материал «{{ material.short_name }}»?">Удалить</button>
         {% else %}
         <span></span>
         {% endif %}
         <div class="modal-footer-right">
-          <button type="button" class="btn btn-ghost" @click="modalOpen = false">Отмена</button>
+          <button type="button" class="btn btn-ghost" @click="tryClose()">Отмена</button>
           <button type="submit" class="btn btn-primary">Сохранить</button>
         </div>
       </div>

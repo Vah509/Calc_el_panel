@@ -1,7 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<div x-data="{ modalOpen: false }" @open-modal.window="modalOpen = true" @close-modal.window="modalOpen = false">
-
+<div>
   <div class="topbar">
     <div class="topbar-title">
       <h1>Материалы</h1>
@@ -12,20 +11,23 @@
       <button class="btn btn-primary"
               hx-get="/materials/new"
               hx-target="#modal-slot"
-              hx-swap="innerHTML"
-              @click="modalOpen = true">
+              hx-swap="innerHTML">
         + Материал
       </button>
     </div>
   </div>
 
   <div class="filterbar">
-    <input class="search-input" type="text" name="q" placeholder="Поиск по short_name или артикулу…"
-           hx-get="/materials"
-           hx-trigger="keyup changed delay:300ms"
-           hx-target="body"
-           hx-select="body > *"
-           hx-swap="innerHTML">
+    <div class="search-wrap">
+      <input class="search-input" type="text" name="q" id="material-search" placeholder="Поиск по short_name или артикулу…"
+             hx-get="/materials"
+             hx-trigger="keyup changed delay:300ms"
+             hx-target="body"
+             hx-select="body > *"
+             hx-swap="innerHTML">
+      <button type="button" class="search-clear" title="Сбросить поиск"
+              onclick="document.getElementById('material-search').value=''; htmx.trigger('#material-search', 'keyup');">✕</button>
+    </div>
     <span style="width:1px;height:20px;background:var(--line);margin:0 4px;"></span>
     <span class="chip active">Все бренды</span>
     {% for brand in brands %}

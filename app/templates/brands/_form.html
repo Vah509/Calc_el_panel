@@ -3,9 +3,9 @@
      onkeydown="if (event.key === 'Escape') window.__tryCloseModal(this);">
   <div class="modal">
     <form hx-{% if brand %}put="/brands/{{ brand.id }}"{% else %}post="/brands"{% endif %}
-          hx-target="body"
-          hx-select="body > *"
+          hx-target="#brands-tbody"
           hx-swap="innerHTML"
+          oninput="window.__modalDirty = true;"
           onchange="window.__modalDirty = true;">
 
       <div class="modal-header">

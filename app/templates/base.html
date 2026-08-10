@@ -30,6 +30,20 @@
     const slot = document.getElementById('modal-slot');
     if (slot) slot.innerHTML = '';
   };
+
+  // После успешного создания/изменения/удаления сервер шлёт заголовок
+  // HX-Trigger: materialSaved / brandSaved — по нему закрываем модалку
+  // без подтверждения (сохранение уже произошло, спрашивать нечего).
+  document.body.addEventListener('materialSaved', () => {
+    window.__modalDirty = false;
+    const slot = document.getElementById('modal-slot');
+    if (slot) slot.innerHTML = '';
+  });
+  document.body.addEventListener('brandSaved', () => {
+    window.__modalDirty = false;
+    const slot = document.getElementById('modal-slot');
+    if (slot) slot.innerHTML = '';
+  });
 </script>
 <link rel="stylesheet" href="/static/style.css">
 </head>

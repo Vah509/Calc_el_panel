@@ -32,9 +32,9 @@
           {% else %}
             hx-post="/materials"
           {% endif %}
-          hx-target="body"
-          hx-select="body > *"
+          hx-target="#materials-tbody"
           hx-swap="innerHTML"
+          oninput="window.__modalDirty = true;"
           onchange="window.__modalDirty = true;">
 
       <div class="modal-header">
@@ -97,7 +97,7 @@
                    value="{{ material.price_incl_vat if material else 0 }}"
                    x-model.number="priceIncl" @input="onInclChange()">
           </div>
-          <div class="field" style="max-width:80px;">
+          <div class="field" style="max-width:140px;">
             <label>Ставка НДС</label>
             <input type="number" step="0.1" name="vat_rate"
                    value="{{ material.vat_rate if material else 20 }}"
@@ -112,8 +112,7 @@
         {% if material %}
         <button type="button" class="btn btn-danger-ghost"
                 hx-delete="/materials/{{ material.id }}"
-                hx-target="body"
-                hx-select="body > *"
+                hx-target="#materials-tbody"
                 hx-swap="innerHTML"
                 hx-confirm="Удалить материал «{{ material.short_name }}»?">Удалить</button>
         {% else %}

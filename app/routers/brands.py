@@ -78,7 +78,7 @@ def create_brand(
     session.add(brand)
     session.commit()
 
-    return list_brands(request, session=session)
+    return _render_tbody(request, session)
 
 
 @router.put("/{brand_id}", response_class=HTMLResponse)
@@ -90,13 +90,13 @@ def update_brand(
 ):
     brand = session.get(Brand, brand_id)
     if not brand:
-        return list_brands(request, session=session)
+        return _render_tbody(request, session)
 
     brand.name = name
     session.add(brand)
     session.commit()
 
-    return list_brands(request, session=session)
+    return _render_tbody(request, session)
 
 
 @router.delete("/{brand_id}", response_class=HTMLResponse)
@@ -106,4 +106,28 @@ def delete_brand(brand_id: int, request: Request, session: Session = Depends(get
         session.delete(brand)
         session.commit()
 
-    return list_brands(request, session=session)
+    return _render_tbody(request, session)
+
+
+def _render_tbody(request: Request, session: Session):
+    """
+    Общий рендер только содержимого <tbody> таблицы брендов —
+    используется после create/update/delete, чтобы не перезагружать
+    всю страницу. Заголовок HX-Trigger говорит фронту закрыть модалку.
+    """
+    brands = session.exec(select(Brand)).all()
+
+    materials_count: dict[int, int] = {}
+    for brand in brands:
+        count = session.exec(
+            select(Material).where(Material.brand_id == brand.id)
+        ).all()
+        materials_count[brand.id] = len(count)
+
+    response = templates.TemplateResponse(
+        request,
+        "brands/_tbody.html",
+        {"brands": brands, "materials_count": materials_count},
+    )
+    response.headers["HX-Trigger"] = "brandSaved"
+    return response

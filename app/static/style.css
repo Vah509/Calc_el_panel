@@ -196,8 +196,8 @@ tbody tr:hover { background: #faf9f6; }
 .field-row { display: flex; gap: 12px; }
 .field-row .field { flex: 1; }
 
-.price-pair { display: flex; gap: 12px; padding: 12px; background: var(--bg); border-radius: 8px; border: 1px solid var(--line); }
-.price-pair .field { flex: 1; }
+.price-pair { display: flex; flex-wrap: wrap; gap: 12px; padding: 12px; background: var(--bg); border-radius: 8px; border: 1px solid var(--line); }
+.price-pair .field { flex: 1 1 140px; min-width: 100px; }
 .vat-note { font-size: 11px; color: var(--ink-soft); display: flex; align-items: center; gap: 5px; margin-top: 2px; }
 
 .modal-footer { padding: 14px 20px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; background: #fafaf8; }

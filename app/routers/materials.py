@@ -126,7 +126,7 @@ def create_material(
     session.add(material)
     session.commit()
 
-    return list_materials(request, session=session)
+    return _render_tbody(request, session)
 
 
 @router.put("/{material_id}", response_class=HTMLResponse)
@@ -145,7 +145,7 @@ def update_material(
 ):
     material = session.get(Material, material_id)
     if not material:
-        return list_materials(request, session=session)
+        return _render_tbody(request, session)
 
     price_excl_vat, price_incl_vat = recalc_prices(
         price_excl_vat, price_incl_vat, vat_rate, price_source
@@ -162,7 +162,7 @@ def update_material(
     session.add(material)
     session.commit()
 
-    return list_materials(request, session=session)
+    return _render_tbody(request, session)
 
 
 @router.delete("/{material_id}", response_class=HTMLResponse)
@@ -172,4 +172,32 @@ def delete_material(material_id: int, request: Request, session: Session = Depen
         session.delete(material)
         session.commit()
 
-    return list_materials(request, session=session)
+    return _render_tbody(request, session)
+
+
+def _render_tbody(request: Request, session: Session, q: Optional[str] = None, brand_id: Optional[int] = None):
+    """
+    Общий рендер только содержимого <tbody> таблицы материалов —
+    используется после create/update/delete, чтобы не перезагружать
+    всю страницу (меню, фильтры, поле поиска остаются как есть).
+    Ответ также несёт заголовок HX-Trigger, чтобы фронт закрыл модалку.
+    """
+    statement = select(Material)
+    if q:
+        q_lower = q.lower()
+        statement = statement.where(
+            func.lower(Material.short_name).contains(q_lower)
+            | func.lower(Material.sku_article).contains(q_lower)
+        )
+    if brand_id:
+        statement = statement.where(Material.brand_id == brand_id)
+
+    materials = session.exec(statement).all()
+
+    response = templates.TemplateResponse(
+        request,
+        "materials/_tbody.html",
+        {"materials": materials},
+    )
+    response.headers["HX-Trigger"] = "materialSaved"
+    return response

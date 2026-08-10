@@ -1,0 +1,10 @@
+{% for material in materials %}
+  {% include "materials/_row.html" %}
+{% else %}
+<tr>
+  <td colspan="8" style="text-align:center; color:var(--ink-soft); padding:30px;">
+    Материалов пока нет — добавьте первый через кнопку «+ Материал»
+  </td>
+</tr>
+{% endfor %}
+<span id="materials-count" hx-swap-oob="true" class="count">{{ materials|length }} позиций</span>

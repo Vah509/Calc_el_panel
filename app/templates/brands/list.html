@@ -5,7 +5,7 @@
   <div class="topbar">
     <div class="topbar-title">
       <h1>Бренды</h1>
-      <span class="count">{{ brands|length }} позиций</span>
+      <span class="count" id="brands-count">{{ brands|length }} позиций</span>
     </div>
     <div style="display:flex; gap:8px;">
       <button class="btn btn-primary"
@@ -26,7 +26,7 @@
              hx-select="body > *"
              hx-swap="innerHTML">
       <button type="button" class="search-clear" title="Сбросить поиск"
-              onclick="document.getElementById('brand-search').value=''; htmx.trigger('#brand-search', 'keyup');">✕</button>
+              onclick="document.getElementById('brand-search').value=''; htmx.ajax('GET', '/brands', {target: 'body', select: 'body > *', swap: 'innerHTML'});">✕</button>
     </div>
   </div>
 
@@ -40,15 +40,7 @@
         </tr>
       </thead>
       <tbody id="brands-tbody">
-        {% for brand in brands %}
-          {% include "brands/_row.html" %}
-        {% else %}
-        <tr>
-          <td colspan="3" style="text-align:center; color:var(--ink-soft); padding:30px;">
-            Брендов пока нет — добавьте первый через кнопку «+ Бренд»
-          </td>
-        </tr>
-        {% endfor %}
+        {% include "brands/_tbody.html" %}
       </tbody>
     </table>
   </div>

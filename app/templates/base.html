@@ -15,35 +15,26 @@
     if (window.Alpine) {
       window.Alpine.initTree(event.target);
     }
-    if (event.target && event.target.id === 'modal-slot') {
-      window.__modalDirty = false;
-    }
   });
 
-  // Закрытие модалки — НЕ зависит от Alpine. Alpine на мобильных сетях может
-  // ещё не успеть инициализироваться (defer + медленный CDN) к моменту клика,
-  // поэтому крестик/Отмена работают через обычный DOM API напрямую.
-  window.__modalDirty = false;
-  window.__tryCloseModal = function (el) {
-    if (window.__modalDirty && !confirm('Изменения не сохранены. Закрыть без сохранения?')) return;
-    window.__modalDirty = false;
+  // Закрытие модалки — простое и без подтверждений. Кнопка "Закрыть"
+  // вызывает это напрямую; сохранение/удаление закрывают модалку через
+  // событие ниже (сервер шлёт HX-Trigger после успешного ответа).
+  window.__closeModal = function () {
     const slot = document.getElementById('modal-slot');
     if (slot) slot.innerHTML = '';
   };
 
   // После успешного создания/изменения/удаления сервер шлёт заголовок
-  // HX-Trigger: materialSaved / brandSaved — по нему закрываем модалку
-  // без подтверждения (сохранение уже произошло, спрашивать нечего).
-  document.body.addEventListener('materialSaved', () => {
-    window.__modalDirty = false;
-    const slot = document.getElementById('modal-slot');
-    if (slot) slot.innerHTML = '';
-  });
-  document.body.addEventListener('brandSaved', () => {
-    window.__modalDirty = false;
-    const slot = document.getElementById('modal-slot');
-    if (slot) slot.innerHTML = '';
-  });
+  // HX-Trigger: materialSaved / brandSaved — по нему закрываем модалку.
+  document.body.addEventListener('materialSaved', window.__closeModal);
+  document.body.addEventListener('brandSaved', window.__closeModal);
+
+  // Совместимость со старой формой брендов (ещё не переведена на новый
+  // паттерн — сделаем по аналогии отдельным шагом). __modalDirty больше
+  // ничего не проверяет, просто чтобы не было ошибки "not a function".
+  window.__modalDirty = false;
+  window.__tryCloseModal = window.__closeModal;
 </script>
 <link rel="stylesheet" href="/static/style.css">
 </head>

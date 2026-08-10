@@ -1,50 +1,35 @@
-<div class="modal-backdrop"
-     x-data="{
-       priceExcl: {{ material.price_excl_vat if material else 0 }},
-       priceIncl: {{ material.price_incl_vat if material else 0 }},
-       vatRate: {{ material.vat_rate if material else 20 }},
-       lastChanged: 'price_excl_vat',
-       dirty: false,
-       onExclChange() {
-         this.lastChanged = 'price_excl_vat';
-         this.priceIncl = Math.round(this.priceExcl * (1 + this.vatRate / 100) * 100) / 100;
-         this.dirty = true;
-       },
-       onInclChange() {
-         this.lastChanged = 'price_incl_vat';
-         this.priceExcl = Math.round(this.priceIncl / (1 + this.vatRate / 100) * 100) / 100;
-         this.dirty = true;
-       },
-       onVatChange() {
-         this.onExclChange();
-       },
-       tryClose() {
-         if (this.dirty && !confirm('Изменения не сохранены. Закрыть без сохранения?')) return;
-         document.getElementById('modal-slot').innerHTML = '';
-       }
-     }"
-     @click.self="tryClose()"
-     @keydown.escape.window="tryClose()"
-     onclick="if (event.target === this) { window.__tryCloseModal(this); }">
-  <div class="modal">
+<div class="modal-backdrop">
+  <div class="modal"
+       x-data="{
+         priceExcl: {{ material.price_excl_vat if material else 0 }},
+         priceIncl: {{ material.price_incl_vat if material else 0 }},
+         vatRate: {{ material.vat_rate if material else 20 }},
+         lastChanged: 'price_excl_vat',
+         onExclChange() {
+           this.lastChanged = 'price_excl_vat';
+           this.priceIncl = Math.round(this.priceExcl * (1 + this.vatRate / 100) * 100) / 100;
+         },
+         onInclChange() {
+           this.lastChanged = 'price_incl_vat';
+           this.priceExcl = Math.round(this.priceIncl / (1 + this.vatRate / 100) * 100) / 100;
+         },
+         onVatChange() {
+           this.onExclChange();
+         }
+       }">
     <form {% if material %}
             hx-put="/materials/{{ material.id }}"
           {% else %}
             hx-post="/materials"
           {% endif %}
           hx-target="#materials-tbody"
-          hx-swap="innerHTML"
-          oninput="window.__modalDirty = true;"
-          onchange="window.__modalDirty = true;">
+          hx-swap="innerHTML">
 
       <div class="modal-header">
         <div>
           <h2>{{ "Редактирование материала" if material else "Новый материал" }}</h2>
           {% if material %}<div class="subtitle">{{ material.short_name }}</div>{% endif %}
         </div>
-        <button type="button" class="modal-close"
-                @click="tryClose()"
-                onclick="window.__tryCloseModal(this)">✕</button>
       </div>
 
       <div class="modal-body">
@@ -120,8 +105,7 @@
         {% endif %}
         <div class="modal-footer-right">
           <button type="button" class="btn btn-ghost"
-                  @click="tryClose()"
-                  onclick="window.__tryCloseModal(this)">Отмена</button>
+                  onclick="window.__closeModal()">Закрыть</button>
           <button type="submit" class="btn btn-primary">Сохранить</button>
         </div>
       </div>

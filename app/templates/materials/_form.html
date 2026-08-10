@@ -23,7 +23,8 @@
             hx-post="/materials"
           {% endif %}
           hx-target="#materials-tbody"
-          hx-swap="innerHTML">
+          hx-swap="innerHTML"
+          hx-on::after-request="if (event.detail.successful) window.__closeModal();">
 
       <div class="modal-header">
         <div>
@@ -99,7 +100,7 @@
                 hx-delete="/materials/{{ material.id }}"
                 hx-target="#materials-tbody"
                 hx-swap="innerHTML"
-                hx-confirm="Удалить материал «{{ material.short_name }}»?">Удалить</button>
+                hx-on::after-request="if (event.detail.successful) window.__closeModal();">Удалить</button>
         {% else %}
         <span></span>
         {% endif %}

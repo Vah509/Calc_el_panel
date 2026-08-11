@@ -180,7 +180,12 @@ def _render_tbody(request: Request, session: Session, q: Optional[str] = None, b
     Общий рендер только содержимого <tbody> таблицы материалов —
     используется после create/update/delete, чтобы не перезагружать
     всю страницу (меню, фильтры, поле поиска остаются как есть).
-    Ответ также несёт заголовок HX-Trigger, чтобы фронт закрыл модалку.
+    Ответ несёт заголовок HX-Trigger-After-Swap (не HX-Trigger!), чтобы
+    фронт закрыл модалку ПОСЛЕ того, как HTMX применит новый HTML к
+    #materials-tbody. Обычный HX-Trigger срабатывает сразу по получении
+    ответа, до swap — из-за этого модалка закрывалась мгновенно, но
+    сам swap таблицы либо ещё не происходил, либо обрывался, и человек
+    видел старые данные, пока не обновит страницу вручную.
     """
     statement = select(Material)
     if q:
@@ -199,5 +204,5 @@ def _render_tbody(request: Request, session: Session, q: Optional[str] = None, b
         "materials/_tbody.html",
         {"materials": materials},
     )
-    response.headers["HX-Trigger"] = "materialSaved"
+    response.headers["HX-Trigger-After-Swap"] = "materialSaved"
     return response

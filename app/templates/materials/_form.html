@@ -23,8 +23,7 @@
             hx-post="/materials"
           {% endif %}
           hx-target="#materials-tbody"
-          hx-swap="innerHTML"
-          hx-on::after-request="if (event.detail.successful) window.__closeModal();">
+          hx-swap="innerHTML">
 
       <div class="modal-header">
         <div>
@@ -99,8 +98,7 @@
         <button type="button" class="btn btn-danger-ghost"
                 hx-delete="/materials/{{ material.id }}"
                 hx-target="#materials-tbody"
-                hx-swap="innerHTML"
-                hx-on::after-request="if (event.detail.successful) window.__closeModal();">Удалить</button>
+                hx-swap="innerHTML">Удалить</button>
         {% else %}
         <span></span>
         {% endif %}

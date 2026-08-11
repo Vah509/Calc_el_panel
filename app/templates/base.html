@@ -20,16 +20,21 @@
     // загрузке страницы — всё, что HTMX вставляет ПОСЛЕ этого, нужно
     // инициализировать вручную, иначе x-data/x-model/@click в новой
     // разметке останутся "мёртвыми".
+    // Обновление #materials-tbody / #brands-tbody после create/update/
+    // delete закрывает модалку — слушаем реальное событие htmx:afterSwap
+    // на конкретном элементе-цели (стандартное событие HTMX, всегда
+    // всплывает до body), а не кастомные события из HX-Trigger-
+    // заголовков: у HX-Trigger-After-Swap есть известный баг, когда
+    // событие не всплывает до body, и HX-Trigger срабатывает раньше
+    // самого swap — оба варианта ненадёжны для этой цели.
     document.body.addEventListener('htmx:afterSwap', (event) => {
       if (window.Alpine) {
         window.Alpine.initTree(event.target);
       }
+      if (event.target && (event.target.id === 'materials-tbody' || event.target.id === 'brands-tbody')) {
+        window.__closeModal();
+      }
     });
-
-    // После успешного создания/изменения/удаления сервер шлёт заголовок
-    // HX-Trigger: materialSaved / brandSaved — по нему закрываем модалку.
-    document.body.addEventListener('materialSaved', window.__closeModal);
-    document.body.addEventListener('brandSaved', window.__closeModal);
   });
 
   // Закрытие модалки — простое и без подтверждений. Кнопка "Закрыть"

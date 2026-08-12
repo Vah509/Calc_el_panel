@@ -8,7 +8,7 @@
 # написания нового роутера/шаблона вручную.
 # ============================================================
 
-from app.engine.config import TableConfig, FieldConfig, ComputedPair, Relation
+from app.engine.config import TableConfig, FieldConfig, ComputedPair, Relation, FormRow
 from app.models.material import Material
 from app.models.brand import Brand
 
@@ -43,7 +43,8 @@ material_table = TableConfig(
                     is_numeric=True, list_width="100px"),
         FieldConfig(name="price_incl_vat", label="Цена с НДС", widget="number",
                     is_numeric=True, list_width="100px"),
-        FieldConfig(name="vat_rate", label="Ставка НДС", widget="number", list_width="60px"),
+        FieldConfig(name="vat_rate", label="Ставка НДС", widget="number", list_width="60px",
+                    default=20.0, form_width="140px"),
     ],
     computed_pairs=[
         ComputedPair(
@@ -58,6 +59,10 @@ material_table = TableConfig(
     ],
     relations=[
         Relation(field="brand_id", target_table="brand", display_field="name", label="Бренд"),
+    ],
+    form_rows=[
+        FormRow(field_names=["brand_id", "sku_article"]),
+        FormRow(field_names=["price_excl_vat", "price_incl_vat", "vat_rate"]),
     ],
 )
 

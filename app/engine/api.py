@@ -31,14 +31,44 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
     model = config.model
     field_names = config.field_names()
 
+    def _validate_required(data: dict[str, Any]) -> None:
+        """Проверяет все обязательные поля таблицы. Если что-то не
+        заполнено — кидает понятную 422-ошибку со списком меток полей,
+        вместо того чтобы падать на попытке создать модель или молча
+        сохранять пустые значения."""
+        missing = []
+        for f in config.fields:
+            if not f.required:
+                continue
+            value = data.get(f.name)
+            if value is None or (isinstance(value, str) and value.strip() == ""):
+                missing.append(f.label)
+        if missing:
+            raise HTTPException(
+                status_code=422,
+                detail="Не заполнено обязательное поле: " + ", ".join(missing),
+            )
+
     def _apply_computed_pairs(data: dict[str, Any]) -> dict[str, Any]:
         """Пересчитывает все computed_pairs таблицы на основе поля
-        price_source (какое поле пользователь менял последним)."""
+        price_source (какое поле пользователь менял последним).
+        Если ставка (rate_field) не заполнена или равна нулю —
+        пересчитать нельзя (деление/умножение на 0 даёт бессмысленный
+        результат) — кидаем понятную ошибку вместо тихого неверного
+        расчёта."""
         changed_field = data.get("_changed_field")
         for pair in config.computed_pairs:
+            rate = data.get(pair.rate_field)
+            if rate is None or rate == 0:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"Не заполнено поле «{pair.label_rate}» — без него нельзя "
+                        f"пересчитать «{pair.label_a}» / «{pair.label_b}»."
+                    ),
+                )
             value_a = data.get(pair.field_a, 0.0)
             value_b = data.get(pair.field_b, 0.0)
-            rate = data.get(pair.rate_field, 0.0)
             new_a, new_b = apply_formula(
                 pair.formula, changed_field or pair.field_a,
                 pair.field_a, pair.field_b, value_a, value_b, rate
@@ -75,6 +105,7 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
     @router.post("")
     def create_item(payload: dict[str, Any], session: Session = Depends(get_engine_session)):
         data = {k: v for k, v in payload.items() if k in field_names or k == "_changed_field"}
+        _validate_required(data)
         data = _apply_computed_pairs(data)
         clean_data = {k: v for k, v in data.items() if k in field_names}
         instance = model(**clean_data)
@@ -90,6 +121,7 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
             raise HTTPException(status_code=404, detail=f"{config.title_singular} не найден(а)")
 
         data = {k: v for k, v in payload.items() if k in field_names or k == "_changed_field"}
+        _validate_required(data)
         data = _apply_computed_pairs(data)
 
         for name in field_names:

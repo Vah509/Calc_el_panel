@@ -100,29 +100,29 @@ _PAGE_TEMPLATE_SOURCE = r"""
       </div>
 
       <div class="modal-body">
-        {% for f in config.fields %}
-        {% set rel = config.relations | selectattr("field", "equalto", f.name) | first %}
-        {% set pair = config.computed_pairs | selectattr("field_a", "equalto", f.name) | first %}
-        {% set pair_b = config.computed_pairs | selectattr("field_b", "equalto", f.name) | first %}
-        {% if not pair_b %}
-        <div class="field">
-          <label>{{ f.label }}</label>
-          {% if rel %}
-          <select x-model.number="editing.{{ f.name }}">
-            <option :value="null">—</option>
-            <template x-for="opt in relationOptions['{{ f.name }}']" :key="opt.id">
-              <option :value="opt.id" x-text="opt.name"></option>
-            </template>
-          </select>
-          {% elif pair %}
-          <input type="number" step="0.01" x-model.number="editing.{{ f.name }}" @input="onComputedChange('{{ f.name }}')">
-          {% elif f.widget == "number" %}
-          <input type="number" step="0.01"{% if f.required %} required{% endif %} placeholder="{{ f.placeholder }}" x-model.number="editing.{{ f.name }}">
-          {% else %}
-          <input type="text"{% if f.required %} required{% endif %} placeholder="{{ f.placeholder }}" x-model="editing.{{ f.name }}">
-          {% endif %}
+        {% for row in form_layout %}
+        <div{% if row.is_computed_pair %} class="price-pair"{% elif row.fields | length > 1 %} class="field-row"{% endif %}>
+          {% for f in row.fields %}
+          {% set rel = config.relations | selectattr("field", "equalto", f.name) | first %}
+          <div class="field"{% if f.form_width %} style="flex: 0 0 {{ f.form_width }};"{% endif %}>
+            <label>{{ f.label }}</label>
+            {% if rel %}
+            <select x-model.number="editing.{{ f.name }}">
+              <option :value="null">—</option>
+              <template x-for="opt in relationOptions['{{ f.name }}']" :key="opt.id">
+                <option :value="opt.id" x-text="opt.name"></option>
+              </template>
+            </select>
+            {% elif f.name in computed_field_names %}
+            <input type="number" step="0.01" x-model.number="editing.{{ f.name }}" @input="onComputedChange('{{ f.name }}')">
+            {% elif f.widget == "number" %}
+            <input type="number" step="0.01"{% if f.required %} required{% endif %} placeholder="{{ f.placeholder }}" x-model.number="editing.{{ f.name }}">
+            {% else %}
+            <input type="text"{% if f.required %} required{% endif %} placeholder="{{ f.placeholder }}" x-model="editing.{{ f.name }}">
+            {% endif %}
+          </div>
+          {% endfor %}
         </div>
-        {% endif %}
         {% endfor %}
         {% if config.computed_pairs %}
         <div class="vat-note">↻ Пересчитывается автоматически при изменении одного из полей — можно переопределить вручную.</div>
@@ -147,8 +147,27 @@ function showJsError(err) {
   var banner = document.getElementById('js-error-banner');
   if (banner) {
     banner.style.display = 'block';
-    banner.textContent = 'JS-ошибка: ' + (err && err.message ? err.message : err);
+    banner.textContent = (err && err.message) ? err.message : String(err);
   }
+}
+
+function hideJsError() {
+  var banner = document.getElementById('js-error-banner');
+  if (banner) { banner.style.display = 'none'; banner.textContent = ''; }
+}
+
+// Парсит {detail: "..."} из ответа FastAPI и возвращает читаемый
+// текст, а не сырой JSON — FastAPI отдаёт наши HTTPException(422, ...)
+// именно в таком виде.
+async function extractErrorMessage(res) {
+  let bodyText = '';
+  try { bodyText = await res.text(); } catch (e) { /* тело недоступно */ }
+  try {
+    const parsed = JSON.parse(bodyText);
+    if (parsed && typeof parsed.detail === 'string') return parsed.detail;
+    if (parsed && parsed.detail) return JSON.stringify(parsed.detail);
+  } catch (e) { /* не JSON — используем как есть */ }
+  return 'Сервер ответил ' + res.status + (bodyText ? (': ' + bodyText) : '');
 }
 
 // Явные реализации формул пересчёта (без eval) — должны совпадать
@@ -210,8 +229,15 @@ function enginePage() {
 
     openCreate() {
       try {
+        hideJsError();
         const blank = {};
-        for (const f of CONFIG.fields) blank[f.name] = f.isNumeric ? 0 : '';
+        for (const f of CONFIG.fields) {
+          if (f.default !== null && f.default !== undefined) {
+            blank[f.name] = f.default;
+          } else {
+            blank[f.name] = f.isNumeric ? 0 : '';
+          }
+        }
         this.editing = blank;
         this.modalOpen = true;
       } catch (err) { showJsError(err); }
@@ -219,6 +245,7 @@ function enginePage() {
 
     openEdit(item) {
       try {
+        hideJsError();
         this.editing = { ...item };
         this.modalOpen = true;
       } catch (err) { showJsError(err); }
@@ -241,8 +268,38 @@ function enginePage() {
       } catch (err) { showJsError(err); }
     },
 
+    // Проверяет обязательные поля и заполненность ставок НДС ДО
+    // отправки на сервер — чтобы пользователь сразу видел понятную
+    // причину, а не общую ошибку сервера. Возвращает текст ошибки
+    // или null, если всё в порядке.
+    validateBeforeSave() {
+      const missing = [];
+      for (const f of CONFIG.fields) {
+        if (!f.required) continue;
+        const value = this.editing[f.name];
+        if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) {
+          missing.push(f.label);
+        }
+      }
+      if (missing.length) {
+        return 'Не заполнено обязательное поле: ' + missing.join(', ');
+      }
+      for (const pair of CONFIG.computedPairs) {
+        const rate = this.editing[pair.rateField];
+        if (rate === null || rate === undefined || rate === 0) {
+          return 'Не заполнено поле «' + pair.rateLabel + '» — без него нельзя пересчитать «' +
+                 pair.fieldALabel + '» / «' + pair.fieldBLabel + '».';
+        }
+      }
+      return null;
+    },
+
     async save() {
       try {
+        const validationError = this.validateBeforeSave();
+        if (validationError) { showJsError(validationError); return; }
+        hideJsError();
+
         const isEdit = !!this.editing.id;
         const url = isEdit ? '/api/' + CONFIG.key + '/' + this.editing.id : '/api/' + CONFIG.key;
         const method = isEdit ? 'PUT' : 'POST';
@@ -253,8 +310,7 @@ function enginePage() {
           body: JSON.stringify(this.editing)
         });
         if (!res.ok) {
-          const text = await res.text();
-          showJsError('Сервер ответил ' + res.status + ': ' + text);
+          showJsError(await extractErrorMessage(res));
           return;
         }
         this.modalOpen = false;
@@ -266,8 +322,7 @@ function enginePage() {
       try {
         const res = await fetch('/api/' + CONFIG.key + '/' + this.editing.id, { method: 'DELETE' });
         if (!res.ok) {
-          const text = await res.text();
-          showJsError('Не удалось удалить. Сервер ответил ' + res.status + ': ' + text);
+          showJsError('Не удалось удалить. ' + await extractErrorMessage(res));
           return;
         }
         this.modalOpen = false;
@@ -276,13 +331,64 @@ function enginePage() {
     },
 
     close() {
-      try { this.modalOpen = false; } catch (err) { showJsError(err); }
+      try { hideJsError(); this.modalOpen = false; } catch (err) { showJsError(err); }
     }
   };
 }
 </script>
 {% endblock %}
 """
+
+
+def _build_form_layout(config: TableConfig) -> list[dict]:
+    """
+    Строит готовую раскладку полей формы по рядам, вычисляемую ДО
+    рендера — чтобы в шаблоне не было двух отдельных циклов (form_rows
+    отдельно, "остальные" поля отдельно), из-за которых раньше поля
+    уезжали не в том порядке или пропадали.
+
+    Идёт по config.fields строго в порядке их объявления. Если поле
+    принадлежит какому-то form_row и этот row ещё не был эмитирован —
+    эмитит весь ряд целиком (в порядке field_names этого row).
+    Если поле не входит ни в один form_row — эмитит как одиночный ряд.
+    Поля с in_form=False пропускаются полностью.
+
+    Возвращает список {"fields": [FieldConfig, ...], "is_computed_pair": bool}.
+    """
+    computed_field_names = {p.field_a for p in config.computed_pairs} | {
+        p.field_b for p in config.computed_pairs
+    }
+    fields_by_name = {f.name: f for f in config.fields}
+
+    row_of_field: dict[str, int] = {}
+    for row_index, row in enumerate(config.form_rows):
+        for name in row.field_names:
+            row_of_field[name] = row_index
+
+    emitted_rows: set[int] = set()
+    layout: list[dict] = []
+
+    for f in config.fields:
+        if not f.in_form:
+            continue
+        if f.name in row_of_field:
+            row_index = row_of_field[f.name]
+            if row_index in emitted_rows:
+                continue
+            emitted_rows.add(row_index)
+            row_field_names = config.form_rows[row_index].field_names
+            row_fields = [
+                fields_by_name[name]
+                for name in row_field_names
+                if name in fields_by_name and fields_by_name[name].in_form
+            ]
+            is_pair = any(name in computed_field_names for name in row_field_names)
+            layout.append({"fields": row_fields, "is_computed_pair": is_pair})
+        else:
+            is_pair = f.name in computed_field_names
+            layout.append({"fields": [f], "is_computed_pair": is_pair})
+
+    return layout
 
 
 def render_table_page(config: TableConfig, jinja_env) -> str:
@@ -292,9 +398,22 @@ def render_table_page(config: TableConfig, jinja_env) -> str:
     сработать корректно, так как шаблон ищется через тот же loader,
     что и остальные файловые шаблоны приложения."""
 
+    computed_field_names = {p.field_a for p in config.computed_pairs} | {
+        p.field_b for p in config.computed_pairs
+    }
+
     config_json = json.dumps({
         "key": config.key,
-        "fields": [{"name": f.name, "isNumeric": f.is_numeric} for f in config.fields],
+        "fields": [
+            {
+                "name": f.name,
+                "label": f.label,
+                "isNumeric": f.is_numeric,
+                "default": f.default,
+                "required": f.required,
+            }
+            for f in config.fields
+        ],
         "relations": [
             {"field": r.field, "target_table": r.target_table, "display_field": r.display_field}
             for r in config.relations
@@ -305,10 +424,20 @@ def render_table_page(config: TableConfig, jinja_env) -> str:
                 "fieldB": p.field_b,
                 "rateField": p.rate_field,
                 "formula": p.formula,
+                "fieldALabel": p.label_a,
+                "fieldBLabel": p.label_b,
+                "rateLabel": p.label_rate,
             }
             for p in config.computed_pairs
         ],
     }, ensure_ascii=False)
 
+    form_layout = _build_form_layout(config)
+
     template = jinja_env.from_string(_PAGE_TEMPLATE_SOURCE)
-    return template.render(config=config, config_json=config_json)
+    return template.render(
+        config=config,
+        config_json=config_json,
+        form_layout=form_layout,
+        computed_field_names=computed_field_names,
+    )

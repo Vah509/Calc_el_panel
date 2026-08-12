@@ -44,6 +44,11 @@ class FieldConfig:
     list_width: Optional[str] = None   # например "26%" или "100px"
     searchable: bool = False       # участвует в текстовом поиске (q=...)
     is_numeric: bool = False       # для выравнивания по правому краю и форматирования
+    in_form: bool = True           # показывать в форме модалки (по умолчанию — да)
+    form_width: Optional[str] = None   # фиксированная ширина поля в форме, например "140px";
+                                        # если не задано — поле растягивается на всю доступную ширину ряда
+    default: Any = None            # значение по умолчанию при создании новой записи
+                                    # (если None — используется 0 для числовых, '' для текстовых)
 
 
 @dataclass
@@ -82,6 +87,21 @@ class Relation:
 
 
 @dataclass
+class FormRow:
+    """
+    Один визуальный ряд формы — список имён полей, которые должны
+    отображаться рядом друг с другом (а не каждое на отдельной строке).
+
+    Если в ряду 2+ поля — рендерится как flex-контейнер (.field-row
+    для обычных полей или .price-pair, если хотя бы одно поле ряда
+    входит в computed_pairs). Поля, не перечисленные ни в одном
+    FormRow, идут каждое отдельным рядом — по порядку объявления в
+    TableConfig.fields.
+    """
+    field_names: list[str] = field(default_factory=list)
+
+
+@dataclass
 class TableConfig:
     """Полное декларативное описание одной таблицы для движка."""
     key: str                       # уникальный ключ, например "material"
@@ -91,6 +111,7 @@ class TableConfig:
     fields: list[FieldConfig] = field(default_factory=list)
     computed_pairs: list[ComputedPair] = field(default_factory=list)
     relations: list[Relation] = field(default_factory=list)
+    form_rows: list[FormRow] = field(default_factory=list)
     search_placeholder: str = "Поиск…"
 
     def field_names(self) -> list[str]:

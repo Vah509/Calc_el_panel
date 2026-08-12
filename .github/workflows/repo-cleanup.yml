@@ -1,0 +1,52 @@
+name: Repo Cleanup (manual)
+
+# ВАЖНО: этот workflow НЕ запускается по push (в отличие от
+# unzip-and-update.yml). Единственный способ запуска — ручной, через
+# вкладку Actions на GitHub: выбрать этот workflow → "Run workflow".
+# Это осознанная защита от случайного удаления файлов одним лишь
+# фактом заливки списка в cleanup-requests/.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup Git user
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # Скрипт сам находит .txt файл в cleanup-requests/, удаляет
+      # перечисленные пути, шлёт отчёт в Telegram, и в конце удаляет
+      # обработанный файл списка (чтобы повторный запуск не сработал
+      # вхолостую на том же списке).
+      - name: Process cleanup request
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_TO: ${{ secrets.TELEGRAM_TO }}
+        run: python scripts/process_cleanup.py
+
+      - name: Commit and push changes
+        run: |
+          git add .
+          if git diff --staged --quiet; then
+            echo "Изменений нет — нечего коммитить."
+          else
+            git commit -m "🧹 Ручная очистка репозитория"
+            git push origin ${{ github.ref_name }}
+          fi
+          

@@ -26,8 +26,6 @@ _PAGE_TEMPLATE_SOURCE = r"""
 {% block content %}
 <div x-data="enginePage()" x-init="init()">
 
-  <div id="js-error-banner" style="display:none; background:#f3e6e3; border:1px solid #9c3b2e; color:#9c3b2e; padding:10px 16px; margin:0 0 12px; font-family:monospace; font-size:12px; white-space:pre-wrap;"></div>
-
   <div class="topbar">
     <div class="topbar-title">
       <h1>{{ config.title }}</h1>
@@ -98,6 +96,8 @@ _PAGE_TEMPLATE_SOURCE = r"""
           <h2 x-text="editing.id ? 'Редактирование' : 'Новая запись'"></h2>
         </div>
       </div>
+
+      <div id="js-error-banner" style="display:none; background:#f3e6e3; border:1px solid #9c3b2e; color:#9c3b2e; padding:10px 16px; margin:0 20px 14px; border-radius:6px; font-family:monospace; font-size:12px; white-space:pre-wrap;"></div>
 
       <div class="modal-body">
         {% for row in form_layout %}

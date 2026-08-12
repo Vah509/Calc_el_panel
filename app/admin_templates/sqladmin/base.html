@@ -1,0 +1,9 @@
+{% extends "sqladmin_original/base.html" %}
+{#
+  Переопределяем только блок head — подключаем свою тему поверх
+  стандартных стилей sqladmin (Tabler). Ничего больше не меняем:
+  структура страниц, формы, модалка удаления — всё родное sqladmin.
+#}
+{% block head %}
+<link rel="stylesheet" href="/static/admin-theme.css">
+{% endblock %}

@@ -68,9 +68,20 @@ class BrandAdmin(ModelView, model=Brand):
     can_delete = True
 
 
+import os
+
 def register_admin(app):
-    """Подключает sqladmin к FastAPI-приложению. Путь: /materials1 (base_url)."""
-    admin = Admin(app, engine, base_url="/materials1")
+    """Подключает sqladmin к FastAPI-приложению. Путь: /materials1 (base_url).
+
+    templates_dir указывает на app/admin_templates — там лежит только
+    один override-файл (sqladmin/base.html), который подключает нашу
+    тему admin-theme.css. Jinja ищет шаблон сначала в templates_dir,
+    и только если не находит — берёт встроенный шаблон sqladmin.
+    Поэтому переопределяется ТОЛЬКО head (стили), вся остальная
+    разметка/логика (формы, модалка удаления, поиск) — родная sqladmin.
+    """
+    templates_dir = os.path.join(os.path.dirname(__file__), "admin_templates")
+    admin = Admin(app, engine, base_url="/materials1", title="ЭлектроЩит — Админка", templates_dir=templates_dir)
     admin.add_view(MaterialAdmin)
     admin.add_view(BrandAdmin)
     return admin

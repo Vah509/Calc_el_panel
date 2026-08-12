@@ -1,0 +1,106 @@
+/* app/static/admin-theme.css
+   ============================================================
+   Кастомная тема для sqladmin ("админка") — поверх стандартных
+   стилей Tabler, чтобы приблизить внешний вид к остальному
+   приложению (та же палитра, что в style.css).
+
+   Модалок в sqladmin нет (кроме удаления — она встроена в
+   библиотеку и уже работает как модалка). Здесь только цвета,
+   шрифты, отступы — структура страниц остаётся родной sqladmin.
+   ============================================================ */
+
+:root {
+  --tblr-primary: #2c5f4f !important;
+  --tblr-primary-rgb: 44, 95, 79 !important;
+  --tblr-body-bg: #f5f5f3 !important;
+  --tblr-body-color: #1e1d1a !important;
+  --tblr-border-color: #dcdad4 !important;
+  --tblr-font-sans-serif: -apple-system, 'Segoe UI', Roboto, sans-serif !important;
+}
+
+body {
+  font-family: -apple-system, 'Segoe UI', Roboto, sans-serif !important;
+  font-size: 14px !important;
+  background: #f5f5f3 !important;
+}
+
+/* Тёмная боковая панель — приближаем к тёмной шапке остального приложения */
+.navbar-vertical {
+  background: #1e1d1a !important;
+}
+.navbar-brand h3 {
+  color: #ffffff !important;
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.02em;
+}
+.navbar-vertical .nav-link {
+  color: rgba(255, 255, 255, 0.75) !important;
+  font-size: 13px !important;
+}
+.navbar-vertical .nav-link:hover,
+.navbar-vertical .nav-link.active {
+  color: #ffffff !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* Таблица — как в остальном приложении: тонкие линии, без зебры */
+.table {
+  font-size: 13px !important;
+  background: #ffffff !important;
+}
+.table thead th {
+  font-size: 11px !important;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b6862 !important;
+  font-weight: 600 !important;
+  border-bottom: 1px solid #dcdad4 !important;
+  background: #ffffff !important;
+}
+.table tbody td {
+  padding: 10px 12px !important;
+  vertical-align: middle !important;
+  border-bottom: 1px solid #dcdad4 !important;
+}
+.table tbody tr:hover {
+  background: #faf9f6 !important;
+}
+.card {
+  border: 1px solid #dcdad4 !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+
+/* Кнопки — те же скругления и вес, что в остальном приложении */
+.btn {
+  border-radius: 6px !important;
+  font-weight: 500 !important;
+  font-size: 13px !important;
+}
+.btn-primary {
+  background: #2c5f4f !important;
+  border-color: #2c5f4f !important;
+}
+.btn-primary:hover {
+  background: #234a3e !important;
+  border-color: #234a3e !important;
+}
+
+/* Поиск */
+.form-control {
+  border-radius: 6px !important;
+  border-color: #b8b5ac !important;
+  font-size: 13px !important;
+}
+.form-control:focus {
+  border-color: #2c5f4f !important;
+  box-shadow: 0 0 0 2px rgba(44, 95, 79, 0.12) !important;
+}
+
+/* Заголовок страницы */
+.page-header h2, .page-title {
+  font-size: 16px !important;
+  font-weight: 600 !important;
+  color: #1e1d1a !important;
+}

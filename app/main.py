@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlmodel import Session, select, text
 
 from app.database import init_db, engine, get_session
-from app.routers import materials, brands
+from app.routers import materials, brands, materials_api, brands_api, alpine_pages
 
 app = FastAPI(title="ЭлектроЩит — Учёт калькуляций")
 
@@ -23,6 +23,12 @@ app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
 app.include_router(materials.router)
 app.include_router(brands.router)
+
+# ЭКСПЕРИМЕНТ: Alpine.js + JSON API — параллельные роуты, не
+# затрагивают текущие рабочие /materials и /brands на HTMX.
+app.include_router(materials_api.router)
+app.include_router(brands_api.router)
+app.include_router(alpine_pages.router)
 
 
 @app.on_event("startup")

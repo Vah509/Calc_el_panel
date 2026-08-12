@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block content %}
+<div x-data="brandsPage()" x-init="init()">
+
+  <div class="topbar">
+    <div class="topbar-title">
+      <h1>Бренды</h1>
+      <span class="count" x-text="brands.length + ' позиций'"></span>
+    </div>
+    <div style="display:flex; gap:8px;">
+      <button class="btn btn-primary" @click="openCreate()">+ Бренд</button>
+    </div>
+  </div>
+
+  <div class="filterbar">
+    <div class="search-wrap">
+      <input class="search-input" type="text" placeholder="Поиск по названию…"
+             x-model="q" @input.debounce.300ms="load()">
+      <button type="button" class="search-clear" title="Сбросить поиск" @click="q=''; load()">✕</button>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Название</th>
+          <th style="width:140px">Материалов</th>
+          <th style="width:70px"></th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="b in brands" :key="b.id">
+          <tr @click="openEdit(b)">
+            <td x-text="b.name"></td>
+            <td x-text="b.materials_count"></td>
+            <td></td>
+          </tr>
+        </template>
+        <tr x-show="brands.length === 0">
+          <td colspan="3" style="text-align:center; color:var(--ink-soft); padding:24px;">Ничего не найдено</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="modal-backdrop" x-show="modalOpen" x-cloak>
+    <div class="modal">
+      <div class="modal-header">
+        <div>
+          <h2 x-text="editing.id ? 'Редактирование бренда' : 'Новый бренд'"></h2>
+        </div>
+      </div>
+
+      <div class="modal-body">
+        <div class="field">
+          <label>Название</label>
+          <input type="text" required placeholder="ABB" x-model="editing.name">
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-danger-ghost" x-show="editing.id" @click="remove()">Удалить</button>
+        <span x-show="!editing.id"></span>
+        <div class="modal-footer-right">
+          <button type="button" class="btn btn-ghost" @click="close()">Закрыть</button>
+          <button type="button" class="btn btn-primary" @click="save()">Сохранить</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function brandsPage() {
+  return {
+    brands: [],
+    q: '',
+    modalOpen: false,
+    editing: {},
+
+    async init() {
+      await this.load();
+    },
+
+    async load() {
+      const params = new URLSearchParams();
+      if (this.q) params.set('q', this.q);
+      const res = await fetch('/api/brands?' + params.toString());
+      this.brands = await res.json();
+    },
+
+    openCreate() {
+      this.editing = { name: '' };
+      this.modalOpen = true;
+    },
+
+    openEdit(b) {
+      this.editing = { ...b };
+      this.modalOpen = true;
+    },
+
+    async save() {
+      const isEdit = !!this.editing.id;
+      const url = isEdit ? `/api/brands/${this.editing.id}` : '/api/brands';
+      const method = isEdit ? 'PUT' : 'POST';
+
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: this.editing.name })
+      });
+      if (!res.ok) { alert('Не удалось сохранить'); return; }
+
+      this.modalOpen = false;
+      await this.load();
+    },
+
+    async remove() {
+      const res = await fetch(`/api/brands/${this.editing.id}`, { method: 'DELETE' });
+      if (!res.ok) { alert('Не удалось удалить (возможно, есть привязанные материалы)'); return; }
+
+      this.modalOpen = false;
+      await this.load();
+    },
+
+    close() {
+      this.modalOpen = false;
+    }
+  };
+}
+</script>
+{% endblock %}

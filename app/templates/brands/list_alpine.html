@@ -2,6 +2,8 @@
 {% block content %}
 <div x-data="brandsPage()" x-init="init()">
 
+  <div id="js-error-banner" style="display:none; background:#f3e6e3; border:1px solid #9c3b2e; color:#9c3b2e; padding:10px 16px; margin:0 0 12px; font-family:monospace; font-size:12px; white-space:pre-wrap;"></div>
+
   <div class="topbar">
     <div class="topbar-title">
       <h1>Бренды</h1>
@@ -73,6 +75,22 @@
 </div>
 
 <script>
+window.addEventListener('error', function(e) {
+  var banner = document.getElementById('js-error-banner');
+  if (banner) {
+    banner.style.display = 'block';
+    banner.textContent = 'JS-ошибка: ' + e.message + '\n(строка ' + e.lineno + ', колонка ' + e.colno + ')';
+  }
+});
+
+function showJsError(err) {
+  var banner = document.getElementById('js-error-banner');
+  if (banner) {
+    banner.style.display = 'block';
+    banner.textContent = 'JS-ошибка: ' + (err && err.message ? err.message : err);
+  }
+}
+
 function brandsPage() {
   return {
     brands: [],
@@ -81,52 +99,72 @@ function brandsPage() {
     editing: {},
 
     async init() {
-      await this.load();
+      try { await this.load(); } catch (err) { showJsError(err); }
     },
 
     async load() {
-      const params = new URLSearchParams();
-      if (this.q) params.set('q', this.q);
-      const res = await fetch('/api/brands?' + params.toString());
-      this.brands = await res.json();
+      try {
+        const params = new URLSearchParams();
+        if (this.q) params.set('q', this.q);
+        const res = await fetch('/api/brands?' + params.toString());
+        this.brands = await res.json();
+      } catch (err) { showJsError(err); }
     },
 
     openCreate() {
-      this.editing = { name: '' };
-      this.modalOpen = true;
+      try {
+        this.editing = { name: '' };
+        this.modalOpen = true;
+      } catch (err) { showJsError(err); }
     },
 
     openEdit(b) {
-      this.editing = { ...b };
-      this.modalOpen = true;
+      try {
+        this.editing = { ...b };
+        this.modalOpen = true;
+      } catch (err) { showJsError(err); }
     },
 
     async save() {
-      const isEdit = !!this.editing.id;
-      const url = isEdit ? `/api/brands/${this.editing.id}` : '/api/brands';
-      const method = isEdit ? 'PUT' : 'POST';
+      try {
+        const isEdit = !!this.editing.id;
+        const url = isEdit ? `/api/brands/${this.editing.id}` : '/api/brands';
+        const method = isEdit ? 'PUT' : 'POST';
 
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: this.editing.name })
-      });
-      if (!res.ok) { alert('Не удалось сохранить'); return; }
+        const res = await fetch(url, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: this.editing.name })
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          showJsError('Сервер ответил ' + res.status + ': ' + text);
+          return;
+        }
 
-      this.modalOpen = false;
-      await this.load();
+        this.modalOpen = false;
+        await this.load();
+      } catch (err) { showJsError(err); }
     },
 
     async remove() {
-      const res = await fetch(`/api/brands/${this.editing.id}`, { method: 'DELETE' });
-      if (!res.ok) { alert('Не удалось удалить (возможно, есть привязанные материалы)'); return; }
+      try {
+        const res = await fetch(`/api/brands/${this.editing.id}`, { method: 'DELETE' });
+        if (!res.ok) {
+          const text = await res.text();
+          showJsError('Не удалось удалить. Сервер ответил ' + res.status + ': ' + text);
+          return;
+        }
 
-      this.modalOpen = false;
-      await this.load();
+        this.modalOpen = false;
+        await this.load();
+      } catch (err) { showJsError(err); }
     },
 
     close() {
-      this.modalOpen = false;
+      try {
+        this.modalOpen = false;
+      } catch (err) { showJsError(err); }
     }
   };
 }

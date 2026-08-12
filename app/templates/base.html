@@ -56,7 +56,7 @@
 </head>
 <body>
 <nav class="topnav" x-data="{ refOpen: false }">
-  <div class="topnav-brand">ЭлектроЩит <span style="opacity:0.5; font-weight:400; font-size:0.75em;">v12-brands-error-banner</span></div>
+  <div class="topnav-brand">ЭлектроЩит <span style="opacity:0.5; font-weight:400; font-size:0.75em;">v13-nav-points-to-alpine</span></div>
   <div class="topnav-menu">
     <div class="nav-dropdown" @click.outside="refOpen = false">
       <button class="nav-dropdown-btn" @click="refOpen = !refOpen" :class="{active: refOpen}">
@@ -64,8 +64,8 @@
         <span class="nav-caret">▾</span>
       </button>
       <div class="nav-dropdown-list" x-show="refOpen" x-cloak x-transition>
-        <a href="/materials" class="nav-dropdown-item">Материалы</a>
-        <a href="/brands" class="nav-dropdown-item">Бренды</a>
+        <a href="/materials-alpine" class="nav-dropdown-item">Материалы</a>
+        <a href="/brands-alpine" class="nav-dropdown-item">Бренды</a>
       </div>
     </div>
   </div>

@@ -16,6 +16,7 @@ from sqlmodel import Session, select, text
 from app.database import init_db, engine, get_session
 from app.routers import materials, brands, materials_api, brands_api, alpine_pages
 from app.admin import register_admin
+from app.engine.register import register_engine_tables
 
 app = FastAPI(title="ЭлектроЩит — Учёт калькуляций")
 
@@ -23,7 +24,7 @@ app = FastAPI(title="ЭлектроЩит — Учёт калькуляций")
 # чтобы всегда было видно, какая версия сейчас открыта в браузере.
 # Обновляется вручную при каждой значимой заливке — см. напоминание
 # в конце ответа Claude при отправке нового архива.
-APP_VERSION = "v16-admin-theme"
+APP_VERSION = "v17-universal-engine"
 
 _static_dir = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=_static_dir), name="static")
@@ -39,6 +40,12 @@ app.include_router(alpine_pages.router)
 
 # ЭКСПЕРИМЕНТ: sqladmin — готовая CRUD-админка на /materials1.
 register_admin(app)
+
+# УНИВЕРСАЛЬНЫЙ ДВИЖОК: обкатка на материалах и брендах.
+# Пути: /material-v2, /brand-v2 (API: /api/material, /api/brand) —
+# суффикс -v2, чтобы не пересекаться с существующими страницами
+# на время обкатки.
+register_engine_tables(app)
 
 
 @app.on_event("startup")

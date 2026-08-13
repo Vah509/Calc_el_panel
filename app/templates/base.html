@@ -55,22 +55,11 @@
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<nav class="topnav" x-data="{ refOpen: false }">
-  <div class="topnav-brand">ЭлектроЩит <span style="opacity:0.5; font-weight:400; font-size:0.75em;">v22-search-toggles-two-rows</span></div>
+<nav class="topnav">
+  <div class="topnav-brand">ЭлектроЩит <span style="opacity:0.5; font-weight:400; font-size:0.75em;">v23-menu-cleanup</span></div>
   <div class="topnav-menu">
-    <div class="nav-dropdown" @click.outside="refOpen = false">
-      <button class="nav-dropdown-btn" @click="refOpen = !refOpen" :class="{active: refOpen}">
-        Справочники
-        <span class="nav-caret">▾</span>
-      </button>
-      <div class="nav-dropdown-list" x-show="refOpen" x-cloak x-transition>
-        <a href="/materials-alpine" class="nav-dropdown-item">Материалы</a>
-        <a href="/brands-alpine" class="nav-dropdown-item">Бренды</a>
-        <a href="/materials1" class="nav-dropdown-item">Материалы1 (sqladmin)</a>
-        <a href="/material-v2" class="nav-dropdown-item">Материалы (движок)</a>
-        <a href="/brand-v2" class="nav-dropdown-item">Бренды (движок)</a>
-      </div>
-    </div>
+    <a href="/material-v2" class="nav-link">Материалы</a>
+    <a href="/brand-v2" class="nav-link">Бренды</a>
   </div>
 </nav>
 <main class="page-main">

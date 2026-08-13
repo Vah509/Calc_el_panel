@@ -67,6 +67,14 @@ body {
 .btn-danger-ghost:hover { background: #f3e6e3; }
 
 /* ── Filter row ───────────────────────── */
+.search-toggles-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 20px 0;
+  background: var(--panel);
+  align-items: center;
+}
 .filterbar {
   display: flex;
   gap: 8px;

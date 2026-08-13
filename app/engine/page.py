@@ -36,21 +36,23 @@ _PAGE_TEMPLATE_SOURCE = r"""
     </div>
   </div>
 
-  <div class="filterbar">
-    <div class="search-wrap">
-      <input class="search-input" type="text" placeholder="{{ config.search_placeholder }}"
-             x-model="q" @input.debounce.300ms="load()">
-      <button type="button" class="search-clear" title="Сбросить поиск" @click="q=''; load()">✕</button>
-    </div>
-    {% if config.enable_search_toggles and toggleable_search_fields %}
-    <span style="width:1px;height:20px;background:var(--line);margin:0 4px;"></span>
+  {% if config.enable_search_toggles and toggleable_search_fields %}
+  <div class="search-toggles-row">
     {% for f in toggleable_search_fields %}
     <label class="search-toggle-chip">
       <input type="checkbox" x-model="searchFields['{{ f.name }}']" @change="onSearchFieldsChange()">
       {{ f.label }}
     </label>
     {% endfor %}
-    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="filterbar">
+    <div class="search-wrap">
+      <input class="search-input" type="text" placeholder="{{ config.search_placeholder }}"
+             x-model="q" @input.debounce.300ms="load()">
+      <button type="button" class="search-clear" title="Сбросить поиск" @click="q=''; load()">✕</button>
+    </div>
     {% if config.relations %}
     {% for rel in config.relations %}
     <span style="width:1px;height:20px;background:var(--line);margin:0 4px;"></span>
@@ -61,6 +63,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
     </template>
     {% endfor %}
     {% endif %}
+
   </div>
 
   <div class="table-wrap">
@@ -209,9 +212,11 @@ function enginePage() {
     async init() {
       try {
         for (const f of CONFIG.toggleableSearchFields) {
-          // все чекбоксы включены по умолчанию — при первом заходе
-          // ведём себя как раньше: ищем по всем searchable-полям сразу.
-          this.searchFields[f.name] = true;
+          // состояние чекбокса при первой загрузке — берётся из
+          // search_default конкретного поля (см. FieldConfig); дальше
+          // человек может переключать вручную, выбор держится, пока
+          // страница открыта (не сбрасывается при новом поиске/фильтре).
+          this.searchFields[f.name] = f.default;
         }
         for (const rel of CONFIG.relations) {
           const res = await fetch('/api/' + rel.target_table);
@@ -461,7 +466,7 @@ def render_table_page(config: TableConfig, jinja_env) -> str:
             for p in config.computed_pairs
         ],
         "toggleableSearchFields": [
-            {"name": f.name, "label": f.label}
+            {"name": f.name, "label": f.label, "default": f.search_default}
             for f in config.toggleable_search_fields()
         ] if config.enable_search_toggles else [],
         "alwaysSearchedFields": config.always_searched_fields() if config.enable_search_toggles else [],

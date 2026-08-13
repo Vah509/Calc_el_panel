@@ -18,7 +18,7 @@
 # ============================================================
 
 from typing import Any, Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select, func
 
 from app.database import get_session
@@ -85,14 +85,24 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
     @router.get("")
     def list_items(
         q: Optional[str] = None,
+        search_fields: Optional[list[str]] = Query(default=None),
+        # Если передан — ищем ТОЛЬКО по перечисленным полям (пересечённым
+        # с config.searchable_fields() из соображений безопасности —
+        # нельзя искать по произвольному полю модели через query-параметр).
+        # Если не передан — обратная совместимость: ищем по всем
+        # searchable-полям таблицы, как было раньше.
         brand_id: Optional[int] = None,  # временно явный параметр под текущий кейс материалов;
                                            # при появлении других relation-фильтров обобщим до query-строки
         session: Session = Depends(get_engine_session),
     ):
         statement = select(model)
-        searchable = config.searchable_fields()
-        if q and searchable:
-            conditions = [func.lower(getattr(model, f)).contains(q.lower()) for f in searchable]
+        all_searchable = config.searchable_fields()
+        if search_fields is not None:
+            active_fields = [f for f in search_fields if f in all_searchable]
+        else:
+            active_fields = all_searchable
+        if q and active_fields:
+            conditions = [func.lower(getattr(model, f)).contains(q.lower()) for f in active_fields]
             combined = conditions[0]
             for c in conditions[1:]:
                 combined = combined | c

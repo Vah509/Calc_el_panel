@@ -43,6 +43,11 @@ class FieldConfig:
     in_list: bool = True           # показывать в таблице списка
     list_width: Optional[str] = None   # например "26%" или "100px"
     searchable: bool = False       # участвует в текстовом поиске (q=...)
+    search_toggle: bool = True     # если searchable=True и на таблице включены
+                                    # enable_search_toggles — показывать ли для
+                                    # этого поля отдельный чекбокс "искать по …"
+                                    # (True) или включать его в поиск всегда,
+                                    # без отдельного управления (False)
     is_numeric: bool = False       # для выравнивания по правому краю и форматирования
     in_form: bool = True           # показывать в форме модалки (по умолчанию — да)
     form_width: Optional[str] = None   # фиксированная ширина поля в форме, например "140px";
@@ -113,9 +118,26 @@ class TableConfig:
     relations: list[Relation] = field(default_factory=list)
     form_rows: list[FormRow] = field(default_factory=list)
     search_placeholder: str = "Поиск…"
+    enable_search_toggles: bool = False
+    # Если True — на странице сверху под строкой поиска показываются
+    # чекбоксы "искать по <label>" для каждого searchable-поля, и
+    # пользователь может включать/выключать поля поиска по отдельности.
+    # Общий принцип поиска (искать по всем searchable через ?q=) не
+    # меняется — эта опция лишь добавляет фильтр по конкретным полям
+    # поверх него, через ?q=...&search_fields=name1&search_fields=name2.
 
     def field_names(self) -> list[str]:
         return [f.name for f in self.fields]
 
     def searchable_fields(self) -> list[str]:
         return [f.name for f in self.fields if f.searchable]
+
+    def toggleable_search_fields(self) -> list[FieldConfig]:
+        """Поля, для которых показывается отдельный чекбокс поиска
+        (searchable=True и search_toggle=True)."""
+        return [f for f in self.fields if f.searchable and f.search_toggle]
+
+    def always_searched_fields(self) -> list[str]:
+        """Searchable-поля, которые ищутся всегда, независимо от
+        состояния чекбоксов (searchable=True, но search_toggle=False)."""
+        return [f.name for f in self.fields if f.searchable and not f.search_toggle]

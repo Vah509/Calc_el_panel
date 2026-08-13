@@ -30,7 +30,8 @@ material_table = TableConfig(
     model=Material,
     title="Материалы",
     title_singular="материал",
-    search_placeholder="Поиск по short_name или артикулу…",
+    search_placeholder="Поиск по названию или артикулу…",
+    enable_search_toggles=True,
     fields=[
         FieldConfig(name="short_name", label="Short name", required=True,
                     placeholder="ABB S203 C16", searchable=True, list_width="22%"),
@@ -38,7 +39,7 @@ material_table = TableConfig(
                     placeholder="Автоматический выключатель 3P C16 6kA", searchable=True, list_width="22%"),
         FieldConfig(name="brand_id", label="Бренд", widget="select"),
         FieldConfig(name="sku_article", label="Артикул производителя",
-                    placeholder="2CDS253001R0164", searchable=True, list_width="110px"),
+                    placeholder="2CDS253001R0164", searchable=True, search_toggle=False, list_width="110px"),
         FieldConfig(name="price_excl_vat", label="Цена без НДС", widget="number",
                     is_numeric=True, list_width="100px"),
         FieldConfig(name="price_incl_vat", label="Цена с НДС", widget="number",

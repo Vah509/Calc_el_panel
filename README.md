@@ -11,6 +11,7 @@
 - `app/static/` — статика (CSS)
 - `requirements.txt` — Python-зависимости
 - `Dockerfile` — сборка образа, включает системные библиотеки для WeasyPrint (генерация PDF) и Tesseract OCR (распознавание счетов)
+- `app/engine/` — универсальный CRUD-движок (документация: `app/engine/ENGINE.md`)
 
 ## Обновление проекта
 

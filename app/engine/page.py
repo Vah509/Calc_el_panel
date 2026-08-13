@@ -42,6 +42,15 @@ _PAGE_TEMPLATE_SOURCE = r"""
              x-model="q" @input.debounce.300ms="load()">
       <button type="button" class="search-clear" title="Сбросить поиск" @click="q=''; load()">✕</button>
     </div>
+    {% if config.enable_search_toggles and toggleable_search_fields %}
+    <span style="width:1px;height:20px;background:var(--line);margin:0 4px;"></span>
+    {% for f in toggleable_search_fields %}
+    <label class="search-toggle-chip">
+      <input type="checkbox" x-model="searchFields['{{ f.name }}']" @change="onSearchFieldsChange()">
+      {{ f.label }}
+    </label>
+    {% endfor %}
+    {% endif %}
     {% if config.relations %}
     {% for rel in config.relations %}
     <span style="width:1px;height:20px;background:var(--line);margin:0 4px;"></span>
@@ -192,12 +201,18 @@ function enginePage() {
     items: [],
     relationOptions: {},
     activeFilters: {},
+    searchFields: {},
     q: '',
     modalOpen: false,
     editing: {},
 
     async init() {
       try {
+        for (const f of CONFIG.toggleableSearchFields) {
+          // все чекбоксы включены по умолчанию — при первом заходе
+          // ведём себя как раньше: ищем по всем searchable-полям сразу.
+          this.searchFields[f.name] = true;
+        }
         for (const rel of CONFIG.relations) {
           const res = await fetch('/api/' + rel.target_table);
           this.relationOptions[rel.field] = await res.json();
@@ -215,10 +230,25 @@ function enginePage() {
       return found ? found.name : '';
     },
 
+    onSearchFieldsChange() {
+      try { this.load(); } catch (err) { showJsError(err); }
+    },
+
     async load() {
       try {
         const params = new URLSearchParams();
         if (this.q) params.set('q', this.q);
+        if (CONFIG.toggleableSearchFields.length > 0) {
+          // Явно передаём набор активных полей поиска — какие из
+          // toggleable-полей отмечены галочкой + всегда-искомые поля
+          // (searchable=True, search_toggle=False, например артикул).
+          for (const f of CONFIG.toggleableSearchFields) {
+            if (this.searchFields[f.name]) params.append('search_fields', f.name);
+          }
+          for (const name of CONFIG.alwaysSearchedFields) {
+            params.append('search_fields', name);
+          }
+        }
         for (const [field, value] of Object.entries(this.activeFilters)) {
           if (value !== null && value !== undefined) params.set(field, value);
         }
@@ -430,9 +460,15 @@ def render_table_page(config: TableConfig, jinja_env) -> str:
             }
             for p in config.computed_pairs
         ],
+        "toggleableSearchFields": [
+            {"name": f.name, "label": f.label}
+            for f in config.toggleable_search_fields()
+        ] if config.enable_search_toggles else [],
+        "alwaysSearchedFields": config.always_searched_fields() if config.enable_search_toggles else [],
     }, ensure_ascii=False)
 
     form_layout = _build_form_layout(config)
+    toggleable_search_fields = config.toggleable_search_fields() if config.enable_search_toggles else []
 
     template = jinja_env.from_string(_PAGE_TEMPLATE_SOURCE)
     return template.render(
@@ -440,4 +476,5 @@ def render_table_page(config: TableConfig, jinja_env) -> str:
         config_json=config_json,
         form_layout=form_layout,
         computed_field_names=computed_field_names,
+        toggleable_search_fields=toggleable_search_fields,
     )

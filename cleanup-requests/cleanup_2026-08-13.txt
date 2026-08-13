@@ -1,0 +1,23 @@
+# Очистка после перехода Материалов и Брендов на универсальный движок
+# (v23-menu-cleanup). Всё перечисленное заменено /material-v2, /brand-v2.
+# Соответствующие импорты и подключения роутеров убраны из app/main.py
+# отдельным архивом (ai-updates/), заливается вместе с этим списком.
+
+# Старые HTMX-роутеры и API
+app/routers/materials.py
+app/routers/brands.py
+app/routers/materials_api.py
+app/routers/brands_api.py
+app/routers/alpine_pages.py
+
+# sqladmin-эксперимент (/materials1)
+app/admin.py
+app/admin_templates
+app/static/admin-theme.css
+
+# Шаблоны старых страниц (list.html, list_alpine.html, _form.html, _row.html, _tbody.html)
+app/templates/materials
+app/templates/brands
+
+# Мусорный zip, оставшийся в репозитории с прошлых сессий
+app/step2-nav-brands-modal-fix.zip

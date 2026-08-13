@@ -4,59 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{% block title %}ЭлектроЩит — Учёт калькуляций{% endblock %}</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/htmx/1.9.10/htmx.min.js"></script>
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.13.5/cdn.min.js"></script>
-<script>
-  // ВАЖНО: этот <script> выполняется в <head>, ДО того как <body>
-  // появится в DOM (парсинг ещё не дошёл до него) — поэтому вся логика,
-  // обращающаяся к document.body или другим элементам страницы, обёрнута
-  // в DOMContentLoaded. Раньше document.body.addEventListener(...) здесь
-  // вызывался напрямую и падал с ошибкой (document.body === null),
-  // из-за чего весь скрипт обрывался и window.__closeModal никогда не
-  // определялась — отсюда и не работавшие кнопки закрытия окна.
-  document.addEventListener('DOMContentLoaded', () => {
-    // HTMX подменяет часть DOM динамически (модалки, обновлённые списки).
-    // Alpine сам инициализирует только то, что было в HTML при первой
-    // загрузке страницы — всё, что HTMX вставляет ПОСЛЕ этого, нужно
-    // инициализировать вручную, иначе x-data/x-model/@click в новой
-    // разметке останутся "мёртвыми".
-    // Обновление #materials-tbody / #brands-tbody после create/update/
-    // delete закрывает модалку — слушаем реальное событие htmx:afterSwap
-    // на конкретном элементе-цели (стандартное событие HTMX, всегда
-    // всплывает до body), а не кастомные события из HX-Trigger-
-    // заголовков: у HX-Trigger-After-Swap есть известный баг, когда
-    // событие не всплывает до body, и HX-Trigger срабатывает раньше
-    // самого swap — оба варианта ненадёжны для этой цели.
-    document.body.addEventListener('htmx:afterSwap', (event) => {
-      if (window.Alpine) {
-        window.Alpine.initTree(event.target);
-      }
-      if (event.target && (event.target.id === 'materials-tbody' || event.target.id === 'brands-tbody')) {
-        window.__closeModal();
-      }
-    });
-  });
-
-  // Закрытие модалки — простое и без подтверждений. Кнопка "Закрыть"
-  // вызывает это напрямую; сохранение/удаление закрывают модалку через
-  // событие выше (сервер шлёт HX-Trigger после успешного ответа).
-  // Определяется сразу (не внутри DOMContentLoaded), т.к. не трогает body.
-  window.__closeModal = function () {
-    const slot = document.getElementById('modal-slot');
-    if (slot) slot.innerHTML = '';
-  };
-
-  // Совместимость со старой формой брендов (ещё не переведена на новый
-  // паттерн — сделаем по аналогии отдельным шагом). __modalDirty больше
-  // ничего не проверяет, просто чтобы не было ошибки "not a function".
-  window.__modalDirty = false;
-  window.__tryCloseModal = window.__closeModal;
-</script>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 <nav class="topnav">
-  <div class="topnav-brand">ЭлектроЩит <span style="opacity:0.5; font-weight:400; font-size:0.75em;">v23-menu-cleanup</span></div>
+  <div class="topnav-brand">ЭлектроЩит <span style="opacity:0.5; font-weight:400; font-size:0.75em;">v24-cleanup</span></div>
   <div class="topnav-menu">
     <a href="/material-v2" class="nav-link">Материалы</a>
     <a href="/brand-v2" class="nav-link">Бренды</a>

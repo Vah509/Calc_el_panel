@@ -11,11 +11,9 @@ import os
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from sqlmodel import Session, select, text
+from sqlmodel import Session, text
 
-from app.database import init_db, engine, get_session
-from app.routers import materials, brands, materials_api, brands_api, alpine_pages
-from app.admin import register_admin
+from app.database import init_db, engine
 from app.engine.register import register_engine_tables
 
 app = FastAPI(title="ЭлектроЩит — Учёт калькуляций")
@@ -24,27 +22,16 @@ app = FastAPI(title="ЭлектроЩит — Учёт калькуляций")
 # чтобы всегда было видно, какая версия сейчас открыта в браузере.
 # Обновляется вручную при каждой значимой заливке — см. напоминание
 # в конце ответа Claude при отправке нового архива.
-APP_VERSION = "v23-menu-cleanup"
+APP_VERSION = "v24-cleanup"
 
 _static_dir = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
-app.include_router(materials.router)
-app.include_router(brands.router)
-
-# ЭКСПЕРИМЕНТ: Alpine.js + JSON API — параллельные роуты, не
-# затрагивают текущие рабочие /materials и /brands на HTMX.
-app.include_router(materials_api.router)
-app.include_router(brands_api.router)
-app.include_router(alpine_pages.router)
-
-# ЭКСПЕРИМЕНТ: sqladmin — готовая CRUD-админка на /materials1.
-register_admin(app)
-
-# УНИВЕРСАЛЬНЫЙ ДВИЖОК: обкатка на материалах и брендах.
-# Пути: /material-v2, /brand-v2 (API: /api/material, /api/brand) —
-# суффикс -v2, чтобы не пересекаться с существующими страницами
-# на время обкатки.
+# Материалы и Бренды: только универсальный движок. Старые HTMX/Alpine/
+# sqladmin варианты (materials.py, brands.py, materials_api.py,
+# brands_api.py, alpine_pages.py, admin.py) удалены после того, как
+# движок доказал себя рабочим — см. docs/HANDOFF.md.
+# Пути: /material-v2, /brand-v2 (API: /api/material, /api/brand).
 register_engine_tables(app)
 
 
@@ -68,4 +55,4 @@ def health():
 
 @app.get("/")
 def root():
-    return RedirectResponse(url="/materials")
+    return RedirectResponse(url="/material-v2")

@@ -22,7 +22,7 @@ app = FastAPI(title="ЭлектроЩит — Учёт калькуляций")
 # чтобы всегда было видно, какая версия сейчас открыта в браузере.
 # Обновляется вручную при каждой значимой заливке — см. напоминание
 # в конце ответа Claude при отправке нового архива.
-APP_VERSION = "v24-cleanup"
+APP_VERSION = "v25"
 
 _static_dir = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=_static_dir), name="static")

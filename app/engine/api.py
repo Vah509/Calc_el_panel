@@ -80,8 +80,6 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
     def _serialize(instance) -> dict[str, Any]:
         return {name: getattr(instance, name) for name in field_names} | {"id": instance.id}
 
-    relation_fields = [r.field for r in config.relations]
-
     @router.get("")
     def list_items(
         q: Optional[str] = None,

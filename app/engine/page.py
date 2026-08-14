@@ -403,16 +403,6 @@ function enginePage() {
           showJsError('Не удалось удалить. ' + await extractErrorMessage(res));
           return;
         }
-        if (CONFIG.softDelete) {
-          // Переключение пометки, не физическое удаление — запись
-          // остаётся, просто обновляем её статус и список, модалку
-          // не закрываем (человек может сразу же передумать и
-          // нажать ещё раз "Отменить"/"Удалить").
-          const data = await res.json();
-          this.editing.is_deleted = data.is_deleted;
-          await this.load();
-          return;
-        }
         this.modalOpen = false;
         await this.load();
       } catch (err) { showJsError(err); }

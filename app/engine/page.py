@@ -32,7 +32,9 @@ _PAGE_TEMPLATE_SOURCE = r"""
       <span class="count" x-text="items.length + ' позиций'"></span>
     </div>
     <div style="display:flex; gap:8px;">
+      {% if config.allow_create %}
       <button class="btn btn-primary" @click="openCreate()">+ {{ config.title_singular|capitalize }}</button>
+      {% endif %}
     </div>
   </div>
 
@@ -125,6 +127,8 @@ _PAGE_TEMPLATE_SOURCE = r"""
                 <option :value="opt.id" x-text="opt.name"></option>
               </template>
             </select>
+            {% elif f.readonly %}
+            <span class="field-readonly-text" x-text="editing.{{ f.name }} ?? ''"></span>
             {% elif f.name in computed_field_names %}
             <input type="number" step="0.01" x-model.number="editing.{{ f.name }}" @input="onComputedChange('{{ f.name }}')">
             {% elif f.widget == "number" %}
@@ -142,7 +146,11 @@ _PAGE_TEMPLATE_SOURCE = r"""
       </div>
 
       <div class="modal-footer">
+        {% if config.allow_delete %}
         <button type="button" class="btn btn-danger-ghost" x-show="editing.id" @click="remove()">Удалить</button>
+        {% else %}
+        <span></span>
+        {% endif %}
         <span x-show="!editing.id"></span>
         <div class="modal-footer-right">
           <button type="button" class="btn btn-ghost" @click="close()">Закрыть</button>

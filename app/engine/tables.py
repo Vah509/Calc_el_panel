@@ -11,6 +11,7 @@
 from app.engine.config import TableConfig, FieldConfig, ComputedPair, Relation, FormRow
 from app.models.material import Material
 from app.models.brand import Brand
+from app.models.constant import Constant
 
 
 brand_table = TableConfig(
@@ -68,4 +69,23 @@ material_table = TableConfig(
 )
 
 
-ALL_TABLES = [brand_table, material_table]
+constant_table = TableConfig(
+    key="constant",
+    model=Constant,
+    title="Константы",
+    title_singular="константа",
+    search_placeholder="Поиск по названию…",
+    # Набор ключей фиксирован и задаётся один раз seed_constants()
+    # при старте (см. app/database.py) — через UI создавать/удалять
+    # записи нельзя, только менять value уже существующих.
+    allow_create=False,
+    allow_delete=False,
+    fields=[
+        FieldConfig(name="key", label="Ключ", readonly=True, searchable=True, list_width="26%"),
+        FieldConfig(name="value", label="Значение", list_width="18%"),
+        FieldConfig(name="description", label="Описание", readonly=True, in_form=False),
+    ],
+)
+
+
+ALL_TABLES = [brand_table, material_table, constant_table]

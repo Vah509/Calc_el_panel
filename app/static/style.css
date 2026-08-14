@@ -196,6 +196,7 @@ tbody tr:hover { background: #faf9f6; }
   background: white;
 }
 .field input:focus, .field select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.field-readonly-text { padding: 8px 10px; font-size: 13.5px; color: var(--ink-soft); background: var(--bg-soft, #f4f3f1); border-radius: 6px; }
 .field-row { display: flex; flex-wrap: wrap; gap: 12px; }
 .field-row .field { flex: 1 1 140px; min-width: 0; }
 

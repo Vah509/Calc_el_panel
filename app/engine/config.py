@@ -58,6 +58,9 @@ class FieldConfig:
                                         # если не задано — поле растягивается на всю доступную ширину ряда
     default: Any = None            # значение по умолчанию при создании новой записи
                                     # (если None — используется 0 для числовых, '' для текстовых)
+    readonly: bool = False         # поле показывается в форме как обычный текст,
+                                    # не как input — редактировать нельзя ни через
+                                    # форму, ни через API (см. update_item в api.py)
 
 
 @dataclass
@@ -129,6 +132,12 @@ class TableConfig:
     # Общий принцип поиска (искать по всем searchable через ?q=) не
     # меняется — эта опция лишь добавляет фильтр по конкретным полям
     # поверх него, через ?q=...&search_fields=name1&search_fields=name2.
+    allow_create: bool = True      # False — кнопка "+ Добавить" скрыта, POST
+                                    # эндпоинт запрещён (422). Для справочников,
+                                    # где набор записей фиксирован (constants —
+                                    # ключи задаются только через seed при старте).
+    allow_delete: bool = True      # False — кнопка "Удалить" в модалке скрыта,
+                                    # DELETE эндпоинт запрещён (422).
 
     def field_names(self) -> list[str]:
         return [f.name for f in self.fields]

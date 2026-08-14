@@ -13,7 +13,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlmodel import Session, text
 
-from app.database import init_db, engine
+from app.database import init_db, engine, seed_constants
 from app.engine.register import register_engine_tables
 
 app = FastAPI(title="ЭлектроЩит — Учёт калькуляций")
@@ -22,7 +22,7 @@ app = FastAPI(title="ЭлектроЩит — Учёт калькуляций")
 # чтобы всегда было видно, какая версия сейчас открыта в браузере.
 # Обновляется вручную при каждой значимой заливке — см. напоминание
 # в конце ответа Claude при отправке нового архива.
-APP_VERSION = "v25"
+APP_VERSION = "v26"
 
 _static_dir = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=_static_dir), name="static")
@@ -38,6 +38,7 @@ register_engine_tables(app)
 @app.on_event("startup")
 def on_startup():
     init_db()
+    seed_constants()
 
 
 @app.get("/health")

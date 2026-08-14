@@ -30,6 +30,7 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
     router = APIRouter(prefix=f"/api/{config.key}", tags=[f"{config.key}-api"])
     model = config.model
     field_names = config.field_names()
+    readonly_field_names = {f.name for f in config.fields if f.readonly}
 
     def _validate_required(data: dict[str, Any]) -> None:
         """Проверяет все обязательные поля таблицы. Если что-то не
@@ -112,6 +113,11 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
 
     @router.post("")
     def create_item(payload: dict[str, Any], session: Session = Depends(get_engine_session)):
+        if not config.allow_create:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Создание новых записей в «{config.title}» через интерфейс отключено.",
+            )
         data = {k: v for k, v in payload.items() if k in field_names or k == "_changed_field"}
         _validate_required(data)
         data = _apply_computed_pairs(data)
@@ -128,7 +134,10 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
         if not instance:
             raise HTTPException(status_code=404, detail=f"{config.title_singular} не найден(а)")
 
-        data = {k: v for k, v in payload.items() if k in field_names or k == "_changed_field"}
+        data = {
+            k: v for k, v in payload.items()
+            if (k in field_names and k not in readonly_field_names) or k == "_changed_field"
+        }
         _validate_required(data)
         data = _apply_computed_pairs(data)
 
@@ -143,6 +152,11 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
 
     @router.delete("/{item_id}")
     def delete_item(item_id: int, session: Session = Depends(get_engine_session)):
+        if not config.allow_delete:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Удаление записей в «{config.title}» через интерфейс отключено.",
+            )
         instance = session.get(model, item_id)
         if not instance:
             raise HTTPException(status_code=404, detail=f"{config.title_singular} не найден(а)")

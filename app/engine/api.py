@@ -116,6 +116,11 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
         # searchable-полям таблицы, как было раньше.
         brand_id: Optional[int] = None,  # временно явный параметр под текущий кейс материалов;
                                            # при появлении других relation-фильтров обобщим до query-строки
+        sort_by: Optional[str] = None,   # имя поля для сортировки — только из field_names()
+                                           # (проверяется ниже), иначе игнорируется молча,
+                                           # чтобы нельзя было сортировать по произвольному
+                                           # атрибуту модели через query-параметр
+        sort_dir: str = "asc",           # "asc" | "desc"; любое другое значение — как "asc"
         session: Session = Depends(get_engine_session),
     ):
         statement = select(model)
@@ -132,6 +137,16 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
             statement = statement.where(combined)
         if brand_id is not None and "brand_id" in field_names:
             statement = statement.where(getattr(model, "brand_id") == brand_id)
+
+        if sort_by and sort_by in field_names:
+            column = getattr(model, sort_by)
+            field_cfg = next((f for f in config.fields if f.name == sort_by), None)
+            # Текстовые поля сортируем без учёта регистра (func.lower) —
+            # иначе "Яблоко" и "яблоко" расходятся по разным местам
+            # списка. Числовые поля — обычный ORDER BY по значению.
+            order_col = column if (field_cfg and field_cfg.is_numeric) else func.lower(column)
+            statement = statement.order_by(order_col.desc() if sort_dir == "desc" else order_col.asc())
+
         items = session.exec(statement).all()
         return [_serialize(i) for i in items]
 

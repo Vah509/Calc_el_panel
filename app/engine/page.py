@@ -76,7 +76,14 @@ _PAGE_TEMPLATE_SOURCE = r"""
           <th style="width:28px"></th>
           {% endif %}
           {% for f in config.fields %}{% if f.in_list %}
-          <th{% if f.list_width %} style="width:{{ f.list_width }}"{% endif %}{% if f.is_numeric %} class="col-num"{% endif %}>{{ f.label }}</th>
+          {% set rel = config.relations | selectattr("field", "equalto", f.name) | first %}
+          <th{% if f.list_width %} style="width:{{ f.list_width }}"{% endif %}{% if f.is_numeric %} class="col-num"{% endif %}
+              {% if not rel %}class="col-sortable" @click="toggleSort('{{ f.name }}')"{% endif %}>
+            {{ f.label }}
+            {% if not rel %}
+            <span x-show="sortBy === '{{ f.name }}'" x-text="sortDir === 'asc' ? '▲' : '▼'" class="sort-arrow"></span>
+            {% endif %}
+          </th>
           {% endif %}{% endfor %}
           <th style="width:70px"></th>
         </tr>
@@ -86,8 +93,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
           <tr @click="openEdit(item)">
             {% if config.soft_delete %}
             <td>
-              <span class="status-dot" :class="item.is_deleted ? 'status-dot-deleted' : 'status-dot-active'"
-                    :title="item.is_deleted ? 'Помечено к удалению' : 'Активна'"></span>
+              <span x-show="item.is_deleted" class="status-dot" title="Помечено к удалению"></span>
             </td>
             {% endif %}
             {% for f in config.fields %}{% if f.in_list %}
@@ -236,6 +242,8 @@ function enginePage() {
     q: '',
     modalOpen: false,
     editing: {},
+    sortBy: null,
+    sortDir: 'asc',
 
     async init() {
       try {
@@ -278,6 +286,21 @@ function enginePage() {
       try { this.load(); } catch (err) { showJsError(err); }
     },
 
+    toggleSort(fieldName) {
+      // Клик по тому же заголовку — переключает направление
+      // (asc → desc → asc...). Клик по другому заголовку — сортирует
+      // по нему заново, всегда начиная с asc.
+      try {
+        if (this.sortBy === fieldName) {
+          this.sortDir = this.sortDir === 'asc' ? 'desc' : 'asc';
+        } else {
+          this.sortBy = fieldName;
+          this.sortDir = 'asc';
+        }
+        this.load();
+      } catch (err) { showJsError(err); }
+    },
+
     async load() {
       try {
         const params = new URLSearchParams();
@@ -295,6 +318,10 @@ function enginePage() {
         }
         for (const [field, value] of Object.entries(this.activeFilters)) {
           if (value !== null && value !== undefined) params.set(field, value);
+        }
+        if (this.sortBy) {
+          params.set('sort_by', this.sortBy);
+          params.set('sort_dir', this.sortDir);
         }
         const res = await fetch('/api/' + CONFIG.key + '?' + params.toString());
         this.items = await res.json();

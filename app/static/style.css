@@ -72,9 +72,13 @@ body {
   width: 8px;
   height: 8px;
   border-radius: 50%;
+  background: var(--ink-soft);
 }
-.status-dot-active { background: var(--accent); }
-.status-dot-deleted { background: var(--ink-soft); }
+
+/* ── Sortable column headers ─────────────────────────────────── */
+.col-sortable { cursor: pointer; user-select: none; }
+.col-sortable:hover { color: var(--accent); }
+.sort-arrow { font-size: 0.7em; margin-left: 2px; }
 
 /* ── Filter row ───────────────────────── */
 .search-toggles-row {

@@ -15,14 +15,9 @@ from sqlmodel import Session, text
 
 from app.database import init_db, engine, seed_constants
 from app.engine.register import register_engine_tables
+from app.version import APP_VERSION
 
 app = FastAPI(title="ЭлектроЩит — Учёт калькуляций")
-
-# Версия текущего билда — показывается в шапке каждой страницы (base.html),
-# чтобы всегда было видно, какая версия сейчас открыта в браузере.
-# Обновляется вручную при каждой значимой заливке — см. напоминание
-# в конце ответа Claude при отправке нового архива.
-APP_VERSION = "v26"
 
 _static_dir = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=_static_dir), name="static")

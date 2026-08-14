@@ -9,10 +9,22 @@
 </head>
 <body>
 <nav class="topnav">
-  <div class="topnav-brand">ЭлектроЩит <span style="opacity:0.5; font-weight:400; font-size:0.75em;">v25</span></div>
+  <div class="topnav-brand">ЭлектроЩит <span style="opacity:0.5; font-weight:400; font-size:0.75em;">{{ APP_VERSION }}</span></div>
   <div class="topnav-menu">
-    <a href="/material-v2" class="nav-link">Материалы</a>
-    <a href="/brand-v2" class="nav-link">Бренды</a>
+    {% for section in NAV_MENU %}
+    <div class="nav-dropdown">
+      <span class="nav-link nav-dropdown-title" tabindex="0">{{ section.title }}</span>
+      <div class="nav-dropdown-panel">
+        {% if section.links %}
+          {% for item in section.links %}
+          <a href="{{ item.url }}" class="nav-dropdown-item">{{ item.label }}</a>
+          {% endfor %}
+        {% else %}
+          <span class="nav-dropdown-empty">Пока пусто</span>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
   </div>
 </nav>
 <main class="page-main">

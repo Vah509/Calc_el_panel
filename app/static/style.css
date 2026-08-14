@@ -234,4 +234,38 @@ footer.hint { padding: 10px 20px 30px; font-size: 12px; color: var(--ink-soft); 
   text-decoration: none;
 }
 .nav-link:hover { background: rgba(255,255,255,0.1); color: white; }
+
+/* ── Dropdown-меню разделов (Справочники, Обработки) ─────────
+   Открытие по hover (десктоп) и по фокусу/тапу (мобильный —
+   тап по заголовку раздела даёт focus-within без лишнего JS). */
+.nav-dropdown { position: relative; }
+.nav-dropdown-title { cursor: pointer; user-select: none; }
+.nav-dropdown-title::after { content: "▾"; margin-left: 5px; font-size: 10px; opacity: 0.6; }
+.nav-dropdown-panel {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  min-width: 180px;
+  background: white;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+  padding: 6px;
+  z-index: 40;
+}
+.nav-dropdown:hover .nav-dropdown-panel,
+.nav-dropdown:focus-within .nav-dropdown-panel { display: block; }
+.nav-dropdown-item {
+  display: block;
+  padding: 8px 10px;
+  border-radius: 6px;
+  color: var(--ink);
+  font-size: 13.5px;
+  text-decoration: none;
+}
+.nav-dropdown-item:hover { background: var(--accent-soft, #f0eee9); }
+.nav-dropdown-empty { display: block; padding: 8px 10px; color: var(--ink-soft); font-size: 13px; }
+
 .page-main { min-height: calc(100vh - 48px); }

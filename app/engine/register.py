@@ -18,11 +18,18 @@ from fastapi.templating import Jinja2Templates
 from app.engine.tables import ALL_TABLES
 from app.engine.api import build_api_router
 from app.engine.page_router import build_page_router
+from app.version import APP_VERSION, NAV_MENU
 
 
 def register_engine_tables(app: FastAPI) -> None:
     templates_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates")
     templates = Jinja2Templates(directory=templates_dir)
+
+    # APP_VERSION и меню шапки (base.html) — общие для всех страниц
+    # движка, задаются один раз здесь как Jinja-globals, а не
+    # прокидываются вручную в каждый рендер отдельной таблицы.
+    templates.env.globals["APP_VERSION"] = APP_VERSION
+    templates.env.globals["NAV_MENU"] = NAV_MENU
 
     for config in ALL_TABLES:
         app.include_router(build_api_router(config))

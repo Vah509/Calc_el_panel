@@ -21,7 +21,7 @@ from app.engine.page_router import build_page_router
 from app.version import APP_VERSION, NAV_MENU
 
 
-def register_engine_tables(app: FastAPI) -> None:
+def register_engine_tables(app: FastAPI) -> Jinja2Templates:
     templates_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates")
     templates = Jinja2Templates(directory=templates_dir)
 
@@ -34,3 +34,10 @@ def register_engine_tables(app: FastAPI) -> None:
     for config in ALL_TABLES:
         app.include_router(build_api_router(config))
         app.include_router(build_page_router(config, templates, url_path=f"/{config.key}-v2"))
+
+    # Возвращаем templates наружу — main.py переиспользует то же
+    # Jinja2Templates окружение (с уже настроенными globals) для
+    # регистрации других разделов приложения вне движка таблиц
+    # (например app/processors — раздел "Обработки" в меню),
+    # чтобы не плодить второй Jinja2Templates с задвоенной настройкой.
+    return templates

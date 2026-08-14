@@ -61,6 +61,17 @@ class FieldConfig:
     readonly: bool = False         # поле показывается в форме как обычный текст,
                                     # не как input — редактировать нельзя ни через
                                     # форму, ни через API (см. update_item в api.py)
+    virtual: bool = False          # поле НЕ хранится в модели/БД вообще — не
+                                    # передаётся в create/update, не сериализуется
+                                    # из instance. Значение подтягивается на фронте
+                                    # отдельным запросом (см. source_constant_key)
+                                    # и показывается как readonly "живая ссылка".
+                                    # Пример: ставка НДС у материала — общая для
+                                    # всех, хранится только в constants, но должна
+                                    # быть видна в карточке.
+    source_constant_key: Optional[str] = None  # для virtual-полей: ключ константы
+                                    # в справочнике constants, откуда фронт берёт
+                                    # значение для отображения в форме/списке.
 
 
 @dataclass
@@ -74,10 +85,24 @@ class ComputedPair:
         field_a = field_b / (1 + rate / 100)
     Новые формулы (наценка, скидка) добавляются в engine/formulas.py
     по мере реальной потребности — не заранее.
+
+    Источник ставки — ровно один из двух:
+      - rate_field: имя поля модели (ставка хранится в самой записи,
+        как раньше у Material.vat_rate)
+      - rate_constant_key: ключ в справочнике constants (ставка —
+        общая "живая ссылка", не хранится в записи вообще; пример —
+        vat_rate после отказа от per-material поля). Значение
+        подгружается на бэкенде из таблицы constant при пересчёте,
+        и на фронте — при открытии формы, показывается как readonly.
+    Если задан rate_constant_key — rate_field не используется как
+    источник данных, но по-прежнему нужен как имя, под которым
+    ставка живёт в editing на фронте (чтобы JS-пересчёт работал
+    единообразно что для поля модели, что для константы).
     """
     field_a: str
     field_b: str
     rate_field: str
+    rate_constant_key: Optional[str] = None
     formula: Literal["vat"] = "vat"
     label_a: str = ""
     label_b: str = ""
@@ -140,7 +165,11 @@ class TableConfig:
                                     # DELETE эндпоинт запрещён (422).
 
     def field_names(self) -> list[str]:
-        return [f.name for f in self.fields]
+        """Имена полей, реально хранящихся в модели/БД — используется
+        для сериализации instance и для фильтрации payload при
+        create/update. Virtual-поля (см. FieldConfig.virtual)
+        намеренно исключены: для них нет атрибута в модели."""
+        return [f.name for f in self.fields if not f.virtual]
 
     def searchable_fields(self) -> list[str]:
         return [f.name for f in self.fields if f.searchable]

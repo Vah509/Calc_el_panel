@@ -15,6 +15,7 @@ from sqlmodel import Session, text
 
 from app.database import init_db, engine, seed_constants
 from app.engine.register import register_engine_tables
+from app.processors.router import register_processors
 from app.version import APP_VERSION
 
 app = FastAPI(title="ЭлектроЩит — Учёт калькуляций")
@@ -27,7 +28,11 @@ app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 # brands_api.py, alpine_pages.py, admin.py) удалены после того, как
 # движок доказал себя рабочим — см. docs/HANDOFF.md.
 # Пути: /material-v2, /brand-v2 (API: /api/material, /api/brand).
-register_engine_tables(app)
+_templates = register_engine_tables(app)
+
+# Раздел "Обработки" (меню NAV_MENU) — переиспользует то же Jinja2
+# окружение, что и движок таблиц (тот же base.html, тот же APP_VERSION).
+register_processors(app, _templates)
 
 
 @app.on_event("startup")

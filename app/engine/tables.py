@@ -45,14 +45,15 @@ material_table = TableConfig(
                     is_numeric=True, list_width="100px"),
         FieldConfig(name="price_incl_vat", label="Цена с НДС", widget="number",
                     is_numeric=True, list_width="100px"),
-        FieldConfig(name="vat_rate", label="Ставка НДС", widget="number", list_width="60px",
-                    default=20.0, form_width="140px"),
+        FieldConfig(name="vat_rate", label="Ставка НДС", list_width="60px",
+                    form_width="140px", virtual=True, source_constant_key="vat_rate"),
     ],
     computed_pairs=[
         ComputedPair(
             field_a="price_excl_vat",
             field_b="price_incl_vat",
             rate_field="vat_rate",
+            rate_constant_key="vat_rate",
             formula="vat",
             label_a="Цена без НДС",
             label_b="Цена с НДС",

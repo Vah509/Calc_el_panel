@@ -26,6 +26,16 @@ from app.engine.config import TableConfig
 from app.engine.formulas import apply_formula
 
 
+def _get_constant_value(session: Session, key: str) -> Optional[str]:
+    """Читает value константы по ключу из справочника constants.
+    Импорт Constant внутри функции — чтобы избежать циклического
+    импорта на уровне модуля (engine/api.py используется и для
+    самой таблицы constant тоже)."""
+    from app.models.constant import Constant
+    row = session.exec(select(Constant).where(Constant.key == key)).first()
+    return row.value if row else None
+
+
 def build_api_router(config: TableConfig, get_engine_session=get_session) -> APIRouter:
     router = APIRouter(prefix=f"/api/{config.key}", tags=[f"{config.key}-api"])
     model = config.model
@@ -50,16 +60,22 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
                 detail="Не заполнено обязательное поле: " + ", ".join(missing),
             )
 
-    def _apply_computed_pairs(data: dict[str, Any]) -> dict[str, Any]:
+    def _apply_computed_pairs(data: dict[str, Any], session: Session) -> dict[str, Any]:
         """Пересчитывает все computed_pairs таблицы на основе поля
         price_source (какое поле пользователь менял последним).
-        Если ставка (rate_field) не заполнена или равна нулю —
-        пересчитать нельзя (деление/умножение на 0 даёт бессмысленный
-        результат) — кидаем понятную ошибку вместо тихого неверного
-        расчёта."""
+        Ставка берётся из rate_field записи ИЛИ, если у пары задан
+        rate_constant_key, из справочника constants (живая ссылка —
+        общая для всех записей, не хранится в самой записи).
+        Если ставка не найдена или равна нулю — пересчитать нельзя
+        (деление/умножение на 0 даёт бессмысленный результат) —
+        кидаем понятную ошибку вместо тихого неверного расчёта."""
         changed_field = data.get("_changed_field")
         for pair in config.computed_pairs:
-            rate = data.get(pair.rate_field)
+            if pair.rate_constant_key:
+                raw_rate = _get_constant_value(session, pair.rate_constant_key)
+                rate = float(raw_rate) if raw_rate is not None else None
+            else:
+                rate = data.get(pair.rate_field)
             if rate is None or rate == 0:
                 raise HTTPException(
                     status_code=422,
@@ -120,7 +136,7 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
             )
         data = {k: v for k, v in payload.items() if k in field_names or k == "_changed_field"}
         _validate_required(data)
-        data = _apply_computed_pairs(data)
+        data = _apply_computed_pairs(data, session)
         clean_data = {k: v for k, v in data.items() if k in field_names}
         instance = model(**clean_data)
         session.add(instance)
@@ -139,7 +155,7 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
             if (k in field_names and k not in readonly_field_names) or k == "_changed_field"
         }
         _validate_required(data)
-        data = _apply_computed_pairs(data)
+        data = _apply_computed_pairs(data, session)
 
         for name in field_names:
             if name in data:

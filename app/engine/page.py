@@ -84,7 +84,9 @@ _PAGE_TEMPLATE_SOURCE = r"""
             {% for f in config.fields %}{% if f.in_list %}
             {% set rel = config.relations | selectattr("field", "equalto", f.name) | first %}
             <td{% if f.is_numeric %} class="col-num"{% endif %}>
-              {% if rel %}
+              {% if f.virtual %}
+              <span x-text="constants['{{ f.source_constant_key }}'] ?? ''"></span>
+              {% elif rel %}
               <span class="brand-badge" x-text="relationName('{{ f.name }}', item.{{ f.name }})"></span>
               {% elif f.is_numeric %}
               <span x-text="Number(item.{{ f.name }} ?? 0).toFixed(2)"></span>
@@ -127,6 +129,8 @@ _PAGE_TEMPLATE_SOURCE = r"""
                 <option :value="opt.id" x-text="opt.name"></option>
               </template>
             </select>
+            {% elif f.virtual %}
+            <span class="field-readonly-text" x-text="constants['{{ f.source_constant_key }}'] ?? ''"></span>
             {% elif f.readonly %}
             <span class="field-readonly-text" x-text="editing.{{ f.name }} ?? ''"></span>
             {% elif f.name in computed_field_names %}
@@ -211,6 +215,7 @@ function enginePage() {
   return {
     items: [],
     relationOptions: {},
+    constants: {},
     activeFilters: {},
     searchFields: {},
     q: '',
@@ -230,6 +235,17 @@ function enginePage() {
           const res = await fetch('/api/' + rel.target_table);
           this.relationOptions[rel.field] = await res.json();
           this.activeFilters[rel.field] = null;
+        }
+        // Подтягиваем constants, если таблице нужна хотя бы одна
+        // "живая ссылка" — virtual-поле (например ставка НДС в
+        // карточке материала) или computed pair со ставкой из
+        // справочника, а не из собственного поля записи.
+        const needsConstants = CONFIG.fields.some(f => f.virtual) ||
+          CONFIG.computedPairs.some(p => p.rateConstantKey);
+        if (needsConstants) {
+          const res = await fetch('/api/constant');
+          const rows = await res.json();
+          for (const row of rows) { this.constants[row.key] = row.value; }
         }
         await this.load();
       } catch (err) { showJsError(err); }
@@ -298,7 +314,9 @@ function enginePage() {
       try {
         for (const pair of CONFIG.computedPairs) {
           if (changedField !== pair.fieldA && changedField !== pair.fieldB) continue;
-          const rate = this.editing[pair.rateField] || 0;
+          const rate = pair.rateConstantKey
+            ? Number(this.constants[pair.rateConstantKey]) || 0
+            : (this.editing[pair.rateField] || 0);
           if (changedField === pair.fieldA) {
             const a = this.editing[pair.fieldA] || 0;
             this.editing[pair.fieldB] = applyFormula(pair.formula, 'forward', a, rate);
@@ -318,7 +336,7 @@ function enginePage() {
     validateBeforeSave() {
       const missing = [];
       for (const f of CONFIG.fields) {
-        if (!f.required) continue;
+        if (!f.required || f.virtual) continue;
         const value = this.editing[f.name];
         if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) {
           missing.push(f.label);
@@ -328,8 +346,10 @@ function enginePage() {
         return 'Не заполнено обязательное поле: ' + missing.join(', ');
       }
       for (const pair of CONFIG.computedPairs) {
-        const rate = this.editing[pair.rateField];
-        if (rate === null || rate === undefined || rate === 0) {
+        const rate = pair.rateConstantKey
+          ? this.constants[pair.rateConstantKey]
+          : this.editing[pair.rateField];
+        if (rate === null || rate === undefined || rate === 0 || rate === '') {
           return 'Не заполнено поле «' + pair.rateLabel + '» — без него нельзя пересчитать «' +
                  pair.fieldALabel + '» / «' + pair.fieldBLabel + '».';
         }
@@ -454,6 +474,7 @@ def render_table_page(config: TableConfig, jinja_env) -> str:
                 "isNumeric": f.is_numeric,
                 "default": f.default,
                 "required": f.required,
+                "virtual": f.virtual,
             }
             for f in config.fields
         ],
@@ -466,6 +487,7 @@ def render_table_page(config: TableConfig, jinja_env) -> str:
                 "fieldA": p.field_a,
                 "fieldB": p.field_b,
                 "rateField": p.rate_field,
+                "rateConstantKey": p.rate_constant_key,
                 "formula": p.formula,
                 "fieldALabel": p.label_a,
                 "fieldBLabel": p.label_b,

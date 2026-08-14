@@ -38,6 +38,14 @@ _PAGE_TEMPLATE_SOURCE = r"""
     </div>
   </div>
 
+  {% if config.allow_create %}
+  <div class="selection-bar" x-show="selectedIds.length > 0" x-cloak>
+    <span x-text="selectedIds.length + ' выделено'"></span>
+    <button type="button" class="btn" :disabled="selectedIds.length !== 1" @click="copySelected()">Копировать</button>
+    <button type="button" class="selection-clear" @click="selectedIds = []">Снять выделение</button>
+  </div>
+  {% endif %}
+
   {% if config.enable_search_toggles and toggleable_search_fields %}
   <div class="search-toggles-row">
     {% for f in toggleable_search_fields %}
@@ -72,6 +80,9 @@ _PAGE_TEMPLATE_SOURCE = r"""
     <table>
       <thead>
         <tr>
+          {% if config.allow_create %}
+          <th style="width:28px"></th>
+          {% endif %}
           {% if config.soft_delete %}
           <th style="width:28px"></th>
           {% endif %}
@@ -91,6 +102,11 @@ _PAGE_TEMPLATE_SOURCE = r"""
       <tbody>
         <template x-for="item in items" :key="item.id">
           <tr @click="openEdit(item)">
+            {% if config.allow_create %}
+            <td @click.stop>
+              <input type="checkbox" :value="item.id" :checked="selectedIds.includes(item.id)" @change="toggleSelect(item.id)">
+            </td>
+            {% endif %}
             {% if config.soft_delete %}
             <td>
               <span x-show="item.is_deleted" class="status-dot" title="Помечено к удалению"></span>
@@ -114,7 +130,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
           </tr>
         </template>
         <tr x-show="items.length === 0">
-          <td colspan="{{ config.fields | selectattr('in_list') | list | length + 1 + (1 if config.soft_delete else 0) }}" style="text-align:center; color:var(--ink-soft); padding:24px;">Ничего не найдено</td>
+          <td colspan="{{ config.fields | selectattr('in_list') | list | length + 1 + (1 if config.soft_delete else 0) + (1 if config.allow_create else 0) }}" style="text-align:center; color:var(--ink-soft); padding:24px;">Ничего не найдено</td>
         </tr>
       </tbody>
     </table>
@@ -252,6 +268,7 @@ function enginePage() {
     sortDir: 'asc',
     page: 1,
     totalPages: 1,
+    selectedIds: [],
 
     async init() {
       try {
@@ -342,6 +359,11 @@ function enginePage() {
         this.items = data.items;
         this.page = data.page;
         this.totalPages = data.total_pages;
+        // Выделение — про конкретные видимые строки; при перезагрузке
+        // списка (смена страницы/поиска/фильтра/сортировки) старые
+        // выделенные id могут больше не быть на экране — сбрасываем,
+        // чтобы тулбар не показывал "выделено N" для невидимых строк.
+        this.selectedIds = [];
       } catch (err) { showJsError(err); }
     },
 
@@ -374,6 +396,37 @@ function enginePage() {
         hideJsError();
         this.editing = { ...item };
         this.modalOpen = true;
+      } catch (err) { showJsError(err); }
+    },
+
+    toggleSelect(id) {
+      const idx = this.selectedIds.indexOf(id);
+      if (idx === -1) { this.selectedIds.push(id); } else { this.selectedIds.splice(idx, 1); }
+    },
+
+    copySelected() {
+      // Копирование доступно только при РОВНО одном выделенном элементе —
+      // при нескольких выделенных кнопка задизейблена в разметке
+      // (:disabled="selectedIds.length !== 1"), это дополнительная
+      // защита на случай программного вызова.
+      if (this.selectedIds.length !== 1) return;
+      const item = this.items.find(i => i.id === this.selectedIds[0]);
+      if (!item) return;
+      // Открывает форму, предзаполненную данными существующей записи,
+      // но БЕЗ id — save() увидит отсутствие id и отправит POST
+      // (создание новой независимой записи), а не PUT. is_deleted
+      // копии всегда сброшен в false — копия создаётся активной, даже
+      // если копируем помеченную на удаление запись. Остальные поля
+      // (включая sku_article и т.п.) копируются как есть — пользователь
+      // правит вручную перед сохранением.
+      try {
+        hideJsError();
+        const copy = { ...item };
+        delete copy.id;
+        copy.is_deleted = false;
+        this.editing = copy;
+        this.modalOpen = true;
+        this.selectedIds = [];
       } catch (err) { showJsError(err); }
     },
 

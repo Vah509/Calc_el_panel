@@ -80,6 +80,30 @@ body {
 .col-sortable:hover { color: var(--accent); }
 .sort-arrow { font-size: 0.7em; margin-left: 2px; }
 
+/* ── Selection bar (выделение строк чекбоксами + групповые действия,
+   например копирование) ─────────────────────────────────────── */
+.selection-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 20px;
+  background: #eef4f1;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.selection-bar .btn:disabled { opacity: 0.4; cursor: default; }
+.selection-clear {
+  border: none;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+  margin-left: auto;
+}
+.selection-clear:hover { color: var(--ink); }
+
 /* ── Pagination (список движка, под таблицей) ────────────────── */
 .pagination {
   display: flex;

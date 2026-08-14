@@ -80,6 +80,28 @@ body {
 .col-sortable:hover { color: var(--accent); }
 .sort-arrow { font-size: 0.7em; margin-left: 2px; }
 
+/* ── Pagination (список движка, под таблицей) ────────────────── */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 14px 20px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.pagination button {
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 13px;
+  cursor: pointer;
+}
+.pagination button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.pagination button:disabled { opacity: 0.4; cursor: default; }
+
 /* ── Filter row ───────────────────────── */
 .search-toggles-row {
   display: flex;

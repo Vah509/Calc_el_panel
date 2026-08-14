@@ -52,16 +52,16 @@ _PAGE_TEMPLATE_SOURCE = r"""
   <div class="filterbar">
     <div class="search-wrap">
       <input class="search-input" type="text" placeholder="{{ config.search_placeholder }}"
-             x-model="q" @input.debounce.300ms="load()">
-      <button type="button" class="search-clear" title="Сбросить поиск" @click="q=''; load()">✕</button>
+             x-model="q" @input.debounce.300ms="page=1; load()">
+      <button type="button" class="search-clear" title="Сбросить поиск" @click="q=''; page=1; load()">✕</button>
     </div>
     {% if config.relations %}
     {% for rel in config.relations %}
     <span style="width:1px;height:20px;background:var(--line);margin:0 4px;"></span>
-    <span class="chip" :class="{active: !activeFilters['{{ rel.field }}']}" @click="activeFilters['{{ rel.field }}']=null; load()">Все</span>
+    <span class="chip" :class="{active: !activeFilters['{{ rel.field }}']}" @click="activeFilters['{{ rel.field }}']=null; page=1; load()">Все</span>
     <template x-for="opt in relationOptions['{{ rel.field }}']" :key="opt.id">
       <span class="chip" :class="{active: activeFilters['{{ rel.field }}'] === opt.id}"
-            @click="activeFilters['{{ rel.field }}'] = opt.id; load()" x-text="opt.name"></span>
+            @click="activeFilters['{{ rel.field }}'] = opt.id; page=1; load()" x-text="opt.name"></span>
     </template>
     {% endfor %}
     {% endif %}
@@ -118,6 +118,12 @@ _PAGE_TEMPLATE_SOURCE = r"""
         </tr>
       </tbody>
     </table>
+  </div>
+
+  <div class="pagination" x-show="totalPages > 1">
+    <button type="button" @click="prevPage()" :disabled="page <= 1">‹ Назад</button>
+    <span x-text="'Стр. ' + page + ' из ' + totalPages"></span>
+    <button type="button" @click="nextPage()" :disabled="page >= totalPages">Далее ›</button>
   </div>
 
   <div class="modal-backdrop" x-show="modalOpen" x-cloak>
@@ -244,6 +250,8 @@ function enginePage() {
     editing: {},
     sortBy: null,
     sortDir: 'asc',
+    page: 1,
+    totalPages: 1,
 
     async init() {
       try {
@@ -255,8 +263,12 @@ function enginePage() {
           this.searchFields[f.name] = f.default;
         }
         for (const rel of CONFIG.relations) {
-          const res = await fetch('/api/' + rel.target_table);
-          this.relationOptions[rel.field] = await res.json();
+          // page_size=1000 — выпадающему списку/фильтру нужен весь
+          // справочник целиком, а не одна страница (см. решение по
+          // пагинации: явный page_size приоритетнее default_page_size).
+          const res = await fetch('/api/' + rel.target_table + '?page_size=1000');
+          const data = await res.json();
+          this.relationOptions[rel.field] = data.items;
           this.activeFilters[rel.field] = null;
         }
         // Подтягиваем constants, если таблице нужна хотя бы одна
@@ -266,9 +278,9 @@ function enginePage() {
         const needsConstants = CONFIG.fields.some(f => f.virtual) ||
           CONFIG.computedPairs.some(p => p.rateConstantKey);
         if (needsConstants) {
-          const res = await fetch('/api/constant');
-          const rows = await res.json();
-          for (const row of rows) { this.constants[row.key] = row.value; }
+          const res = await fetch('/api/constant?page_size=1000');
+          const data = await res.json();
+          for (const row of data.items) { this.constants[row.key] = row.value; }
         }
         await this.load();
       } catch (err) { showJsError(err); }
@@ -283,7 +295,7 @@ function enginePage() {
     },
 
     onSearchFieldsChange() {
-      try { this.load(); } catch (err) { showJsError(err); }
+      try { this.page = 1; this.load(); } catch (err) { showJsError(err); }
     },
 
     toggleSort(fieldName) {
@@ -297,6 +309,7 @@ function enginePage() {
           this.sortBy = fieldName;
           this.sortDir = 'asc';
         }
+        this.page = 1;
         this.load();
       } catch (err) { showJsError(err); }
     },
@@ -323,9 +336,21 @@ function enginePage() {
           params.set('sort_by', this.sortBy);
           params.set('sort_dir', this.sortDir);
         }
+        params.set('page', this.page);
         const res = await fetch('/api/' + CONFIG.key + '?' + params.toString());
-        this.items = await res.json();
+        const data = await res.json();
+        this.items = data.items;
+        this.page = data.page;
+        this.totalPages = data.total_pages;
       } catch (err) { showJsError(err); }
+    },
+
+    prevPage() {
+      if (this.page > 1) { this.page -= 1; this.load(); }
+    },
+
+    nextPage() {
+      if (this.page < this.totalPages) { this.page += 1; this.load(); }
     },
 
     openCreate() {

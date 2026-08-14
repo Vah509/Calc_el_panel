@@ -121,6 +121,11 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
                                            # чтобы нельзя было сортировать по произвольному
                                            # атрибуту модели через query-параметр
         sort_dir: str = "asc",           # "asc" | "desc"; любое другое значение — как "asc"
+        page: int = 1,                   # 1-based; < 1 трактуется как 1
+        page_size: Optional[int] = None, # если не передан — берём default_page_size из constants;
+                                           # явное значение (например 1000 для relationOptions —
+                                           # выпадающих списков/фильтров, которым нужен весь
+                                           # справочник целиком, а не одна страница) — приоритетно
         session: Session = Depends(get_engine_session),
     ):
         statement = select(model)
@@ -147,8 +152,35 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
             order_col = column if (field_cfg and field_cfg.is_numeric) else func.lower(column)
             statement = statement.order_by(order_col.desc() if sort_dir == "desc" else order_col.asc())
 
+        # total считается ДО применения LIMIT/OFFSET — по тому же
+        # statement (с учётом поиска/фильтра), иначе "Стр. X из Y"
+        # будет врать при активном поиске.
+        total = len(session.exec(statement).all())
+
+        effective_page_size = page_size
+        if effective_page_size is None:
+            raw = _get_constant_value(session, "default_page_size")
+            try:
+                effective_page_size = int(raw) if raw else 100
+            except ValueError:
+                effective_page_size = 100
+        effective_page_size = max(1, effective_page_size)
+
+        effective_page = max(1, page)
+        total_pages = max(1, (total + effective_page_size - 1) // effective_page_size)
+        effective_page = min(effective_page, total_pages)
+
+        offset = (effective_page - 1) * effective_page_size
+        statement = statement.offset(offset).limit(effective_page_size)
+
         items = session.exec(statement).all()
-        return [_serialize(i) for i in items]
+        return {
+            "items": [_serialize(i) for i in items],
+            "total": total,
+            "page": effective_page,
+            "page_size": effective_page_size,
+            "total_pages": total_pages,
+        }
 
     @router.post("")
     def create_item(payload: dict[str, Any], session: Session = Depends(get_engine_session)):

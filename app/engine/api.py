@@ -60,6 +60,21 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
                 detail="Не заполнено обязательное поле: " + ", ".join(missing),
             )
 
+    numeric_field_names = {f.name for f in config.fields if f.is_numeric}
+
+    def _round_numeric_fields(data: dict[str, Any]) -> dict[str, Any]:
+        """Округляет все числовые (is_numeric) поля до 2 знаков после
+        запятой перед сохранением — это денежные суммы (цены), для
+        которых 2 знака (копейки) технически достаточно и избавляет
+        от плавающих "хвостов" (26.399999999) при повторных пересчётах.
+        computed_pairs уже округляют field_a/field_b сами (см. formulas.py),
+        но остальные numeric-поля (например price_vb_incl_vat, которое
+        не входит ни в один computed_pair) без этого не округлялись бы."""
+        for name in numeric_field_names:
+            if name in data and data[name] is not None:
+                data[name] = round(float(data[name]), 2)
+        return data
+
     def _apply_computed_pairs(data: dict[str, Any], session: Session) -> dict[str, Any]:
         """Пересчитывает все computed_pairs таблицы на основе поля
         price_source (какое поле пользователь менял последним).
@@ -192,6 +207,7 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
         data = {k: v for k, v in payload.items() if k in field_names or k == "_changed_field"}
         _validate_required(data)
         data = _apply_computed_pairs(data, session)
+        data = _round_numeric_fields(data)
         clean_data = {k: v for k, v in data.items() if k in field_names}
         instance = model(**clean_data)
         session.add(instance)
@@ -211,6 +227,7 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
         }
         _validate_required(data)
         data = _apply_computed_pairs(data, session)
+        data = _round_numeric_fields(data)
 
         for name in field_names:
             if name in data:

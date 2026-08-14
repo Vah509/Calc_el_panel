@@ -46,13 +46,13 @@ material_table = TableConfig(
         FieldConfig(name="sku_article", label="Артикул производителя",
                     placeholder="2CDS253001R0164", searchable=True, search_default=False, list_width="110px"),
         FieldConfig(name="price_excl_vat", label="Цена без НДС", widget="number",
-                    is_numeric=True, list_width="100px"),
+                    is_numeric=True, list_width="100px", form_width="120px"),
         FieldConfig(name="price_incl_vat", label="Цена с НДС", widget="number",
-                    is_numeric=True, list_width="100px"),
+                    is_numeric=True, list_width="100px", form_width="120px"),
         FieldConfig(name="price_vb_incl_vat", label="Цена с НДС ВБ", widget="number",
-                    is_numeric=True, in_list=False, form_width="140px"),
+                    is_numeric=True, in_list=False, form_width="120px"),
         FieldConfig(name="vat_rate", label="Ставка НДС", list_width="60px",
-                    form_width="140px", virtual=True, source_constant_key="vat_rate"),
+                    form_width="70px", virtual=True, source_constant_key="vat_rate"),
     ],
     computed_pairs=[
         ComputedPair(

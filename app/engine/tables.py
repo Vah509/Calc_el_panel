@@ -23,6 +23,8 @@ brand_table = TableConfig(
     soft_delete=True,
     fields=[
         FieldConfig(name="name", label="Название", required=True, searchable=True),
+        FieldConfig(name="rate_vb", label="Курс ВБ", widget="number",
+                    is_numeric=True, list_width="100px"),
     ],
 )
 
@@ -47,6 +49,8 @@ material_table = TableConfig(
                     is_numeric=True, list_width="100px"),
         FieldConfig(name="price_incl_vat", label="Цена с НДС", widget="number",
                     is_numeric=True, list_width="100px"),
+        FieldConfig(name="price_vb_incl_vat", label="Цена с НДС ВБ", widget="number",
+                    is_numeric=True, in_list=False, form_width="140px"),
         FieldConfig(name="vat_rate", label="Ставка НДС", list_width="60px",
                     form_width="140px", virtual=True, source_constant_key="vat_rate"),
     ],
@@ -68,6 +72,7 @@ material_table = TableConfig(
     form_rows=[
         FormRow(field_names=["brand_id", "sku_article"]),
         FormRow(field_names=["price_excl_vat", "price_incl_vat", "vat_rate"]),
+        FormRow(field_names=["price_vb_incl_vat"]),
     ],
 )
 

@@ -30,17 +30,20 @@ def _ensure_is_deleted_columns() -> None:
     """
     SQLModel.metadata.create_all() создаёт только отсутствующие
     ТАБЛИЦЫ целиком — если таблица material/brand уже существует
-    на Railway (Postgres) без новой колонки is_deleted (soft-delete,
-    добавлено после того, как эти таблицы уже были в проде), она
-    останется без неё молча, и первое же обращение к is_deleted
-    упадёт с ошибкой БД.
+    на Railway (Postgres) и в код добавляется новое поле модели
+    (is_deleted, rate_vb, price_vb_incl_vat и т.д.), колонка в уже
+    существующей таблице сама не появится, и первое же обращение
+    к ней упадёт с ошибкой БД.
 
-    Поэтому для каждой (таблица, колонка) при старте проверяем через
-    information_schema (Postgres) — если колонки нет, добавляем её
-    сами через ALTER TABLE. Идемпотентно: если колонка уже есть
+    Поэтому для каждой (таблица, колонка, тип) при старте проверяем
+    через information_schema (Postgres) — если колонки нет, добавляем
+    её сами через ALTER TABLE. Идемпотентно: если колонка уже есть
     (например при переносах между окружениями), ничего не делаем.
-    NOT NULL DEFAULT false безопасен и для существующих строк —
-    Postgres проставит значение всем сразу при добавлении колонки.
+    DEFAULT безопасен и для существующих строк — Postgres проставит
+    значение всем сразу при добавлении колонки.
+
+    Название функции сохранено историческим (is_deleted было первым
+    таким случаем) — по факту теперь покрывает любые новые колонки.
 
     Для SQLite (локальная разработка) эта миграция не нужна —
     create_all и так создаёт таблицу с нуля со всеми полями модели.
@@ -49,9 +52,14 @@ def _ensure_is_deleted_columns() -> None:
         return
     from sqlalchemy import text
 
-    tables_columns = [("material", "is_deleted"), ("brand", "is_deleted")]
+    tables_columns = [
+        ("material", "is_deleted", "BOOLEAN NOT NULL DEFAULT false"),
+        ("brand", "is_deleted", "BOOLEAN NOT NULL DEFAULT false"),
+        ("brand", "rate_vb", "DOUBLE PRECISION NOT NULL DEFAULT 0"),
+        ("material", "price_vb_incl_vat", "DOUBLE PRECISION NOT NULL DEFAULT 0"),
+    ]
     with engine.connect() as conn:
-        for table, column in tables_columns:
+        for table, column, ddl_type in tables_columns:
             exists = conn.execute(
                 text(
                     "SELECT 1 FROM information_schema.columns "
@@ -61,7 +69,7 @@ def _ensure_is_deleted_columns() -> None:
             ).first()
             if exists is None:
                 conn.execute(
-                    text(f"ALTER TABLE {table} ADD COLUMN {column} BOOLEAN NOT NULL DEFAULT false")
+                    text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
                 )
                 conn.commit()
 

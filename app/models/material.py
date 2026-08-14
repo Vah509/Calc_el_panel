@@ -33,6 +33,14 @@ class Material(SQLModel, table=True):
     price_excl_vat: float = Field(default=0.0)
     price_incl_vat: float = Field(default=0.0)
 
+    # price_vb_incl_vat — цена материала в валюте бренда-поставщика
+    # (с НДС), независимый от price_incl_vat факт. Не пересчитывается
+    # автоматически и не связана с rate_vb на уровне TMC — связь
+    # (price_vb_incl_vat × Brand.rate_vb) считается "на лету" только
+    # в калькуляции, когда пользователь явно выбирает источник цены
+    # "по курсу поставщика" вместо обычной гривневой цены.
+    price_vb_incl_vat: float = Field(default=0.0)
+
     # owner_id — задел под будущую многопользовательскую модель
     # (см. спецификацию: разграничение по owner_id, без ролей)
     owner_id: Optional[int] = Field(default=None, index=True)

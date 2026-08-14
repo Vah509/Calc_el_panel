@@ -72,6 +72,9 @@ _PAGE_TEMPLATE_SOURCE = r"""
     <table>
       <thead>
         <tr>
+          {% if config.soft_delete %}
+          <th style="width:28px"></th>
+          {% endif %}
           {% for f in config.fields %}{% if f.in_list %}
           <th{% if f.list_width %} style="width:{{ f.list_width }}"{% endif %}{% if f.is_numeric %} class="col-num"{% endif %}>{{ f.label }}</th>
           {% endif %}{% endfor %}
@@ -81,6 +84,12 @@ _PAGE_TEMPLATE_SOURCE = r"""
       <tbody>
         <template x-for="item in items" :key="item.id">
           <tr @click="openEdit(item)">
+            {% if config.soft_delete %}
+            <td>
+              <span class="status-dot" :class="item.is_deleted ? 'status-dot-deleted' : 'status-dot-active'"
+                    :title="item.is_deleted ? 'Помечено к удалению' : 'Активна'"></span>
+            </td>
+            {% endif %}
             {% for f in config.fields %}{% if f.in_list %}
             {% set rel = config.relations | selectattr("field", "equalto", f.name) | first %}
             <td{% if f.is_numeric %} class="col-num"{% endif %}>
@@ -99,7 +108,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
           </tr>
         </template>
         <tr x-show="items.length === 0">
-          <td colspan="{{ config.fields | selectattr('in_list') | list | length + 1 }}" style="text-align:center; color:var(--ink-soft); padding:24px;">Ничего не найдено</td>
+          <td colspan="{{ config.fields | selectattr('in_list') | list | length + 1 + (1 if config.soft_delete else 0) }}" style="text-align:center; color:var(--ink-soft); padding:24px;">Ничего не найдено</td>
         </tr>
       </tbody>
     </table>
@@ -151,7 +160,13 @@ _PAGE_TEMPLATE_SOURCE = r"""
 
       <div class="modal-footer">
         {% if config.allow_delete %}
-        <button type="button" class="btn btn-danger-ghost" x-show="editing.id" @click="remove()">Удалить</button>
+        <button type="button" class="btn btn-danger-ghost" x-show="editing.id" @click="remove()">
+          {% if config.soft_delete %}
+          <span x-text="editing.is_deleted ? 'Отменить' : 'Удалить'"></span>
+          {% else %}
+          Удалить
+          {% endif %}
+        </button>
         {% else %}
         <span></span>
         {% endif %}
@@ -388,6 +403,16 @@ function enginePage() {
           showJsError('Не удалось удалить. ' + await extractErrorMessage(res));
           return;
         }
+        if (CONFIG.softDelete) {
+          // Переключение пометки, не физическое удаление — запись
+          // остаётся, просто обновляем её статус и список, модалку
+          // не закрываем (человек может сразу же передумать и
+          // нажать ещё раз "Отменить"/"Удалить").
+          const data = await res.json();
+          this.editing.is_deleted = data.is_deleted;
+          await this.load();
+          return;
+        }
         this.modalOpen = false;
         await this.load();
       } catch (err) { showJsError(err); }
@@ -467,6 +492,7 @@ def render_table_page(config: TableConfig, jinja_env) -> str:
 
     config_json = json.dumps({
         "key": config.key,
+        "softDelete": config.soft_delete,
         "fields": [
             {
                 "name": f.name,

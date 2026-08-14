@@ -95,7 +95,15 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
         return data
 
     def _serialize(instance) -> dict[str, Any]:
-        return {name: getattr(instance, name) for name in field_names} | {"id": instance.id}
+        data = {name: getattr(instance, name) for name in field_names} | {"id": instance.id}
+        if config.soft_delete:
+            # is_deleted не объявляется как обычный FieldConfig (это
+            # служебный флаг движка, а не бизнес-поле таблицы) —
+            # сериализуем отдельно, чтобы фронт мог показать точку
+            # статуса и подпись кнопки без ручного объявления поля
+            # в каждой soft_delete-таблице в tables.py.
+            data["is_deleted"] = getattr(instance, "is_deleted", False)
+        return data
 
     @router.get("")
     def list_items(
@@ -176,6 +184,17 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
         instance = session.get(model, item_id)
         if not instance:
             raise HTTPException(status_code=404, detail=f"{config.title_singular} не найден(а)")
+
+        if config.soft_delete:
+            # Переключатель, не безусловная установка: повторный вызов
+            # на уже помеченной записи снимает пометку ("Удалить"/
+            # "Отменить" — одна и та же кнопка, см. engine/page.py).
+            # Запись НЕ удаляется физически — только флаг is_deleted.
+            instance.is_deleted = not instance.is_deleted
+            session.add(instance)
+            session.commit()
+            return {"deleted": False, "is_deleted": instance.is_deleted, "id": item_id}
+
         session.delete(instance)
         session.commit()
         return {"deleted": True, "id": item_id}

@@ -26,9 +26,51 @@ connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite")
 engine = create_engine(DATABASE_URL, echo=False, connect_args=connect_args)
 
 
+def _ensure_is_deleted_columns() -> None:
+    """
+    SQLModel.metadata.create_all() создаёт только отсутствующие
+    ТАБЛИЦЫ целиком — если таблица material/brand уже существует
+    на Railway (Postgres) без новой колонки is_deleted (soft-delete,
+    добавлено после того, как эти таблицы уже были в проде), она
+    останется без неё молча, и первое же обращение к is_deleted
+    упадёт с ошибкой БД.
+
+    Поэтому для каждой (таблица, колонка) при старте проверяем через
+    information_schema (Postgres) — если колонки нет, добавляем её
+    сами через ALTER TABLE. Идемпотентно: если колонка уже есть
+    (например при переносах между окружениями), ничего не делаем.
+    NOT NULL DEFAULT false безопасен и для существующих строк —
+    Postgres проставит значение всем сразу при добавлении колонки.
+
+    Для SQLite (локальная разработка) эта миграция не нужна —
+    create_all и так создаёт таблицу с нуля со всеми полями модели.
+    """
+    if not DATABASE_URL.startswith("postgres"):  # покрывает и postgres://, и postgresql://
+        return
+    from sqlalchemy import text
+
+    tables_columns = [("material", "is_deleted"), ("brand", "is_deleted")]
+    with engine.connect() as conn:
+        for table, column in tables_columns:
+            exists = conn.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = :table AND column_name = :column"
+                ),
+                {"table": table, "column": column},
+            ).first()
+            if exists is None:
+                conn.execute(
+                    text(f"ALTER TABLE {table} ADD COLUMN {column} BOOLEAN NOT NULL DEFAULT false")
+                )
+                conn.commit()
+
+
 def init_db() -> None:
-    """Создаёт таблицы, если их ещё нет. На старте приложения."""
+    """Создаёт таблицы, если их ещё нет, и добавляет недостающие
+    колонки к уже существующим таблицам. На старте приложения."""
     SQLModel.metadata.create_all(engine)
+    _ensure_is_deleted_columns()
 
 
 def get_session():

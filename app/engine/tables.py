@@ -20,6 +20,7 @@ brand_table = TableConfig(
     title="Бренды",
     title_singular="бренд",
     search_placeholder="Поиск по названию…",
+    soft_delete=True,
     fields=[
         FieldConfig(name="name", label="Название", required=True, searchable=True),
     ],
@@ -33,6 +34,7 @@ material_table = TableConfig(
     title_singular="материал",
     search_placeholder="Поиск по названию или артикулу…",
     enable_search_toggles=True,
+    soft_delete=True,
     fields=[
         FieldConfig(name="short_name", label="Short name", required=True,
                     placeholder="ABB S203 C16", searchable=True, search_default=True, list_width="22%"),

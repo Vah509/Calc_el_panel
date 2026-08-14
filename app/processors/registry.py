@@ -14,9 +14,16 @@
 # Первая функция: recalc_material_vat — пересчёт price_incl_vat
 # для ВСЕХ материалов по текущей ставке НДС из constants.
 # Пересчитываются все позиции наравне, включая помеченные на
-# удаление (soft-delete ещё не внедрён на момент написания, но
-# принцип уже зафиксирован в HANDOFF — когда появится is_deleted,
-# этот обработчик его не должен фильтровать).
+# удаление — соблюдается принцип "нет разницы между помеченными
+# и обычными позициями с точки зрения обработчиков" (см. HANDOFF).
+#
+# purge_soft_deleted — простой обработчик физического удаления:
+# для каждой soft_delete-таблицы движка (app/engine/tables.py)
+# генерируется свой Processor с ключом "purge_<table_key>" —
+# без ручного перечисления вручную здесь. Пока БЕЗ проверки
+# зависимостей (на что позиция ссылается) — это сознательно
+# отложено на следующий шаг; сейчас просто DELETE всех строк
+# с is_deleted=True в выбранной таблице.
 # ============================================================
 
 from dataclasses import dataclass
@@ -77,6 +84,46 @@ def recalc_material_vat(session: Session) -> ProcessorResult:
     )
 
 
+def _make_purge_processor(table_key: str, model: type, title: str) -> Processor:
+    """Строит простой обработчик физического удаления для одной
+    soft_delete-таблицы движка. Без проверки зависимостей — просто
+    удаляет все строки с is_deleted=True. Более сложную проверку
+    (на что позиция ссылается перед физическим удалением) допишем
+    отдельным шагом, когда появится реальная потребность."""
+
+    def run(session: Session) -> ProcessorResult:
+        rows = session.exec(select(model).where(model.is_deleted == True)).all()  # noqa: E712
+        processed = len(rows)
+        for row in rows:
+            session.delete(row)
+        session.commit()
+        return ProcessorResult(
+            processed=processed,
+            updated=processed,
+            message=f"Физически удалено {processed} записей из «{title}».",
+        )
+
+    return Processor(
+        key=f"purge_{table_key}",
+        table_key=table_key,
+        label=f"Физически удалить помеченные ({title})",
+        run=run,
+    )
+
+
+def _build_purge_processors() -> list[Processor]:
+    # Импорт внутри функции — тот же паттерн, что и в
+    # recalc_material_vat, чтобы не тянуть engine/tables на уровне
+    # модуля без необходимости.
+    from app.engine.tables import ALL_TABLES
+
+    return [
+        _make_purge_processor(t.key, t.model, t.title)
+        for t in ALL_TABLES
+        if t.soft_delete
+    ]
+
+
 PROCESSORS: list[Processor] = [
     Processor(
         key="recalc_material_vat",
@@ -84,6 +131,7 @@ PROCESSORS: list[Processor] = [
         label="Пересчитать НДС (price_incl_vat по текущей ставке из constants)",
         run=recalc_material_vat,
     ),
+    *_build_purge_processors(),
 ]
 
 

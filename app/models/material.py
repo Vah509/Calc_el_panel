@@ -36,3 +36,9 @@ class Material(SQLModel, table=True):
     # owner_id — задел под будущую многопользовательскую модель
     # (см. спецификацию: разграничение по owner_id, без ролей)
     owner_id: Optional[int] = Field(default=None, index=True)
+
+    # is_deleted — визуальная пометка "к удалению" (soft-delete),
+    # НЕ фильтрация. Помеченные записи остаются полностью рабочими
+    # для всех обработчиков и документов до момента физического
+    # удаления отдельным обработчиком (см. app/processors/registry.py).
+    is_deleted: bool = Field(default=False, index=True)

@@ -66,6 +66,16 @@ body {
 .btn-danger-ghost { border-color: transparent; background: transparent; color: var(--danger); }
 .btn-danger-ghost:hover { background: #f3e6e3; }
 
+/* ── Soft-delete status dot (первая колонка списка) ─────────── */
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.status-dot-active { background: var(--accent); }
+.status-dot-deleted { background: var(--ink-soft); }
+
 /* ── Filter row ───────────────────────── */
 .search-toggles-row {
   display: flex;

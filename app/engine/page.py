@@ -42,6 +42,10 @@ _PAGE_TEMPLATE_SOURCE = r"""
   <div class="selection-bar" x-show="selectedIds.length > 0" x-cloak>
     <span x-text="selectedIds.length + ' выделено'"></span>
     <button type="button" class="btn" :disabled="selectedIds.length !== 1" @click="copySelected()">Копировать</button>
+    {% if config.soft_delete %}
+    <button type="button" class="btn" @click="bulkMarkDelete(true)">Пометить на удаление</button>
+    <button type="button" class="btn" @click="bulkMarkDelete(false)">Снять пометку</button>
+    {% endif %}
     <button type="button" class="selection-clear" @click="selectedIds = []">Снять выделение</button>
   </div>
   {% endif %}
@@ -432,6 +436,31 @@ function enginePage() {
         this.editing = copy;
         this.modalOpen = true;
         this.selectedIds = [];
+      } catch (err) { showJsError(err); }
+    },
+
+    async bulkMarkDelete(value) {
+      // Групповая пометка/снятие пометки на удаление — БЕЗУСЛОВНО
+      // проставляет is_deleted=value всем выделенным записям (не
+      // переключатель): если среди выделенных уже есть помеченная
+      // позиция, при "Пометить на удаление" она остаётся помеченной
+      // (значение просто перезаписывается тем же), при "Снять пометку" —
+      // аналогично. Ведёт себя предсказуемо независимо от текущего
+      // статуса каждой конкретной строки.
+      if (this.selectedIds.length === 0) return;
+      try {
+        hideJsError();
+        const res = await fetch('/api/' + CONFIG.key + '/bulk-mark-delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: this.selectedIds, value: value })
+        });
+        if (!res.ok) {
+          showJsError(await extractErrorMessage(res));
+          return;
+        }
+        this.selectedIds = [];
+        await this.load();
       } catch (err) { showJsError(err); }
     },
 

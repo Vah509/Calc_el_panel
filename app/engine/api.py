@@ -263,4 +263,31 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
         session.commit()
         return {"deleted": True, "id": item_id}
 
+    @router.post("/bulk-mark-delete")
+    def bulk_mark_delete(payload: dict[str, Any], session: Session = Depends(get_engine_session)):
+        """Групповая пометка/снятие пометки на удаление. В отличие
+        от одиночного DELETE (переключатель, toggle), здесь статус
+        задаётся БЕЗУСЛОВНО значением payload["value"] для каждой
+        записи из payload["ids"] — так группа ведёт себя предсказуемо:
+        если среди выделенных уже есть помеченная позиция, при
+        "Пометить на удаление" она остаётся помеченной (просто
+        перезаписывается тем же значением), а не переключается
+        обратно. То же для "Снять пометку"."""
+        if not config.soft_delete:
+            raise HTTPException(
+                status_code=422,
+                detail=f"«{config.title}» не поддерживает пометку на удаление.",
+            )
+        ids = payload.get("ids") or []
+        value = bool(payload.get("value"))
+        if not ids:
+            raise HTTPException(status_code=422, detail="Не выбрано ни одной записи.")
+
+        instances = session.exec(select(model).where(model.id.in_(ids))).all()
+        for instance in instances:
+            instance.is_deleted = value
+            session.add(instance)
+        session.commit()
+        return {"updated": len(instances), "is_deleted": value}
+
     return router

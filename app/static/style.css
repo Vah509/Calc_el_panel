@@ -262,6 +262,7 @@ tbody tr:hover { background: #faf9f6; }
 
 .price-pair { display: flex; flex-wrap: wrap; gap: 12px; padding: 12px; background: var(--bg); border-radius: 8px; border: 1px solid var(--line); }
 .price-pair .field { flex: 1 1 140px; min-width: 100px; }
+.price-pair .field label { white-space: nowrap; }
 /* Поля с заданной form_width (см. FieldConfig.form_width) получают
    inline style="flex: 0 0 <width>" из шаблона движка — он побеждает
    правила выше по каскаду (inline сильнее класса), так что поле

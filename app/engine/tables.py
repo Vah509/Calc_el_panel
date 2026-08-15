@@ -13,6 +13,7 @@ from app.models.material import Material
 from app.models.brand import Brand
 from app.models.constant import Constant
 from app.models.kit_group import KitGroup
+from app.models.kit_section import KitSection
 
 
 brand_table = TableConfig(
@@ -98,6 +99,28 @@ kit_group_table = TableConfig(
 )
 
 
+kit_section_table = TableConfig(
+    key="kit_section",
+    model=KitSection,
+    title="Подразделы комплектов",
+    title_singular="подраздел комплектов",
+    search_placeholder="Поиск по названию…",
+    soft_delete=True,
+    fields=[
+        FieldConfig(name="name", label="Название", required=True, searchable=True),
+        FieldConfig(name="kit_group_id", label="Группа", widget="select", required=True),
+        FieldConfig(name="sort_order", label="Порядок", widget="number",
+                    is_numeric=True, list_width="100px", default=0),
+    ],
+    relations=[
+        Relation(field="kit_group_id", target_table="kit_group", display_field="name", label="Группа"),
+    ],
+    form_rows=[
+        FormRow(field_names=["kit_group_id", "sort_order"]),
+    ],
+)
+
+
 constant_table = TableConfig(
     key="constant",
     model=Constant,
@@ -117,4 +140,4 @@ constant_table = TableConfig(
 )
 
 
-ALL_TABLES = [brand_table, material_table, kit_group_table, constant_table]
+ALL_TABLES = [brand_table, material_table, kit_group_table, kit_section_table, constant_table]

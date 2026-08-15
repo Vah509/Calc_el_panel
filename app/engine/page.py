@@ -158,7 +158,12 @@ _PAGE_TEMPLATE_SOURCE = r"""
           {% for f in row.fields %}
           {% set rel = config.relations | selectattr("field", "equalto", f.name) | first %}
           <div class="field"{% if f.form_width %} style="flex: 0 0 {{ f.form_width }};"{% endif %}>
+            {% set pair_as_b = config.computed_pairs | selectattr("field_b", "equalto", f.name) | selectattr("rate_constant_key") | first %}
+            {% if pair_as_b %}
+            <label>{{ f.label }} (<span x-text="constants['{{ pair_as_b.rate_constant_key }}'] ?? ''"></span>%)</label>
+            {% else %}
             <label>{{ f.label }}</label>
+            {% endif %}
             {% if rel %}
             <select x-model.number="editing.{{ f.name }}">
               <option :value="null">—</option>

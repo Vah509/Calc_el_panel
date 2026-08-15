@@ -74,11 +74,43 @@ def _ensure_is_deleted_columns() -> None:
                 conn.commit()
 
 
+def _drop_obsolete_columns() -> None:
+    """
+    Убирает колонки, которые остались в существующей Postgres-таблице
+    физически, но были выведены из модели/кода в одной из прошлых
+    версий (SQLModel.metadata.create_all не удаляет лишние колонки
+    сам — только добавляет отсутствующие таблицы).
+
+    Конкретный кейс (v34): material.vat_rate — колонка со времён до
+    v28, когда ставка НДС хранилась в самом материале. С v28 ставка
+    общая для всех и живёт только в справочнике constants (см.
+    seed_constants), в модели Material поля vat_rate больше нет.
+    Колонку в БД тогда не удалили — она осталась с NOT NULL, и
+    любой INSERT через ORM (который про неё не знает и не передаёт
+    значение) падал с NotNullViolation. Дропаем колонку явно.
+
+    Идемпотентно: IF EXISTS — повторный вызов при следующих стартах
+    ничего не делает, если колонка уже удалена.
+    """
+    if not DATABASE_URL.startswith("postgres"):
+        return
+    from sqlalchemy import text
+
+    obsolete = [
+        ("material", "vat_rate"),
+    ]
+    with engine.connect() as conn:
+        for table, column in obsolete:
+            conn.execute(text(f"ALTER TABLE {table} DROP COLUMN IF EXISTS {column}"))
+            conn.commit()
+
+
 def init_db() -> None:
     """Создаёт таблицы, если их ещё нет, и добавляет недостающие
     колонки к уже существующим таблицам. На старте приложения."""
     SQLModel.metadata.create_all(engine)
     _ensure_is_deleted_columns()
+    _drop_obsolete_columns()
 
 
 def get_session():

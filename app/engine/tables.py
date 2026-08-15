@@ -12,6 +12,7 @@ from app.engine.config import TableConfig, FieldConfig, ComputedPair, Relation, 
 from app.models.material import Material
 from app.models.brand import Brand
 from app.models.constant import Constant
+from app.models.kit_group import KitGroup
 
 
 brand_table = TableConfig(
@@ -82,6 +83,21 @@ material_table = TableConfig(
 )
 
 
+kit_group_table = TableConfig(
+    key="kit_group",
+    model=KitGroup,
+    title="Группы комплектов",
+    title_singular="группа комплектов",
+    search_placeholder="Поиск по названию…",
+    soft_delete=True,
+    fields=[
+        FieldConfig(name="name", label="Название", required=True, searchable=True),
+        FieldConfig(name="sort_order", label="Порядок", widget="number",
+                    is_numeric=True, list_width="100px", default=0),
+    ],
+)
+
+
 constant_table = TableConfig(
     key="constant",
     model=Constant,
@@ -101,4 +117,4 @@ constant_table = TableConfig(
 )
 
 
-ALL_TABLES = [brand_table, material_table, constant_table]
+ALL_TABLES = [brand_table, material_table, kit_group_table, constant_table]

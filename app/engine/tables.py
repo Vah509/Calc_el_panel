@@ -14,6 +14,8 @@ from app.models.brand import Brand
 from app.models.constant import Constant
 from app.models.kit_group import KitGroup
 from app.models.kit_section import KitSection
+from app.models.kit import Kit
+from app.models.kit_item import KitItem
 
 
 brand_table = TableConfig(
@@ -115,12 +117,76 @@ kit_section_table = TableConfig(
     title_singular="подраздел комплектов",
     search_placeholder="Поиск по названию…",
     delete_mode="simple",
-    hierarchy=Hierarchy(parent_field="kit_group_id", parent_key="kit_group", child_key="kit"),
+    # ВРЕМЕННО (v39): child_key НЕ указывает на "kit" — хотя
+    # концептуально kit_section является родителем kit в дереве
+    # (kit_group -> kit_section -> kit), сам kit пока заведён как
+    # ОБЫЧНАЯ ПЛОСКАЯ таблица старого движка (см. kit_table ниже и
+    # app/models/kit.py) — вручную заносим пробные записи перед тем
+    # как проектировать полноценный подбор материалов внутри карточки.
+    # Если здесь проставить child_key="kit", _build_hierarchy_levels
+    # (page.py) молча включит kit в цепочку уровней дерева как узел
+    # БЕЗ hierarchy (AttributeError/некорректный JSON) — child_key
+    # вернётся, когда kit станет настоящим drill-down уровнем
+    # (hierarchy=Hierarchy(parent_field=..., parent_key="kit_section")).
+    hierarchy=Hierarchy(parent_field="kit_group_id", parent_key="kit_group"),
     fields=[
         FieldConfig(name="name", label="Название", required=True, searchable=True),
         FieldConfig(name="kit_group_id", label="Группа", widget="select", required=True, in_list=False, in_form=False),
         FieldConfig(name="sort_order", label="Порядок", widget="number",
                     is_numeric=True, list_width="100px", default=0, in_list=False),
+    ],
+)
+
+
+# kit / kit_item — ВРЕМЕННО (v39) обычные плоские таблицы старого
+# движка, не часть drill-down дерева (см. развёрнутое обоснование в
+# app/models/kit.py и app/models/kit_item.py). Позволяют вручную
+# занести пробные записи, пока полноценный подбор материалов внутри
+# карточки kit не спроектирован. kit_section_id/kit_id/material_id —
+# простые select без поиска, по образцу material_table.brand_id.
+kit_table = TableConfig(
+    key="kit",
+    model=Kit,
+    title="Комплекты (временный список)",
+    title_singular="комплект",
+    search_placeholder="Поиск по названию…",
+    delete_mode="soft",
+    fields=[
+        FieldConfig(name="name", label="Название", required=True, searchable=True),
+        FieldConfig(name="kit_section_id", label="Раздел", widget="select", required=True),
+        FieldConfig(name="sort_order", label="Порядок", widget="number",
+                    is_numeric=True, list_width="100px", default=0),
+    ],
+    relations=[
+        Relation(field="kit_section_id", target_table="kit_section", display_field="name", label="Раздел"),
+    ],
+    form_rows=[
+        FormRow(field_names=["kit_section_id", "sort_order"]),
+    ],
+)
+
+
+kit_item_table = TableConfig(
+    key="kit_item",
+    model=KitItem,
+    title="Состав комплектов (временный список)",
+    title_singular="позиция состава",
+    search_placeholder="Поиск…",
+    # delete_mode не указан -> дефолт "hard": на KitItem ничего не
+    # ссылается (см. обоснование в app/models/kit_item.py), удаление
+    # позиции состава всегда безусловное и немедленное, без пометки.
+    fields=[
+        FieldConfig(name="kit_id", label="Комплект", widget="select", required=True),
+        FieldConfig(name="material_id", label="Материал", widget="select", required=True),
+        FieldConfig(name="quantity", label="Количество", widget="number",
+                    is_numeric=True, list_width="100px", default=1),
+    ],
+    relations=[
+        Relation(field="kit_id", target_table="kit", display_field="name", label="Комплект"),
+        Relation(field="material_id", target_table="material", display_field="short_name", label="Материал"),
+    ],
+    form_rows=[
+        FormRow(field_names=["kit_id", "material_id"]),
     ],
 )
 
@@ -144,4 +210,7 @@ constant_table = TableConfig(
 )
 
 
-ALL_TABLES = [brand_table, material_table, kit_group_table, kit_section_table, constant_table]
+ALL_TABLES = [
+    brand_table, material_table, kit_group_table, kit_section_table,
+    kit_table, kit_item_table, constant_table,
+]

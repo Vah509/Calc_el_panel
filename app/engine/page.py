@@ -183,10 +183,10 @@ _PAGE_TEMPLATE_SOURCE = r"""
     <template x-for="item in items" :key="item.id">
       <div class="drill-row">
         <button type="button" class="drill-row-edit" @click.stop="openEdit(item)" title="Редактировать">✎</button>
-        <div class="drill-row-body" @click="drillOpen(item)">
+        <div class="drill-row-body" :class="{'drill-row-body-clickable': hasNextLevel}" @click="drillOpen(item)">
           <span x-text="item.name"></span>
         </div>
-        <span class="drill-row-arrow" x-show="currentLevel().hierarchy && currentLevel().hierarchy.childKey">›</span>
+        <span class="drill-row-arrow" x-show="hasNextLevel">›</span>
       </div>
     </template>
     <div class="drill-row drill-row-empty" x-show="items.length === 0">Ничего не найдено</div>
@@ -361,7 +361,27 @@ function enginePage() {
     drillPath: [],
 
     currentLevel() {
-      return LEVELS[this.drillPath.length] || LEVELS[0];
+      // Без фоллбэка на LEVELS[0]: если бы currentLevel() когда-нибудь
+      // получил drillPath глубже, чем реально существующих уровней в
+      // LEVELS, "тихий" откат на корень маскировал бы баг навигации —
+      // человек увидел бы группы верхнего уровня внутри чужой крошки
+      // и решил бы, что это отдельные записи (был реальный кейс).
+      // Правильная защита — не пускать drillOpen() за пределы LEVELS
+      // вообще (см. drillOpen ниже), тогда этот метод никогда не
+      // получает валидный, но "пустой" индекс.
+      return LEVELS[this.drillPath.length];
+    },
+
+    get hasNextLevel() {
+      // true только если СЛЕДУЮЩИЙ уровень реально закодирован
+      // (есть в LEVELS) — не просто "childKey указан в конфиге
+      // текущего уровня". kit_section.hierarchy.childKey="kit" уже
+      // заполнен сейчас, хотя kit ещё не реализован — childKey сам по
+      // себе не гарантирует, что вглубь есть куда идти. Используется
+      // и для стрелки в строке, и как часть проверки в drillOpen —
+      // одно место истины вместо дублирования условия.
+      const lvl = this.currentLevel();
+      return !!(lvl.hierarchy && lvl.hierarchy.childKey && LEVELS[this.drillPath.length + 1]);
     },
 
     get drillCrumbs() {
@@ -662,15 +682,10 @@ function enginePage() {
     // --- drill-down навигация (только для CONFIG.hierarchyRoot) ---
 
     async drillOpen(item) {
-      // Клик по телу строки (не по иконке ✎). На последнем уровне
-      // дерева (currentLevel().hierarchy.childKey отсутствует —
-      // например будущий kit) drill-down некуда идти дальше: там
-      // строка ведёт на отдельную страницу-карточку, не вглубь дерева
-      // (см. TableConfig.edit_mode="own_page") — эта функция такие
-      // клики просто игнорирует, переход на карточку реализуется
-      // отдельно вместе с самой карточкой kit.
-      const lvl = this.currentLevel();
-      if (!lvl.hierarchy || !lvl.hierarchy.childKey) return;
+      // hasNextLevel — единое место истины, что вглубь реально есть
+      // куда идти (см. геттер выше: не только childKey в конфиге, но
+      // и реальное присутствие следующего уровня в LEVELS).
+      if (!this.hasNextLevel) return;
       try {
         hideJsError();
         this.drillPath.push({ parentId: item.id, label: item.name });

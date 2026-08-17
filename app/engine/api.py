@@ -111,7 +111,7 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
 
     def _serialize(instance) -> dict[str, Any]:
         data = {name: getattr(instance, name) for name in field_names} | {"id": instance.id}
-        if config.soft_delete:
+        if config.delete_mode == "soft":
             # is_deleted не объявляется как обычный FieldConfig (это
             # служебный флаг движка, а не бизнес-поле таблицы) —
             # сериализуем отдельно, чтобы фронт мог показать точку
@@ -131,6 +131,11 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
         # searchable-полям таблицы, как было раньше.
         brand_id: Optional[int] = None,  # временно явный параметр под текущий кейс материалов;
                                            # при появлении других relation-фильтров обобщим до query-строки
+        parent_id: Optional[int] = None, # для hierarchy-таблиц (drill-down): фильтрует
+                                           # список по родителю — через FK-поле, заданное
+                                           # в config.hierarchy.parent_field. Игнорируется
+                                           # молча для таблиц без hierarchy или без
+                                           # parent_field (корневой уровень дерева).
         sort_by: Optional[str] = None,   # имя поля для сортировки — только из field_names()
                                            # (проверяется ниже), иначе игнорируется молча,
                                            # чтобы нельзя было сортировать по произвольному
@@ -157,6 +162,10 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
             statement = statement.where(combined)
         if brand_id is not None and "brand_id" in field_names:
             statement = statement.where(getattr(model, "brand_id") == brand_id)
+        if parent_id is not None and config.hierarchy and config.hierarchy.parent_field:
+            statement = statement.where(
+                getattr(model, config.hierarchy.parent_field) == parent_id
+            )
 
         if sort_by and sort_by in field_names:
             column = getattr(model, sort_by)
@@ -249,7 +258,7 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
         if not instance:
             raise HTTPException(status_code=404, detail=f"{config.title_singular} не найден(а)")
 
-        if config.soft_delete:
+        if config.delete_mode == "soft":
             # Переключатель, не безусловная установка: повторный вызов
             # на уже помеченной записи снимает пометку ("Удалить"/
             # "Отменить" — одна и та же кнопка, см. engine/page.py).
@@ -259,6 +268,41 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
             session.commit()
             return {"deleted": False, "is_deleted": instance.is_deleted, "id": item_id}
 
+        if config.delete_mode == "simple":
+            # Узел дерева (kit_group/kit_section и т.п.): физическое
+            # удаление разрешено только если нет дочерних записей —
+            # синхронная проверка count(), без processor. child_key
+            # берётся из hierarchy этой же таблицы (kit_group.hierarchy.
+            # child_key == "kit_section") — ищем дочернюю TableConfig
+            # в ALL_TABLES по этому ключу, чтобы узнать её модель и
+            # имя FK-поля, которым она ссылается на текущую запись.
+            if config.hierarchy and config.hierarchy.child_key:
+                from app.engine.tables import ALL_TABLES  # локальный импорт — см. паттерн выше в файле
+                child_config = next(
+                    (t for t in ALL_TABLES if t.key == config.hierarchy.child_key), None
+                )
+                if child_config and child_config.hierarchy and child_config.hierarchy.parent_field:
+                    children_count = session.exec(
+                        select(func.count()).select_from(child_config.model).where(
+                            getattr(child_config.model, child_config.hierarchy.parent_field) == item_id
+                        )
+                    ).one()
+                    if children_count > 0:
+                        instance_name = getattr(instance, "name", None) or f"#{item_id}"
+                        raise HTTPException(
+                            status_code=422,
+                            detail=(
+                                f"Нельзя удалить «{instance_name}» — внутри есть "
+                                f"{children_count} записей «{child_config.title}». "
+                                f"Сначала удалите или перенесите их."
+                            ),
+                        )
+            session.delete(instance)
+            session.commit()
+            return {"deleted": True, "id": item_id}
+
+        # "hard" — прежнее поведение без soft_delete=True: удаляем
+        # безусловно, сразу.
         session.delete(instance)
         session.commit()
         return {"deleted": True, "id": item_id}
@@ -273,7 +317,7 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
         "Пометить на удаление" она остаётся помеченной (просто
         перезаписывается тем же значением), а не переключается
         обратно. То же для "Снять пометку"."""
-        if not config.soft_delete:
+        if config.delete_mode != "soft":
             raise HTTPException(
                 status_code=422,
                 detail=f"«{config.title}» не поддерживает пометку на удаление.",

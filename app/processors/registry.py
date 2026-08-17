@@ -120,7 +120,7 @@ def _build_purge_processors() -> list[Processor]:
     return [
         _make_purge_processor(t.key, t.model, t.title)
         for t in ALL_TABLES
-        if t.soft_delete
+        if t.delete_mode == "soft"
     ]
 
 

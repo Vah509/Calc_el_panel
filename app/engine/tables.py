@@ -8,7 +8,7 @@
 # написания нового роутера/шаблона вручную.
 # ============================================================
 
-from app.engine.config import TableConfig, FieldConfig, ComputedPair, Relation, FormRow
+from app.engine.config import TableConfig, FieldConfig, ComputedPair, Relation, FormRow, Hierarchy
 from app.models.material import Material
 from app.models.brand import Brand
 from app.models.constant import Constant
@@ -22,7 +22,7 @@ brand_table = TableConfig(
     title="Бренды",
     title_singular="бренд",
     search_placeholder="Поиск по названию…",
-    soft_delete=True,
+    delete_mode="soft",
     fields=[
         FieldConfig(name="name", label="Название", required=True, searchable=True),
         FieldConfig(name="rate_vb", label="Курс ВБ", widget="number",
@@ -38,7 +38,7 @@ material_table = TableConfig(
     title_singular="материал",
     search_placeholder="Поиск по названию или артикулу…",
     enable_search_toggles=True,
-    soft_delete=True,
+    delete_mode="soft",
     fields=[
         FieldConfig(name="short_name", label="Short name", required=True,
                     placeholder="ABB S203 C16", searchable=True, search_default=True, list_width="22%"),
@@ -84,17 +84,26 @@ material_table = TableConfig(
 )
 
 
+# kit_group / kit_section — верхние два уровня дерева drill-down
+# комплектов (kit_group -> kit_section -> kit). Раньше (v36/v37) это
+# были обычные плоские таблицы движка с фильтром-чипом по группе —
+# временный воркэраунд, теперь заменён на настоящий drill-down с
+# "простым" удалением (физическое, но только если нет детей).
+# kit_group_id остаётся обычным полем модели/FK — используется здесь
+# как hierarchy.parent_field, отдельного relation/select в форме
+# больше не нужно (группа выбирается переходом по дереву, не в форме).
 kit_group_table = TableConfig(
     key="kit_group",
     model=KitGroup,
     title="Группы комплектов",
     title_singular="группа комплектов",
     search_placeholder="Поиск по названию…",
-    soft_delete=True,
+    delete_mode="simple",
+    hierarchy=Hierarchy(child_key="kit_section", root_label="Группы"),
     fields=[
         FieldConfig(name="name", label="Название", required=True, searchable=True),
         FieldConfig(name="sort_order", label="Порядок", widget="number",
-                    is_numeric=True, list_width="100px", default=0),
+                    is_numeric=True, list_width="100px", default=0, in_list=False),
     ],
 )
 
@@ -105,18 +114,13 @@ kit_section_table = TableConfig(
     title="Подразделы комплектов",
     title_singular="подраздел комплектов",
     search_placeholder="Поиск по названию…",
-    soft_delete=True,
+    delete_mode="simple",
+    hierarchy=Hierarchy(parent_field="kit_group_id", parent_key="kit_group", child_key="kit"),
     fields=[
         FieldConfig(name="name", label="Название", required=True, searchable=True),
-        FieldConfig(name="kit_group_id", label="Группа", widget="select", required=True),
+        FieldConfig(name="kit_group_id", label="Группа", widget="select", required=True, in_list=False, in_form=False),
         FieldConfig(name="sort_order", label="Порядок", widget="number",
-                    is_numeric=True, list_width="100px", default=0),
-    ],
-    relations=[
-        Relation(field="kit_group_id", target_table="kit_group", display_field="name", label="Группа"),
-    ],
-    form_rows=[
-        FormRow(field_names=["kit_group_id", "sort_order"]),
+                    is_numeric=True, list_width="100px", default=0, in_list=False),
     ],
 )
 

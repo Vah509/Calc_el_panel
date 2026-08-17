@@ -21,11 +21,27 @@ import json
 from app.engine.config import TableConfig
 
 
+_NON_ROOT_HIERARCHY_TEMPLATE_SOURCE = r"""
+{% extends "base.html" %}
+{% block content %}
+<div class="topbar">
+  <div class="topbar-title"><h1>{{ config.title }}</h1></div>
+</div>
+<p style="color:var(--ink-soft); padding:16px 0;">
+  «{{ config.title }}» открывается изнутри дерева
+  {% if config.hierarchy.parent_key %}«{{ config.hierarchy.parent_key }}»{% endif %} —
+  перейдите на страницу верхнего уровня и раскройте нужный узел кликом.
+</p>
+{% endblock %}
+"""
+
+
 _PAGE_TEMPLATE_SOURCE = r"""
 {% extends "base.html" %}
 {% block content %}
 <div x-data="enginePage()" x-init="init()">
 
+  {% if not config.hierarchy %}
   <div class="topbar">
     <div class="topbar-title">
       <h1>{{ config.title }}</h1>
@@ -42,7 +58,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
   <div class="selection-bar" x-show="selectedIds.length > 0" x-cloak>
     <span x-text="selectedIds.length + ' выделено'"></span>
     <button type="button" class="btn" :disabled="selectedIds.length !== 1" @click="copySelected()">Копировать</button>
-    {% if config.soft_delete %}
+    {% if config.delete_mode == "soft" %}
     <button type="button" class="btn" @click="bulkMarkDelete(true)">Пометить на удаление</button>
     <button type="button" class="btn" @click="bulkMarkDelete(false)">Снять пометку</button>
     {% endif %}
@@ -87,7 +103,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
           {% if config.allow_create %}
           <th style="width:28px"></th>
           {% endif %}
-          {% if config.soft_delete %}
+          {% if config.delete_mode == "soft" %}
           <th style="width:28px"></th>
           {% endif %}
           {% for f in config.fields %}{% if f.in_list %}
@@ -111,7 +127,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
               <input type="checkbox" :value="item.id" :checked="selectedIds.includes(item.id)" @change="toggleSelect(item.id)">
             </td>
             {% endif %}
-            {% if config.soft_delete %}
+            {% if config.delete_mode == "soft" %}
             <td>
               <span x-show="item.is_deleted" class="status-dot" title="Помечено к удалению"></span>
             </td>
@@ -134,7 +150,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
           </tr>
         </template>
         <tr x-show="items.length === 0">
-          <td colspan="{{ config.fields | selectattr('in_list') | list | length + 1 + (1 if config.soft_delete else 0) + (1 if config.allow_create else 0) }}" style="text-align:center; color:var(--ink-soft); padding:24px;">Ничего не найдено</td>
+          <td colspan="{{ config.fields | selectattr('in_list') | list | length + 1 + (1 if config.delete_mode == 'soft' else 0) + (1 if config.allow_create else 0) }}" style="text-align:center; color:var(--ink-soft); padding:24px;">Ничего не найдено</td>
         </tr>
       </tbody>
     </table>
@@ -145,6 +161,40 @@ _PAGE_TEMPLATE_SOURCE = r"""
     <span x-text="'Стр. ' + page + ' из ' + totalPages"></span>
     <button type="button" @click="nextPage()" :disabled="page >= totalPages">Далее ›</button>
   </div>
+  {% else %}
+  <div class="topbar">
+    <div class="topbar-title">
+      <h1>{{ config.title }}</h1>
+    </div>
+  </div>
+
+  <div class="drill-breadcrumbs">
+    <button type="button" class="btn drill-back" x-show="drillPath.length > 0" @click="drillBack()">‹</button>
+    <template x-for="(crumb, idx) in drillCrumbs" :key="idx">
+      <span>
+        <a href="#" class="drill-crumb-link" :class="{'drill-crumb-current': idx === drillCrumbs.length - 1}"
+           @click.prevent="drillGoTo(idx)" x-text="crumb.label"></a>
+        <span x-show="idx < drillCrumbs.length - 1" class="drill-crumb-sep">›</span>
+      </span>
+    </template>
+  </div>
+
+  <div class="drill-list">
+    <template x-for="item in items" :key="item.id">
+      <div class="drill-row">
+        <button type="button" class="drill-row-edit" @click.stop="openEdit(item)" title="Редактировать">✎</button>
+        <div class="drill-row-body" @click="drillOpen(item)">
+          <span x-text="item.name"></span>
+        </div>
+        <span class="drill-row-arrow" x-show="currentLevel().hierarchy && currentLevel().hierarchy.childKey">›</span>
+      </div>
+    </template>
+    <div class="drill-row drill-row-empty" x-show="items.length === 0">Ничего не найдено</div>
+    <div class="drill-row drill-row-add" x-show="currentLevel().allowCreate" @click="openCreate()">
+      <span x-text="'+ ' + currentLevel().titleSingular"></span>
+    </div>
+  </div>
+  {% endif %}
 
   <div class="modal-backdrop" x-show="modalOpen" x-cloak>
     <div class="modal">
@@ -157,6 +207,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
       <div id="js-error-banner" style="display:none; background:#f3e6e3; border:1px solid #9c3b2e; color:#9c3b2e; padding:10px 16px; margin:0 20px 14px; border-radius:6px; font-family:monospace; font-size:12px; white-space:pre-wrap;"></div>
 
       <div class="modal-body">
+        {% if not config.hierarchy %}
         {% for row in form_layout %}
         <div{% if row.is_computed_pair %} class="price-pair"{% elif row.fields | length > 1 %} class="field-row"{% endif %}>
           {% for f in row.fields %}
@@ -193,12 +244,28 @@ _PAGE_TEMPLATE_SOURCE = r"""
         {% if config.computed_pairs %}
         <div class="vat-note">↻ Пересчитывается автоматически при изменении одного из полей — можно переопределить вручную.</div>
         {% endif %}
+        {% else %}
+        <!-- hierarchy-модалка: форма собирается на JS из currentLevel().formLayoutFields,
+             т.к. открытый уровень (kit_group / kit_section / ...) меняется динамически
+             без перезагрузки страницы — Jinja form_layout здесь неприменим (см.
+             render_table_page — form_layout вычислен только для корневого config). -->
+        <template x-for="f in currentLevel().formLayoutFields" :key="f.name">
+          <div class="field">
+            <label x-text="f.label"></label>
+            <input x-show="f.widget !== 'number'" type="text" :required="f.required"
+                   :placeholder="f.placeholder" x-model="editing[f.name]">
+            <input x-show="f.widget === 'number'" type="number" step="0.01" :required="f.required"
+                   :placeholder="f.placeholder" x-model.number="editing[f.name]">
+          </div>
+        </template>
+        {% endif %}
       </div>
 
       <div class="modal-footer">
+        {% if not config.hierarchy %}
         {% if config.allow_delete %}
         <button type="button" class="btn btn-danger-ghost" x-show="editing.id" @click="remove()">
-          {% if config.soft_delete %}
+          {% if config.delete_mode == "soft" %}
           <span x-text="editing.is_deleted ? 'Отменить' : 'Удалить'"></span>
           {% else %}
           Удалить
@@ -206,6 +273,9 @@ _PAGE_TEMPLATE_SOURCE = r"""
         </button>
         {% else %}
         <span></span>
+        {% endif %}
+        {% else %}
+        <button type="button" class="btn btn-danger-ghost" x-show="editing.id && currentLevel().allowDelete" @click="remove()">Удалить</button>
         {% endif %}
         <span x-show="!editing.id"></span>
         <div class="modal-footer-right">
@@ -263,6 +333,11 @@ function applyFormula(formulaName, direction, value, rate) {
 
 function enginePage() {
   const CONFIG = {{ config_json | safe }};
+  // Нормализация: для плоской таблицы (hierarchyRoot=false) считаем,
+  // что у неё один "уровень" — сама CONFIG — чтобы currentLevel()
+  // работала одинаково в обоих режимах и остальной код (load/save/
+  // remove/openEdit) не дублировался под каждый режим отдельно.
+  const LEVELS = CONFIG.hierarchyRoot ? CONFIG.levels : [CONFIG];
 
   return {
     items: [],
@@ -278,17 +353,34 @@ function enginePage() {
     page: 1,
     totalPages: 1,
     selectedIds: [],
+    // --- drill-down (только для CONFIG.hierarchyRoot) ---
+    // drillPath: стек открытых узлов дерева НИЖЕ корневого уровня,
+    // каждый элемент {parentId, label} — id открытой записи и её
+    // название (для крошки). Длина drillPath == индекс текущего
+    // уровня в LEVELS (drillPath.length === 0 -> LEVELS[0], корень).
+    drillPath: [],
+
+    currentLevel() {
+      return LEVELS[this.drillPath.length] || LEVELS[0];
+    },
+
+    get drillCrumbs() {
+      if (!CONFIG.hierarchyRoot) return [];
+      const rootLabel = (LEVELS[0].hierarchy && LEVELS[0].hierarchy.rootLabel) || LEVELS[0].title;
+      return [{ label: rootLabel }, ...this.drillPath.map(p => ({ label: p.label }))];
+    },
 
     async init() {
       try {
-        for (const f of CONFIG.toggleableSearchFields) {
+        const lvl = this.currentLevel();
+        for (const f of lvl.toggleableSearchFields) {
           // состояние чекбокса при первой загрузке — берётся из
           // search_default конкретного поля (см. FieldConfig); дальше
           // человек может переключать вручную, выбор держится, пока
           // страница открыта (не сбрасывается при новом поиске/фильтре).
           this.searchFields[f.name] = f.default;
         }
-        for (const rel of CONFIG.relations) {
+        for (const rel of lvl.relations) {
           // page_size=1000 — выпадающему списку/фильтру нужен весь
           // справочник целиком, а не одна страница (см. решение по
           // пагинации: явный page_size приоритетнее default_page_size).
@@ -301,8 +393,8 @@ function enginePage() {
         // "живая ссылка" — virtual-поле (например ставка НДС в
         // карточке материала) или computed pair со ставкой из
         // справочника, а не из собственного поля записи.
-        const needsConstants = CONFIG.fields.some(f => f.virtual) ||
-          CONFIG.computedPairs.some(p => p.rateConstantKey);
+        const needsConstants = lvl.fields.some(f => f.virtual) ||
+          lvl.computedPairs.some(p => p.rateConstantKey);
         if (needsConstants) {
           const res = await fetch('/api/constant?page_size=1000');
           const data = await res.json();
@@ -313,7 +405,7 @@ function enginePage() {
     },
 
     relationName(fieldName, id) {
-      const rel = CONFIG.relations.find(r => r.field === fieldName);
+      const rel = this.currentLevel().relations.find(r => r.field === fieldName);
       if (!rel) return '';
       const opts = this.relationOptions[fieldName] || [];
       const found = opts.find(o => o.id === id);
@@ -342,16 +434,17 @@ function enginePage() {
 
     async load() {
       try {
+        const lvl = this.currentLevel();
         const params = new URLSearchParams();
         if (this.q) params.set('q', this.q);
-        if (CONFIG.toggleableSearchFields.length > 0) {
+        if (lvl.toggleableSearchFields.length > 0) {
           // Явно передаём набор активных полей поиска — какие из
           // toggleable-полей отмечены галочкой + всегда-искомые поля
           // (searchable=True, search_toggle=False, например артикул).
-          for (const f of CONFIG.toggleableSearchFields) {
+          for (const f of lvl.toggleableSearchFields) {
             if (this.searchFields[f.name]) params.append('search_fields', f.name);
           }
-          for (const name of CONFIG.alwaysSearchedFields) {
+          for (const name of lvl.alwaysSearchedFields) {
             params.append('search_fields', name);
           }
         }
@@ -362,8 +455,16 @@ function enginePage() {
           params.set('sort_by', this.sortBy);
           params.set('sort_dir', this.sortDir);
         }
+        // drill-down: текущий узел дерева фильтруется по родителю —
+        // id последнего элемента drillPath (родитель уровня, который
+        // сейчас открыт). На корневом уровне (drillPath пуст) parent_id
+        // не передаётся — таблица верхнего уровня (kit_group) ни от
+        // кого не зависит.
+        if (CONFIG.hierarchyRoot && this.drillPath.length > 0) {
+          params.set('parent_id', this.drillPath[this.drillPath.length - 1].parentId);
+        }
         params.set('page', this.page);
-        const res = await fetch('/api/' + CONFIG.key + '?' + params.toString());
+        const res = await fetch('/api/' + lvl.key + '?' + params.toString());
         const data = await res.json();
         this.items = data.items;
         this.page = data.page;
@@ -387,13 +488,22 @@ function enginePage() {
     openCreate() {
       try {
         hideJsError();
+        const lvl = this.currentLevel();
         const blank = {};
-        for (const f of CONFIG.fields) {
+        for (const f of lvl.fields) {
           if (f.default !== null && f.default !== undefined) {
             blank[f.name] = f.default;
           } else {
             blank[f.name] = f.isNumeric ? 0 : '';
           }
+        }
+        // drill-down: новая запись, создаваемая внутри открытого узла,
+        // должна сразу ссылаться на своего родителя (например новый
+        // kit_section, созданный внутри группы 5, получает
+        // kit_group_id=5) — иначе она "потеряется" вне текущего узла
+        // сразу после создания (список отфильтрован по parent_id).
+        if (CONFIG.hierarchyRoot && this.drillPath.length > 0 && lvl.hierarchy && lvl.hierarchy.parentField) {
+          blank[lvl.hierarchy.parentField] = this.drillPath[this.drillPath.length - 1].parentId;
         }
         this.editing = blank;
         this.modalOpen = true;
@@ -450,7 +560,7 @@ function enginePage() {
       if (this.selectedIds.length === 0) return;
       try {
         hideJsError();
-        const res = await fetch('/api/' + CONFIG.key + '/bulk-mark-delete', {
+        const res = await fetch('/api/' + this.currentLevel().key + '/bulk-mark-delete', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ids: this.selectedIds, value: value })
@@ -466,7 +576,7 @@ function enginePage() {
 
     onComputedChange(changedField) {
       try {
-        for (const pair of CONFIG.computedPairs) {
+        for (const pair of this.currentLevel().computedPairs) {
           if (changedField !== pair.fieldA && changedField !== pair.fieldB) continue;
           const rate = pair.rateConstantKey
             ? Number(this.constants[pair.rateConstantKey]) || 0
@@ -488,8 +598,9 @@ function enginePage() {
     // причину, а не общую ошибку сервера. Возвращает текст ошибки
     // или null, если всё в порядке.
     validateBeforeSave() {
+      const lvl = this.currentLevel();
       const missing = [];
-      for (const f of CONFIG.fields) {
+      for (const f of lvl.fields) {
         if (!f.required || f.virtual) continue;
         const value = this.editing[f.name];
         if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) {
@@ -499,7 +610,7 @@ function enginePage() {
       if (missing.length) {
         return 'Не заполнено обязательное поле: ' + missing.join(', ');
       }
-      for (const pair of CONFIG.computedPairs) {
+      for (const pair of lvl.computedPairs) {
         const rate = pair.rateConstantKey
           ? this.constants[pair.rateConstantKey]
           : this.editing[pair.rateField];
@@ -517,8 +628,9 @@ function enginePage() {
         if (validationError) { showJsError(validationError); return; }
         hideJsError();
 
+        const lvlKey = this.currentLevel().key;
         const isEdit = !!this.editing.id;
-        const url = isEdit ? '/api/' + CONFIG.key + '/' + this.editing.id : '/api/' + CONFIG.key;
+        const url = isEdit ? '/api/' + lvlKey + '/' + this.editing.id : '/api/' + lvlKey;
         const method = isEdit ? 'PUT' : 'POST';
 
         const res = await fetch(url, {
@@ -537,12 +649,61 @@ function enginePage() {
 
     async remove() {
       try {
-        const res = await fetch('/api/' + CONFIG.key + '/' + this.editing.id, { method: 'DELETE' });
+        const res = await fetch('/api/' + this.currentLevel().key + '/' + this.editing.id, { method: 'DELETE' });
         if (!res.ok) {
           showJsError('Не удалось удалить. ' + await extractErrorMessage(res));
           return;
         }
         this.modalOpen = false;
+        await this.load();
+      } catch (err) { showJsError(err); }
+    },
+
+    // --- drill-down навигация (только для CONFIG.hierarchyRoot) ---
+
+    async drillOpen(item) {
+      // Клик по телу строки (не по иконке ✎). На последнем уровне
+      // дерева (currentLevel().hierarchy.childKey отсутствует —
+      // например будущий kit) drill-down некуда идти дальше: там
+      // строка ведёт на отдельную страницу-карточку, не вглубь дерева
+      // (см. TableConfig.edit_mode="own_page") — эта функция такие
+      // клики просто игнорирует, переход на карточку реализуется
+      // отдельно вместе с самой карточкой kit.
+      const lvl = this.currentLevel();
+      if (!lvl.hierarchy || !lvl.hierarchy.childKey) return;
+      try {
+        hideJsError();
+        this.drillPath.push({ parentId: item.id, label: item.name });
+        this.page = 1;
+        this.q = '';
+        this.selectedIds = [];
+        await this.load();
+      } catch (err) { showJsError(err); }
+    },
+
+    async drillBack() {
+      if (this.drillPath.length === 0) return;
+      try {
+        hideJsError();
+        this.drillPath.pop();
+        this.page = 1;
+        this.q = '';
+        this.selectedIds = [];
+        await this.load();
+      } catch (err) { showJsError(err); }
+    },
+
+    async drillGoTo(crumbIndex) {
+      // crumbIndex 0 — корень (крошка "Группы" и т.п.), crumbIndex N —
+      // drillPath[N-1]. Обрезаем drillPath до этой глубины и
+      // перезагружаем список текущего (теперь более верхнего) уровня.
+      if (crumbIndex >= this.drillPath.length) return;
+      try {
+        hideJsError();
+        this.drillPath = this.drillPath.slice(0, crumbIndex);
+        this.page = 1;
+        this.q = '';
+        this.selectedIds = [];
         await this.load();
       } catch (err) { showJsError(err); }
     },
@@ -608,20 +769,21 @@ def _build_form_layout(config: TableConfig) -> list[dict]:
     return layout
 
 
-def render_table_page(config: TableConfig, jinja_env) -> str:
-    """Рендерит HTML-страницу списка+модалки для таблицы. jinja_env
-    должен быть окружением Jinja2Templates.env приложения (то же,
-    что использует base.html) — это позволяет {% extends "base.html" %}
-    сработать корректно, так как шаблон ищется через тот же loader,
-    что и остальные файловые шаблоны приложения."""
-
+def _serialize_level_config(config: TableConfig) -> dict:
+    """Сериализует один TableConfig в JSON-совместимый словарь — общая
+    часть для обычного (плоского) config_json и для каждого элемента
+    CONFIG.levels у hierarchy-таблиц (см. _build_hierarchy_levels)."""
     computed_field_names = {p.field_a for p in config.computed_pairs} | {
         p.field_b for p in config.computed_pairs
     }
-
-    config_json = json.dumps({
+    return {
         "key": config.key,
-        "softDelete": config.soft_delete,
+        "title": config.title,
+        "titleSingular": config.title_singular,
+        "deleteMode": config.delete_mode,
+        "allowCreate": config.allow_create,
+        "allowDelete": config.allow_delete,
+        "editMode": config.edit_mode,
         "fields": [
             {
                 "name": f.name,
@@ -655,7 +817,88 @@ def render_table_page(config: TableConfig, jinja_env) -> str:
             for f in config.toggleable_search_fields()
         ] if config.enable_search_toggles else [],
         "alwaysSearchedFields": config.always_searched_fields() if config.enable_search_toggles else [],
-    }, ensure_ascii=False)
+        "formLayoutFields": [
+            {
+                "name": f.name,
+                "label": f.label,
+                "widget": f.widget,
+                "required": f.required,
+                "placeholder": f.placeholder,
+                "readonly": f.readonly,
+                "virtual": f.virtual,
+                "sourceConstantKey": f.source_constant_key,
+                "isComputed": f.name in computed_field_names,
+            }
+            for f in config.fields if f.in_form
+        ],
+        "hierarchy": {
+            "parentField": config.hierarchy.parent_field,
+            "parentKey": config.hierarchy.parent_key,
+            "childKey": config.hierarchy.child_key,
+            "rootLabel": config.hierarchy.root_label,
+        } if config.hierarchy else None,
+    }
+
+
+def _build_hierarchy_levels(root_config: TableConfig) -> list[dict]:
+    """Собирает цепочку УРОВНЕЙ дерева, начиная с root_config, следуя
+    hierarchy.child_key рекурсивно (kit_group -> kit_section -> kit...).
+    Импорт ALL_TABLES внутри функции — тот же паттерн локального
+    импорта, что и в engine/api.py, чтобы не создавать циклическую
+    зависимость tables.py -> page.py -> tables.py на уровне модуля.
+
+    Отсутствующий в ALL_TABLES child_key (например "kit" ещё не
+    реализован) просто обрывает цепочку на последнем существующем
+    уровне — страница отрисуется без последнего шага, а не упадёт;
+    когда kit появится в ALL_TABLES, следующий рендер подхватит его
+    без изменений в этой функции."""
+    from app.engine.tables import ALL_TABLES
+    by_key = {t.key: t for t in ALL_TABLES}
+
+    levels = []
+    current = root_config
+    seen = set()
+    while current is not None and current.key not in seen:
+        seen.add(current.key)
+        levels.append(_serialize_level_config(current))
+        next_key = current.hierarchy.child_key if current.hierarchy else None
+        current = by_key.get(next_key) if next_key else None
+    return levels
+
+
+def render_table_page(config: TableConfig, jinja_env) -> str:
+    """Рендерит HTML-страницу списка+модалки для таблицы. jinja_env
+    должен быть окружением Jinja2Templates.env приложения (то же,
+    что использует base.html) — это позволяет {% extends "base.html" %}
+    сработать корректно, так как шаблон ищется через тот же loader,
+    что и остальные файловые шаблоны приложения.
+
+    Для hierarchy-таблиц (config.hierarchy задан) рендерится ТОЛЬКО
+    для корневого уровня дерева (config.hierarchy.parent_key is None,
+    например kit_group) — register.py регистрирует HTML-страницу для
+    каждой TableConfig из ALL_TABLES, но не-корневые уровни (kit_section)
+    не получают собственный маршрут /kit_section-v2: вся навигация
+    вглубь дерева происходит внутри ОДНОЙ страницы корневого уровня
+    (см. CONFIG.levels в JS) без перезагрузки. Не-корневой hierarchy
+    рендерит явную заглушку вместо страницы, чтобы по ошибке открытый
+    URL не показывал пустую нерабочую страницу молча."""
+
+    if config.hierarchy and not config.hierarchy.is_root():
+        template = jinja_env.from_string(_NON_ROOT_HIERARCHY_TEMPLATE_SOURCE)
+        return template.render(config=config)
+
+    computed_field_names = {p.field_a for p in config.computed_pairs} | {
+        p.field_b for p in config.computed_pairs
+    }
+
+    if config.hierarchy:
+        config_json = json.dumps({
+            "key": config.key,
+            "hierarchyRoot": True,
+            "levels": _build_hierarchy_levels(config),
+        }, ensure_ascii=False)
+    else:
+        config_json = json.dumps(_serialize_level_config(config) | {"hierarchyRoot": False}, ensure_ascii=False)
 
     form_layout = _build_form_layout(config)
     toggleable_search_fields = config.toggleable_search_fields() if config.enable_search_toggles else []

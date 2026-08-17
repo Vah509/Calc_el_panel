@@ -179,14 +179,24 @@ kit_item_table = TableConfig(
         FieldConfig(name="kit_id", label="Комплект", widget="select", required=True),
         FieldConfig(name="material_id", label="Материал", widget="select", required=True),
         FieldConfig(name="quantity", label="Количество", widget="number",
-                    is_numeric=True, list_width="100px", default=1),
+                    is_numeric=True, list_width="100px", default=1, form_width="110px"),
     ],
     relations=[
         Relation(field="kit_id", target_table="kit", display_field="name", label="Комплект"),
         Relation(field="material_id", target_table="material", display_field="short_name", label="Материал"),
     ],
+    # "Материал" — отдельной широкой строкой (не половина ширины
+    # рядом с "Комплект"): название материала обычно длиннее, чем
+    # умещается в половину модалки на телефоне (см. на скрине —
+    # значение "—" в узком select нечитаемо). "Комплект" и
+    # "Количество" делят одну строку — количество узкое
+    # (form_width="110px" у FieldConfig), под него не нужна половина
+    # экрана. Временное решение по прямому запросу Вахтанга — это
+    # предварительная таблица только для ручного ввода тестовых
+    # данных, не финальный UI.
     form_rows=[
-        FormRow(field_names=["kit_id", "material_id"]),
+        FormRow(field_names=["kit_id", "quantity"]),
+        FormRow(field_names=["material_id"]),
     ],
 )
 

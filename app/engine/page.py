@@ -89,7 +89,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
     <span class="chip" :class="{active: !activeFilters['{{ rel.field }}']}" @click="activeFilters['{{ rel.field }}']=null; page=1; load()">Все</span>
     <template x-for="opt in relationOptions['{{ rel.field }}']" :key="opt.id">
       <span class="chip" :class="{active: activeFilters['{{ rel.field }}'] === opt.id}"
-            @click="activeFilters['{{ rel.field }}'] = opt.id; page=1; load()" x-text="opt.name"></span>
+            @click="activeFilters['{{ rel.field }}'] = opt.id; page=1; load()" x-text="opt['{{ rel.display_field }}']"></span>
     </template>
     {% endfor %}
     {% endif %}
@@ -223,7 +223,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
             <select x-model.number="editing.{{ f.name }}">
               <option :value="null">—</option>
               <template x-for="opt in relationOptions['{{ f.name }}']" :key="opt.id">
-                <option :value="opt.id" x-text="opt.name"></option>
+                <option :value="opt.id" x-text="opt['{{ rel.display_field }}']"></option>
               </template>
             </select>
             {% elif f.virtual %}
@@ -429,7 +429,7 @@ function enginePage() {
       if (!rel) return '';
       const opts = this.relationOptions[fieldName] || [];
       const found = opts.find(o => o.id === id);
-      return found ? found.name : '';
+      return found ? found[rel.display_field] : '';
     },
 
     onSearchFieldsChange() {

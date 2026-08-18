@@ -364,6 +364,77 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
         session.refresh(new_instance)
         return _serialize(new_instance)
 
+    @router.put("/{item_id}/items")
+    def replace_items(item_id: int, payload: dict[str, Any], session: Session = Depends(get_engine_session)):
+        """Полная замена состава (items_source_table_key) одной
+        транзакцией — используется MaterialPicker (кнопка "Редактировать"
+        в модалке kit): человек правит черновик состава на отдельном
+        полноэкранном шаге, а по финальному сохранению весь прежний
+        состав удаляется и создаётся заново из присланного списка.
+
+        Осознанно НЕ delta-сравнение ("что изменилось") — по прямому
+        решению Вахтанга можно "смело переписывать всё", это заметно
+        проще и на бэкенде, и на фронте (черновик просто отправляется
+        целиком, не нужно отслеживать added/removed/changed построчно).
+
+        payload = {"items": [{"material_id": 1, "quantity": 2.5}, ...]}
+        Дубликаты material_id в списке допустимы и сохраняются как
+        отдельные строки — намеренно, по прямому решению (см.
+        HANDOFF_kits_and_calculation.md, раздел 2.9)."""
+        if config.edit_mode != "items_modal" or not config.items_source_table_key:
+            raise HTTPException(
+                status_code=422,
+                detail=f"«{config.title}» не поддерживает замену состава.",
+            )
+        instance = session.get(model, item_id)
+        if not instance:
+            raise HTTPException(status_code=404, detail=f"{config.title_singular} не найден(а)")
+
+        from app.engine.tables import ALL_TABLES  # локальный импорт — см. паттерн выше в файле
+        items_config = next((t for t in ALL_TABLES if t.key == config.items_source_table_key), None)
+        if not items_config or not items_config.hierarchy or not items_config.hierarchy.parent_field:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Некорректная конфигурация состава для «{config.title}».",
+            )
+
+        items_parent_field = items_config.hierarchy.parent_field
+        new_items = payload.get("items") or []
+
+        # Валидация каждой строки: material_id обязателен и должен
+        # существовать, quantity — положительное число. Проверяем ДО
+        # удаления старого состава, чтобы при ошибке ничего не потерять
+        # (вся функция — одна транзакция, но лучше не начинать удаление,
+        # если черновик заведомо некорректен).
+        from app.models.material import Material
+        for row in new_items:
+            material_id = row.get("material_id")
+            if not material_id:
+                raise HTTPException(status_code=422, detail="Не указан материал в одной из строк состава.")
+            if not session.get(Material, material_id):
+                raise HTTPException(status_code=422, detail=f"Материал id={material_id} не найден.")
+            quantity = row.get("quantity")
+            if quantity is None or float(quantity) <= 0:
+                raise HTTPException(status_code=422, detail="Количество должно быть больше нуля.")
+
+        old_items = session.exec(
+            select(items_config.model).where(
+                getattr(items_config.model, items_parent_field) == item_id
+            )
+        ).all()
+        for old in old_items:
+            session.delete(old)
+
+        for row in new_items:
+            session.add(items_config.model(
+                **{items_parent_field: item_id},
+                material_id=row["material_id"],
+                quantity=round(float(row["quantity"]), 2),
+            ))
+
+        session.commit()
+        return {"replaced": len(new_items)}
+
     @router.post("/bulk-mark-delete")
     def bulk_mark_delete(payload: dict[str, Any], session: Session = Depends(get_engine_session)):
         """Групповая пометка/снятие пометки на удаление. В отличие

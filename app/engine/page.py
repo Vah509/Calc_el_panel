@@ -281,8 +281,11 @@ _PAGE_TEMPLATE_SOURCE = r"""
 
         <!-- Режим 1: items_modal, СПИСОК состава (не форма редактирования
              самого узла) — используется kit. Показывается, когда открыта
-             существующая запись (editing.id) и addingItem=false. -->
-        <template x-if="isItemsModal() && editing.id && !addingItem">
+             существующая запись (editing.id). "Редактировать" открывает
+             MaterialPicker — отдельный полноэкранный экран (см. ниже),
+             не режим внутри этой же модалки, как было раньше с формой
+             добавления одной позиции. -->
+        <template x-if="isItemsModal() && editing.id">
           <div>
             <div class="items-modal-list">
               <template x-for="item in kitItems" :key="item.id">
@@ -293,31 +296,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
               </template>
               <div class="items-modal-row items-modal-empty" x-show="kitItems.length === 0">Пока пусто — состав не заполнен</div>
             </div>
-            <button type="button" class="btn items-modal-add-btn" @click="openAddItem()">+ Добавить</button>
-          </div>
-        </template>
-
-        <!-- Режим 2: items_modal, ФОРМА добавления новой позиции состава
-             (addingItem=true) — переиспользует currentLevel().itemsSource,
-             тот же формат formLayoutFields/relations, что и обычная
-             плоская таблица (см. _serialize_items_source в page.py). -->
-        <template x-if="isItemsModal() && addingItem">
-          <div>
-            <template x-for="f in currentLevel().itemsSource.formLayoutFields.filter(f => f.name !== 'kit_id')" :key="f.name">
-              <div class="field">
-                <label x-text="f.label"></label>
-                <template x-if="itemsSourceRelationFor(f.name)">
-                  <select x-model.number="newItem[f.name]">
-                    <option :value="null">—</option>
-                    <template x-for="opt in itemRelationOptions[f.name] || []" :key="opt.id">
-                      <option :value="opt.id" x-text="opt[itemsSourceRelationFor(f.name).display_field]"></option>
-                    </template>
-                  </select>
-                </template>
-                <input x-show="!itemsSourceRelationFor(f.name) && f.widget === 'number'" type="number" step="0.01"
-                       :required="f.required" x-model.number="newItem[f.name]">
-              </div>
-            </template>
+            <button type="button" class="btn items-modal-add-btn" @click="openMaterialPicker()">Редактировать</button>
           </div>
         </template>
 
@@ -362,21 +341,11 @@ _PAGE_TEMPLATE_SOURCE = r"""
         </div>
         {% else %}
         <!-- items_modal, режим просмотра списка состава: единственная
-             кнопка — закрыть (список уже сохранён построчно по мере
-             добавления, отдельного "Сохранить" для всего списка не
-             нужно). -->
-        <template x-if="isItemsModal() && editing.id && !addingItem">
+             кнопка — закрыть (изменения состава идут через отдельный
+             полноэкранный MaterialPicker, у него свои кнопки сохранения). -->
+        <template x-if="isItemsModal() && editing.id">
           <div class="modal-footer-right" style="width:100%; justify-content:flex-end;">
             <button type="button" class="btn btn-ghost" @click="close()">Закрыть</button>
-          </div>
-        </template>
-        <!-- items_modal, режим формы добавления позиции: Отмена
-             возвращает к списку состава (не закрывает всю модалку),
-             Добавить — сохраняет позицию и тоже возвращает к списку. -->
-        <template x-if="isItemsModal() && addingItem">
-          <div class="modal-footer-right" style="width:100%; justify-content:flex-end;">
-            <button type="button" class="btn btn-ghost" @click="addingItem=false">Отмена</button>
-            <button type="button" class="btn btn-primary" @click="saveNewItem()">Добавить</button>
           </div>
         </template>
         <!-- обычная форма footer: kit_group/kit_section всегда, ЛИБО kit
@@ -395,6 +364,60 @@ _PAGE_TEMPLATE_SOURCE = r"""
         </template>
         {% endif %}
       </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       MaterialPicker — отдельный полноэкранный экран (НЕ часть modal-
+       backdrop выше), открывается кнопкой "Редактировать" в модалке
+       kit. Bottom sheet: верхняя зона "Отобрано" (черновик состава,
+       в памяти экрана, ничего не сохраняется на сервере до нажатия
+       финальной кнопки) + нижняя зона (поиск материалов, плоский
+       список — без групп/дерева, см. HANDOFF_kits_and_calculation.md
+       раздел 2.8-2.9). Между зонами — перетаскиваемая пальцем полоса
+       (pickerSplit, 15%-85%, см. CSS .picker-handle). -->
+  <div class="picker-overlay" x-show="pickerOpen" x-cloak>
+    <div class="picker-pane picker-pane-top" :style="'flex: 0 0 ' + pickerSplit + '%;'">
+      <div class="picker-pane-header">
+        <span x-text="pickerDraft.length + ' позиций'"></span>
+      </div>
+      <div class="picker-list">
+        <template x-for="(row, idx) in pickerDraft" :key="row._key">
+          <div class="picker-row">
+            <span class="picker-row-name" x-text="materialLabel(row.material_id)"></span>
+            <div class="picker-qty-control">
+              <button type="button" class="picker-qty-btn" @click="pickerDecrement(idx)">−</button>
+              <span class="picker-qty-value" x-text="row.quantity"></span>
+              <button type="button" class="picker-qty-btn" @click="pickerIncrement(idx)">+</button>
+            </div>
+            <button type="button" class="picker-row-remove" @click="pickerRemoveRow(idx)">🗑</button>
+          </div>
+        </template>
+        <div class="picker-row picker-row-empty" x-show="pickerDraft.length === 0">Пока ничего не выбрано</div>
+      </div>
+    </div>
+
+    <div class="picker-handle" @pointerdown="pickerDragStart($event)"><div class="picker-handle-bar"></div></div>
+
+    <div class="picker-pane picker-pane-bottom" :style="'flex: 0 0 ' + (100 - pickerSplit) + '%;'">
+      <div class="picker-search-row">
+        <input type="text" class="picker-search-input" placeholder="Поиск материала…"
+               x-model="pickerQuery" @input.debounce.300ms="pickerSearch()">
+      </div>
+      <div class="picker-search-results">
+        <template x-for="mat in pickerResults" :key="mat.id">
+          <div class="picker-search-row-item">
+            <span x-text="mat.short_name"></span>
+            <button type="button" class="btn btn-primary picker-add-btn" @click="pickerAddMaterial(mat)">+ Добавить</button>
+          </div>
+        </template>
+        <div class="picker-search-row-item picker-row-empty" x-show="pickerQuery && pickerResults.length === 0">Ничего не найдено</div>
+      </div>
+    </div>
+
+    <div class="picker-footer">
+      <button type="button" class="btn btn-ghost" @click="pickerCancel()">Отмена</button>
+      <button type="button" class="btn btn-primary" @click="pickerSave()">Сохранить состав</button>
     </div>
   </div>
 
@@ -470,17 +493,30 @@ function enginePage() {
     // kitItems: состав ТЕКУЩЕГО открытого узла (editing.id), загружается
     // заново при каждом openEdit() — см. loadKitItems().
     kitItems: [],
-    // addingItem: переключает тело модалки между "список состава" и
-    // "форма добавления новой позиции" (см. openAddItem/saveNewItem) —
-    // не отдельная модалка поверх модалки, а режим внутри той же.
-    addingItem: false,
-    newItem: {},
-    // itemRelationOptions: выпадающие списки ДЛЯ ФОРМЫ ДОБАВЛЕНИЯ
-    // позиции состава (например список материалов) — отдельно от
+    // itemRelationOptions: выпадающие списки/справочники, связанные с
+    // items_modal (например список материалов, для отображения названий
+    // в kitItems и для поиска внутри MaterialPicker) — отдельно от
     // relationOptions верхнего уровня, т.к. поля разных таблиц
     // (kit.formLayoutFields vs kit_item.itemsSource.formLayoutFields)
     // не должны путать друг друга при одинаковых именах полей.
     itemRelationOptions: {},
+    // --- MaterialPicker (отдельный полноэкранный экран поверх modal-
+    // backdrop, открывается кнопкой "Редактировать" в модалке kit) ---
+    pickerOpen: false,
+    // pickerDraft: черновик состава в памяти экрана, НЕ синхронизирован
+    // с сервером до pickerSave(). Каждая строка {_key, material_id,
+    // quantity} — _key нужен как стабильный :key для x-for (не material_id,
+    // т.к. дубликаты material_id разрешены — см. HANDOFF раздел 2.9).
+    pickerDraft: [],
+    pickerDraftSeq: 0,
+    pickerQuery: '',
+    pickerResults: [],
+    // pickerSplit: процент высоты верхней зоны ("Отобрано"), диапазон
+    // 15-85 — см. pickerDragStart/pickerDragMove, HANDOFF раздел 2.8.
+    pickerSplit: 40,
+    pickerDragging: false,
+    pickerDragStartY: 0,
+    pickerDragStartSplit: 40,
     // --- drill-down (только для CONFIG.hierarchyRoot) ---
     // drillPath: стек открытых узлов дерева НИЖЕ корневого уровня,
     // каждый элемент {parentId, label} — id открытой записи и её
@@ -663,7 +699,6 @@ function enginePage() {
         hideJsError();
         this.editing = { ...item };
         this.modalOpen = true;
-        this.addingItem = false;
         if (this.isItemsModal()) {
           this.loadKitItems();
         }
@@ -697,10 +732,10 @@ function enginePage() {
         const res = await fetch('/api/' + src.key + '?' + params.toString());
         const data = await res.json();
         this.kitItems = data.items;
-        // подтягиваем опции для отображения названия материала в списке
-        // (itemsSourceRelationName) — те же relations, что понадобятся
-        // и форме добавления, грузим один раз при открытии модалки, а
-        // не заново при каждом openAddItem().
+        // подтягиваем опции материалов для отображения названия в списке
+        // (itemsSourceRelationName/materialLabel) — используется и списком
+        // состава в модалке, и MaterialPicker (поиск/подписи выбранных
+        // строк), грузим один раз при открытии модалки kit.
         for (const rel of src.relations) {
           if (rel.field === 'kit_id') continue; // kit_id проставляется автоматически, select для него не нужен
           const optRes = await fetch('/api/' + rel.target_table + '?page_size=1000');
@@ -723,45 +758,139 @@ function enginePage() {
       return found ? found[rel.display_field] : '';
     },
 
-    openAddItem() {
+    // --- MaterialPicker: отдельный полноэкранный экран для редактирования
+    // состава kit (см. HANDOFF_kits_and_calculation.md, разделы 2.8-2.9).
+    // Открывается кнопкой "Редактировать" в модалке kit, закрывается
+    // либо отменой (черновик отбрасывается), либо сохранением (полная
+    // замена состава на сервере через PUT /api/kit/{id}/items). -->
+
+    materialLabel(materialId) {
+      const opts = this.itemRelationOptions['material_id'] || [];
+      const found = opts.find(o => o.id === materialId);
+      return found ? found.short_name : '';
+    },
+
+    openMaterialPicker() {
       try {
         hideJsError();
-        const src = this.currentLevel().itemsSource;
-        const blank = {};
-        for (const f of src.fields) {
-          if (f.name === 'kit_id') continue; // проставляется автоматически при сохранении, не часть формы
-          blank[f.name] = (f.default !== null && f.default !== undefined) ? f.default : (f.isNumeric ? 0 : '');
-        }
-        this.newItem = blank;
-        this.addingItem = true;
+        // Предзаполнение: черновик стартует с текущим составом kit
+        // (kitItems уже загружены при openEdit/loadKitItems), не с
+        // пустого списка — человек правит существующие позиции наравне
+        // с новыми (см. решение 2026-08-18).
+        this.pickerDraft = this.kitItems.map(item => ({
+          _key: 'existing-' + item.id,
+          material_id: item.material_id,
+          quantity: Number(item.quantity ?? 1),
+        }));
+        this.pickerDraftSeq = this.pickerDraft.length;
+        this.pickerQuery = '';
+        this.pickerResults = [];
+        this.pickerSplit = 40;
+        this.pickerOpen = true;
       } catch (err) { showJsError(err); }
     },
 
-    async saveNewItem() {
+    async pickerSearch() {
+      // Плоский поиск по материалам, переиспользует существующий
+      // GET /api/material?q=... — без групп/дерева (см. HANDOFF, 2.8:
+      // drill-down по группам материалов сознательно отложен, категорий
+      // в справочнике материалов пока нет вообще).
       try {
         hideJsError();
-        const src = this.currentLevel().itemsSource;
-        // kit_id проставляется здесь, а не в форме — hierarchy.parentField
-        // источника (kit_item.hierarchy.parent_field === "kit_id")
-        // указывает, каким полем связать новую запись с открытым
-        // комплектом, тем же способом, что и drill-down создание внутри
-        // узла дерева (см. openCreate выше).
-        const payload = { ...this.newItem };
-        if (src.hierarchy && src.hierarchy.parentField) {
-          payload[src.hierarchy.parentField] = this.editing.id;
-        }
-        const res = await fetch('/api/' + src.key, {
-          method: 'POST',
+        const query = this.pickerQuery.trim();
+        if (!query) { this.pickerResults = []; return; }
+        const params = new URLSearchParams();
+        params.set('q', query);
+        params.set('page_size', 30);
+        const res = await fetch('/api/material?' + params.toString());
+        const data = await res.json();
+        this.pickerResults = data.items;
+      } catch (err) { showJsError(err); }
+    },
+
+    pickerAddMaterial(material) {
+      // Дубликаты material_id разрешены — не суммируются с уже
+      // существующей строкой (см. HANDOFF, 2.9: явное решение).
+      this.pickerDraftSeq += 1;
+      this.pickerDraft.push({ _key: 'new-' + this.pickerDraftSeq, material_id: material.id, quantity: 1 });
+      // подпись новой строки должна резолвиться сразу — если материала
+      // ещё нет в itemRelationOptions (например появился после того как
+      // модалка kit уже загрузилась), добавляем его на лету.
+      const opts = this.itemRelationOptions['material_id'] || [];
+      if (!opts.some(o => o.id === material.id)) {
+        this.itemRelationOptions['material_id'] = [...opts, material];
+      }
+    },
+
+    pickerIncrement(idx) {
+      this.pickerDraft[idx].quantity = Number((this.pickerDraft[idx].quantity + 1).toFixed(2));
+    },
+
+    pickerDecrement(idx) {
+      const next = Number((this.pickerDraft[idx].quantity - 1).toFixed(2));
+      this.pickerDraft[idx].quantity = next > 0 ? next : 1;
+    },
+
+    pickerRemoveRow(idx) {
+      this.pickerDraft.splice(idx, 1);
+    },
+
+    pickerCancel() {
+      // Черновик просто отбрасывается — ничего на сервере не менялось
+      // (см. HANDOFF, 2.9: кнопка "Отмена" обязательна).
+      this.pickerOpen = false;
+      this.pickerDraft = [];
+    },
+
+    async pickerSave() {
+      try {
+        hideJsError();
+        const payload = {
+          items: this.pickerDraft.map(row => ({ material_id: row.material_id, quantity: row.quantity })),
+        };
+        const res = await fetch('/api/kit/' + this.editing.id + '/items', {
+          method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
+          body: JSON.stringify(payload),
         });
         if (!res.ok) {
           showJsError(await extractErrorMessage(res));
           return;
         }
-        this.addingItem = false;
+        this.pickerOpen = false;
+        this.pickerDraft = [];
         await this.loadKitItems();
       } catch (err) { showJsError(err); }
+    },
+
+    // --- MaterialPicker: перетаскиваемая полоса между "Отобрано" и
+    // поиском (см. HANDOFF, 2.8) — pointer-события работают одинаково
+    // для мыши и тача, не нужен отдельный код под touchstart/mousedown.
+    pickerDragStart(evt) {
+      this.pickerDragging = true;
+      this.pickerDragStartY = evt.clientY;
+      this.pickerDragStartSplit = this.pickerSplit;
+      evt.preventDefault();
+      const onMove = (moveEvt) => this.pickerDragMove(moveEvt);
+      const onUp = () => {
+        this.pickerDragging = false;
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+      };
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+    },
+
+    pickerDragMove(evt) {
+      if (!this.pickerDragging) return;
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+      const deltaPercent = ((evt.clientY - this.pickerDragStartY) / viewportHeight) * 100;
+      let next = this.pickerDragStartSplit + deltaPercent;
+      // Диапазон 15-85% — ни одна из двух зон никогда не схлопывается
+      // полностью (см. HANDOFF, 2.8).
+      if (next < 15) next = 15;
+      if (next > 85) next = 85;
+      this.pickerSplit = next;
     },
 
     toggleSelect(id) {
@@ -983,7 +1112,6 @@ function enginePage() {
       try {
         hideJsError();
         this.modalOpen = false;
-        this.addingItem = false;
         this.kitItems = [];
       } catch (err) { showJsError(err); }
     }

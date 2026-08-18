@@ -180,9 +180,34 @@ _PAGE_TEMPLATE_SOURCE = r"""
     </template>
   </div>
 
+  <!-- Выделение (чекбоксы + панель) — только на уровнях с items_modal
+       (сейчас единственный такой уровень дерева — kit): у kit_group/
+       kit_section (delete_mode="simple", edit_mode="modal") группового
+       копирования/пометки на удаление нет и не планировалось — см.
+       ответ Вахтанга при постановке задачи ("чекбоксы только на
+       уровне комплектов"). isSelectableLevel() — то же самое условие,
+       что и editMode здесь, вынесено в JS, чтобы не дублировать его
+       ещё и в проверках copySelected()/bulkMarkDelete(). -->
+  <div class="selection-bar" x-show="isSelectableLevel() && selectedIds.length > 0" x-cloak>
+    <span x-text="selectedIds.length + ' выделено'"></span>
+    <button type="button" class="btn" :disabled="selectedIds.length !== 1" @click="copySelected()">Копировать</button>
+    <template x-if="currentLevel().deleteMode === 'soft'">
+      <span style="display:contents;">
+        <button type="button" class="btn" @click="bulkMarkDelete(true)">Пометить на удаление</button>
+        <button type="button" class="btn" @click="bulkMarkDelete(false)">Снять пометку</button>
+      </span>
+    </template>
+    <button type="button" class="selection-clear" @click="selectedIds = []">Снять выделение</button>
+  </div>
+
   <div class="drill-list">
     <template x-for="item in items" :key="item.id">
       <div class="drill-row">
+        <template x-if="isSelectableLevel()">
+          <input type="checkbox" class="drill-row-checkbox" :value="item.id"
+                 :checked="selectedIds.includes(item.id)" @click.stop="toggleSelect(item.id)">
+        </template>
+        <span class="status-dot" x-show="currentLevel().deleteMode === 'soft' && item.is_deleted" title="Помечено к удалению"></span>
         <button type="button" class="drill-row-edit" @click.stop="openEdit(item)" title="Редактировать">✎</button>
         <div class="drill-row-body" :class="{'drill-row-body-clickable': hasNextLevel}" @click="drillOpen(item)">
           <span x-text="item.name"></span>
@@ -744,7 +769,16 @@ function enginePage() {
       if (idx === -1) { this.selectedIds.push(id); } else { this.selectedIds.splice(idx, 1); }
     },
 
-    copySelected() {
+    // Уровни, где вообще показываются чекбоксы выделения/панель —
+    // сейчас: любая плоская таблица (material/brand) ЛИБО уровень
+    // дерева с editMode="items_modal" (kit). kit_group/kit_section
+    // выделения не имеют — групповых операций на них не планировалось.
+    isSelectableLevel() {
+      const lvl = this.currentLevel ? this.currentLevel() : null;
+      return !!(lvl && (!CONFIG.hierarchyRoot || lvl.editMode === 'items_modal'));
+    },
+
+    async copySelected() {
       // Копирование доступно только при РОВНО одном выделенном элементе —
       // при нескольких выделенных кнопка задизейблена в разметке
       // (:disabled="selectedIds.length !== 1"), это дополнительная
@@ -752,21 +786,42 @@ function enginePage() {
       if (this.selectedIds.length !== 1) return;
       const item = this.items.find(i => i.id === this.selectedIds[0]);
       if (!item) return;
-      // Открывает форму, предзаполненную данными существующей записи,
-      // но БЕЗ id — save() увидит отсутствие id и отправит POST
-      // (создание новой независимой записи), а не PUT. is_deleted
-      // копии всегда сброшен в false — копия создаётся активной, даже
-      // если копируем помеченную на удаление запись. Остальные поля
-      // (включая sku_article и т.п.) копируются как есть — пользователь
-      // правит вручную перед сохранением.
       try {
         hideJsError();
-        const copy = { ...item };
-        delete copy.id;
-        copy.is_deleted = false;
-        this.editing = copy;
-        this.modalOpen = true;
-        this.selectedIds = [];
+        if (this.isItemsModal()) {
+          // kit: состав (kit_item) не хранится в самой записи, поэтому
+          // "скопировать в форме" недостаточно — копия делается сразу
+          // на сервере (POST /api/kit/{id}/copy), одной транзакцией
+          // вместе со всем составом. Название копии совпадает с
+          // оригиналом; дальше комплект сразу открывается как обычная
+          // существующая запись — пользователь переименовывает его
+          // на месте (см. решение: подтверждения ДО копирования не
+          // нужно, копия создаётся сразу, название правится потом).
+          const res = await fetch('/api/' + this.currentLevel().key + '/' + item.id + '/copy', {
+            method: 'POST',
+          });
+          if (!res.ok) {
+            showJsError('Не удалось скопировать. ' + await extractErrorMessage(res));
+            return;
+          }
+          const newKit = await res.json();
+          this.selectedIds = [];
+          await this.load();
+          this.openEdit(newKit);
+        } else {
+          // Плоские таблицы (material/brand): как раньше — открывает
+          // форму, предзаполненную данными существующей записи, но
+          // БЕЗ id — save() увидит отсутствие id и отправит POST
+          // (создание новой независимой записи), а не PUT. is_deleted
+          // копии всегда сброшен в false. Остальные поля копируются
+          // как есть — пользователь правит вручную перед сохранением.
+          const copy = { ...item };
+          delete copy.id;
+          copy.is_deleted = false;
+          this.editing = copy;
+          this.modalOpen = true;
+          this.selectedIds = [];
+        }
       } catch (err) { showJsError(err); }
     },
 

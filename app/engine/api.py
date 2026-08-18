@@ -307,6 +307,63 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
         session.commit()
         return {"deleted": True, "id": item_id}
 
+    @router.post("/{item_id}/copy")
+    def copy_item(item_id: int, session: Session = Depends(get_engine_session)):
+        """Копирует запись со всем её составом (items_source_table_key)
+        одной транзакцией — используется kit ("Копировать" в панели
+        выделения drill-list). Только для таблиц с edit_mode=
+        "items_modal": у них состав — не строка в самой записи, а
+        отдельная дочерняя таблица (kit_item), которую нужно
+        продублировать построчно вместе с родителем, иначе копия
+        комплекта была бы пустой.
+        Название и остальные поля копируются как есть (без "(копия)"
+        и т.п.) — по прямому решению: пользователь сам переименует
+        новую запись как обычную, сразу открыв её после копирования."""
+        if config.edit_mode != "items_modal" or not config.items_source_table_key:
+            raise HTTPException(
+                status_code=422,
+                detail=f"«{config.title}» не поддерживает копирование состава.",
+            )
+        instance = session.get(model, item_id)
+        if not instance:
+            raise HTTPException(status_code=404, detail=f"{config.title_singular} не найден(а)")
+
+        from app.engine.tables import ALL_TABLES  # локальный импорт — см. паттерн выше в файле
+        items_config = next((t for t in ALL_TABLES if t.key == config.items_source_table_key), None)
+        if not items_config or not items_config.hierarchy or not items_config.hierarchy.parent_field:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Некорректная конфигурация состава для «{config.title}».",
+            )
+
+        # Копия родителя: все поля модели, кроме id, как есть.
+        # is_deleted всегда сбрасывается в false — та же логика, что и
+        # у обычного копирования строки в плоских таблицах (copySelected
+        # на фронте): копия создаётся активной, даже если оригинал был
+        # помечен на удаление.
+        new_data = {name: getattr(instance, name) for name in field_names}
+        new_instance = model(**new_data)
+        if config.delete_mode == "soft":
+            new_instance.is_deleted = False
+        session.add(new_instance)
+        session.flush()  # получаем new_instance.id ДО коммита, чтобы проставить его дочерним строкам
+
+        items_field_names = items_config.field_names()
+        items_parent_field = items_config.hierarchy.parent_field
+        source_items = session.exec(
+            select(items_config.model).where(
+                getattr(items_config.model, items_parent_field) == item_id
+            )
+        ).all()
+        for src_item in source_items:
+            item_data = {name: getattr(src_item, name) for name in items_field_names if name != items_parent_field}
+            item_data[items_parent_field] = new_instance.id
+            session.add(items_config.model(**item_data))
+
+        session.commit()
+        session.refresh(new_instance)
+        return _serialize(new_instance)
+
     @router.post("/bulk-mark-delete")
     def bulk_mark_delete(payload: dict[str, Any], session: Session = Depends(get_engine_session)):
         """Групповая пометка/снятие пометки на удаление. В отличие

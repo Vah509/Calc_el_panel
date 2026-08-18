@@ -376,6 +376,7 @@ footer.hint { padding: 10px 20px 30px; font-size: 12px; color: var(--ink-soft); 
   flex-shrink: 0;
 }
 .drill-row-edit:hover { color: var(--ink); }
+.drill-row-checkbox { flex-shrink: 0; width: 18px; height: 18px; }
 .drill-row-body { flex: 1; font-size: 14px; }
 .drill-row-body-clickable { cursor: pointer; }
 .drill-row-arrow { color: var(--ink-soft); flex-shrink: 0; }

@@ -414,10 +414,22 @@ footer.hint { padding: 10px 20px 30px; font-size: 12px; color: var(--ink-soft); 
    Открывается кнопкой "Редактировать" в модалке kit. Верхняя зона
    "Отобрано" + перетаскиваемая полоса + нижняя зона поиска, диапазон
    хода полосы 15%-85% управляется инлайновым flex-basis из Alpine
-   (pickerSplit), не CSS — см. app/engine/page.py. */
+   (pickerSplit), не CSS — см. app/engine/page.py.
+
+   ВАЖНО про высоту: раньше .picker-overlay был "inset:0" (= 100vh) и
+   footer с кнопкой "Сохранить состав" вытеснялся за пределы видимой
+   области на реальном телефоне — на мобильных Chrome/Safari 100vh
+   больше, чем то, что видно на экране, из-за адресной строки браузера
+   (см. отчёт Вахтанга: кнопка сохранения не видна вообще). 100dvh
+   ("dynamic viewport height") учитывает реальную видимую высоту и
+   пересчитывается при скрытии/появлении адресной строки — это и есть
+   исправление. picker-footer дополнительно защищён flex-shrink:0 и
+   стоит ПОСЛЕ pane/handle в DOM-порядке flex-column, так что при
+   нехватке места сжимаются pane, а не футер. */
 .picker-overlay {
   position: fixed;
   inset: 0;
+  height: 100dvh;
   z-index: 50;
   background: var(--bg, #fff);
   display: flex;
@@ -426,49 +438,52 @@ footer.hint { padding: 10px 20px 30px; font-size: 12px; color: var(--ink-soft); 
 .picker-pane { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .picker-pane-top { border-bottom: 1px solid var(--line); }
 .picker-pane-header {
-  padding: 10px 16px;
-  font-size: 13px;
-  color: var(--ink-soft);
+  padding: 14px 20px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
   border-bottom: 1px solid var(--line);
+  background: #fafaf8;
   flex-shrink: 0;
 }
 .picker-list { overflow-y: auto; flex: 1; }
 .picker-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 16px;
+  gap: 14px;
+  padding: 16px 20px;
   border-bottom: 1px solid var(--line);
-  font-size: 14px;
+  font-size: 16px;
 }
 .picker-row-name { flex: 1; }
-.picker-row-empty { color: var(--ink-soft); font-size: 13.5px; justify-content: center; }
-.picker-qty-control { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.picker-row-empty { color: var(--ink-soft); font-size: 15px; justify-content: center; padding: 24px 20px; }
+.picker-qty-control { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .picker-qty-btn {
-  width: 30px;
-  height: 30px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   background: var(--bg, #fff);
-  font-size: 16px;
+  font-size: 20px;
   line-height: 1;
   cursor: pointer;
 }
-.picker-qty-value { min-width: 24px; text-align: center; font-variant-numeric: tabular-nums; }
+.picker-qty-btn:active { background: var(--accent-soft); }
+.picker-qty-value { min-width: 30px; text-align: center; font-variant-numeric: tabular-nums; font-size: 16px; font-weight: 600; }
 .picker-row-remove {
   border: none;
   background: none;
   cursor: pointer;
-  font-size: 16px;
+  font-size: 20px;
   flex-shrink: 0;
-  padding: 4px;
+  padding: 8px;
 }
 
 /* Хендл: толще обычной тонкой линии, увеличенная зона захвата вокруг
    визуальной полоски — решает проблему "тонкую полосу сложно подхватить
    пальцем в крайних положениях" (см. HANDOFF, раздел 2.8). */
 .picker-handle {
-  height: 28px;
+  height: 36px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -481,39 +496,56 @@ footer.hint { padding: 10px 20px 30px; font-size: 12px; color: var(--ink-soft); 
 }
 .picker-handle:active { cursor: grabbing; }
 .picker-handle-bar {
-  width: 48px;
-  height: 5px;
+  width: 56px;
+  height: 6px;
   border-radius: 3px;
   background: var(--ink-soft, #9c9890);
 }
 
-.picker-search-row { padding: 10px 16px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+/* Строка поиска и список результатов переиспользуют визуальный язык
+   обычных плоских таблиц движка (.search-input, .filterbar, строки
+   таблицы) — по прямой просьбе: "интерфейс подбора такой же, как у
+   обычных таблиц плоских", чтобы MaterialPicker не выглядел как
+   отдельный, незнакомый компонент. */
+.picker-search-row {
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  flex-shrink: 0;
+}
 .picker-search-input {
   width: 100%;
-  padding: 10px 12px;
+  padding: 11px 14px;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  font-size: 14px;
+  border-radius: 6px;
+  font-size: 16px;
+  background: var(--bg);
 }
-.picker-search-results { overflow-y: auto; flex: 1; }
+.picker-search-input:focus { outline: none; border-color: var(--accent); background: white; }
+.picker-search-results { overflow-y: auto; flex: 1; background: var(--panel); }
 .picker-search-row-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 10px 16px;
+  gap: 14px;
+  padding: 16px 20px;
   border-bottom: 1px solid var(--line);
-  font-size: 14px;
+  font-size: 16px;
+  cursor: pointer;
+  transition: background 0.1s;
 }
-.picker-add-btn { flex-shrink: 0; padding: 6px 14px; font-size: 13px; }
+.picker-search-row-item:hover { background: #faf9f6; }
+.picker-add-btn { flex-shrink: 0; padding: 9px 18px; font-size: 14px; }
 
 .picker-footer {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
-  padding: 12px 16px;
+  gap: 12px;
+  padding: 14px 20px;
   border-top: 1px solid var(--line);
+  background: var(--panel);
   flex-shrink: 0;
 }
+.picker-footer .btn { padding: 11px 20px; font-size: 15px; }
 
 

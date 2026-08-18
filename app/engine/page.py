@@ -411,7 +411,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
             <button type="button" class="btn btn-primary picker-add-btn" @click="pickerAddMaterial(mat)">+ Добавить</button>
           </div>
         </template>
-        <div class="picker-search-row-item picker-row-empty" x-show="pickerQuery && pickerResults.length === 0">Ничего не найдено</div>
+        <div class="picker-search-row-item picker-row-empty" x-show="pickerResults.length === 0">Ничего не найдено</div>
       </div>
     </div>
 
@@ -787,21 +787,25 @@ function enginePage() {
         this.pickerResults = [];
         this.pickerSplit = 40;
         this.pickerOpen = true;
+        // Список виден сразу при открытии, как в обычной плоской
+        // таблице материалов (не только после ввода текста в поиск) —
+        // по прямой просьбе "интерфейс подбора такой же, как у обычных
+        // таблиц плоских".
+        this.pickerSearch();
       } catch (err) { showJsError(err); }
     },
 
     async pickerSearch() {
-      // Плоский поиск по материалам, переиспользует существующий
-      // GET /api/material?q=... — без групп/дерева (см. HANDOFF, 2.8:
-      // drill-down по группам материалов сознательно отложен, категорий
-      // в справочнике материалов пока нет вообще).
+      // Переиспользует существующий GET /api/material?q=... — тот же
+      // эндпоинт, что и обычная плоская таблица материалов. Пустой
+      // запрос ('' — как при первом открытии) возвращает первую
+      // страницу без фильтра, а не пустой список — см. выше.
       try {
         hideJsError();
-        const query = this.pickerQuery.trim();
-        if (!query) { this.pickerResults = []; return; }
         const params = new URLSearchParams();
-        params.set('q', query);
-        params.set('page_size', 30);
+        const query = this.pickerQuery.trim();
+        if (query) params.set('q', query);
+        params.set('page_size', 50);
         const res = await fetch('/api/material?' + params.toString());
         const data = await res.json();
         this.pickerResults = data.items;

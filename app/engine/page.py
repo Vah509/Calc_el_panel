@@ -17,6 +17,7 @@
 # ============================================================
 
 import json
+from typing import Optional
 
 from app.engine.config import TableConfig
 
@@ -200,7 +201,8 @@ _PAGE_TEMPLATE_SOURCE = r"""
     <div class="modal">
       <div class="modal-header">
         <div>
-          <h2 x-text="editing.id ? 'Редактирование' : 'Новая запись'"></h2>
+          <h2 x-show="!isItemsModal() || !editing.id" x-text="editing.id ? 'Редактирование' : 'Новая запись'"></h2>
+          <h2 x-show="isItemsModal() && editing.id" x-text="editing.name || ''"></h2>
         </div>
       </div>
 
@@ -244,18 +246,72 @@ _PAGE_TEMPLATE_SOURCE = r"""
         {% if config.computed_pairs %}
         <div class="vat-note">↻ Пересчитывается автоматически при изменении одного из полей — можно переопределить вручную.</div>
         {% endif %}
+
         {% else %}
-        <!-- hierarchy-модалка: форма собирается на JS из currentLevel().formLayoutFields,
-             т.к. открытый уровень (kit_group / kit_section / ...) меняется динамически
-             без перезагрузки страницы — Jinja form_layout здесь неприменим (см.
-             render_table_page — form_layout вычислен только для корневого config). -->
-        <template x-for="f in currentLevel().formLayoutFields" :key="f.name">
-          <div class="field">
-            <label x-text="f.label"></label>
-            <input x-show="f.widget !== 'number'" type="text" :required="f.required"
-                   :placeholder="f.placeholder" x-model="editing[f.name]">
-            <input x-show="f.widget === 'number'" type="number" step="0.01" :required="f.required"
-                   :placeholder="f.placeholder" x-model.number="editing[f.name]">
+        <!-- hierarchy-таблица: три взаимоисключающих режима тела модалки,
+             все собираются на JS из currentLevel(), т.к. открытый уровень
+             дерева меняется динамически без перезагрузки страницы (Jinja
+             form_layout вычислен только один раз при первом рендере
+             страницы и не умеет "переключаться" вместе с drillPath). -->
+
+        <!-- Режим 1: items_modal, СПИСОК состава (не форма редактирования
+             самого узла) — используется kit. Показывается, когда открыта
+             существующая запись (editing.id) и addingItem=false. -->
+        <template x-if="isItemsModal() && editing.id && !addingItem">
+          <div>
+            <div class="items-modal-list">
+              <template x-for="item in kitItems" :key="item.id">
+                <div class="items-modal-row">
+                  <span x-text="itemsSourceRelationName('material_id', item.material_id)"></span>
+                  <span class="items-modal-qty" x-text="Number(item.quantity ?? 0)"></span>
+                </div>
+              </template>
+              <div class="items-modal-row items-modal-empty" x-show="kitItems.length === 0">Пока пусто — состав не заполнен</div>
+            </div>
+            <button type="button" class="btn items-modal-add-btn" @click="openAddItem()">+ Добавить</button>
+          </div>
+        </template>
+
+        <!-- Режим 2: items_modal, ФОРМА добавления новой позиции состава
+             (addingItem=true) — переиспользует currentLevel().itemsSource,
+             тот же формат formLayoutFields/relations, что и обычная
+             плоская таблица (см. _serialize_items_source в page.py). -->
+        <template x-if="isItemsModal() && addingItem">
+          <div>
+            <template x-for="f in currentLevel().itemsSource.formLayoutFields.filter(f => f.name !== 'kit_id')" :key="f.name">
+              <div class="field">
+                <label x-text="f.label"></label>
+                <template x-if="itemsSourceRelationFor(f.name)">
+                  <select x-model.number="newItem[f.name]">
+                    <option :value="null">—</option>
+                    <template x-for="opt in itemRelationOptions[f.name] || []" :key="opt.id">
+                      <option :value="opt.id" x-text="opt[itemsSourceRelationFor(f.name).display_field]"></option>
+                    </template>
+                  </select>
+                </template>
+                <input x-show="!itemsSourceRelationFor(f.name) && f.widget === 'number'" type="number" step="0.01"
+                       :required="f.required" x-model.number="newItem[f.name]">
+              </div>
+            </template>
+          </div>
+        </template>
+
+        <!-- Режим 3: обычная hierarchy-модалка (kit_group/kit_section) —
+             форма редактирования название+доп.поля, без списка состава.
+             Также покрывает СОЗДАНИЕ нового kit (editing.id ещё нет —
+             у новой записи не может быть состава, показывать список
+             kit_items смысла нет, нужна обычная форма название+раздел). -->
+        <template x-if="!isItemsModal() || !editing.id">
+          <div>
+            <template x-for="f in currentLevel().formLayoutFields" :key="f.name">
+              <div class="field">
+                <label x-text="f.label"></label>
+                <input x-show="f.widget !== 'number'" type="text" :required="f.required"
+                       :placeholder="f.placeholder" x-model="editing[f.name]">
+                <input x-show="f.widget === 'number'" type="number" step="0.01" :required="f.required"
+                       :placeholder="f.placeholder" x-model.number="editing[f.name]">
+              </div>
+            </template>
           </div>
         </template>
         {% endif %}
@@ -274,14 +330,45 @@ _PAGE_TEMPLATE_SOURCE = r"""
         {% else %}
         <span></span>
         {% endif %}
-        {% else %}
-        <button type="button" class="btn btn-danger-ghost" x-show="editing.id && currentLevel().allowDelete" @click="remove()">Удалить</button>
-        {% endif %}
         <span x-show="!editing.id"></span>
         <div class="modal-footer-right">
           <button type="button" class="btn btn-ghost" @click="close()">Закрыть</button>
           <button type="button" class="btn btn-primary" @click="save()">Сохранить</button>
         </div>
+        {% else %}
+        <!-- items_modal, режим просмотра списка состава: единственная
+             кнопка — закрыть (список уже сохранён построчно по мере
+             добавления, отдельного "Сохранить" для всего списка не
+             нужно). -->
+        <template x-if="isItemsModal() && editing.id && !addingItem">
+          <div class="modal-footer-right" style="width:100%; justify-content:flex-end;">
+            <button type="button" class="btn btn-ghost" @click="close()">Закрыть</button>
+          </div>
+        </template>
+        <!-- items_modal, режим формы добавления позиции: Отмена
+             возвращает к списку состава (не закрывает всю модалку),
+             Добавить — сохраняет позицию и тоже возвращает к списку. -->
+        <template x-if="isItemsModal() && addingItem">
+          <div class="modal-footer-right" style="width:100%; justify-content:flex-end;">
+            <button type="button" class="btn btn-ghost" @click="addingItem=false">Отмена</button>
+            <button type="button" class="btn btn-primary" @click="saveNewItem()">Добавить</button>
+          </div>
+        </template>
+        <!-- обычная форма footer: kit_group/kit_section всегда, ЛИБО kit
+             в момент СОЗДАНИЯ (editing.id ещё нет — форма название+
+             раздел, не список состава, см. соответствующий режим тела
+             модалки выше). -->
+        <template x-if="!isItemsModal() || !editing.id">
+          <div style="display:contents;">
+            <button type="button" class="btn btn-danger-ghost" x-show="editing.id && currentLevel().allowDelete" @click="remove()">Удалить</button>
+            <span x-show="!editing.id"></span>
+            <div class="modal-footer-right">
+              <button type="button" class="btn btn-ghost" @click="close()">Закрыть</button>
+              <button type="button" class="btn btn-primary" @click="save()">Сохранить</button>
+            </div>
+          </div>
+        </template>
+        {% endif %}
       </div>
     </div>
   </div>
@@ -353,6 +440,22 @@ function enginePage() {
     page: 1,
     totalPages: 1,
     selectedIds: [],
+    // --- items_modal (только для currentLevel().editMode === "items_modal",
+    // сейчас это kit) ---
+    // kitItems: состав ТЕКУЩЕГО открытого узла (editing.id), загружается
+    // заново при каждом openEdit() — см. loadKitItems().
+    kitItems: [],
+    // addingItem: переключает тело модалки между "список состава" и
+    // "форма добавления новой позиции" (см. openAddItem/saveNewItem) —
+    // не отдельная модалка поверх модалки, а режим внутри той же.
+    addingItem: false,
+    newItem: {},
+    // itemRelationOptions: выпадающие списки ДЛЯ ФОРМЫ ДОБАВЛЕНИЯ
+    // позиции состава (например список материалов) — отдельно от
+    // relationOptions верхнего уровня, т.к. поля разных таблиц
+    // (kit.formLayoutFields vs kit_item.itemsSource.formLayoutFields)
+    // не должны путать друг друга при одинаковых именах полей.
+    itemRelationOptions: {},
     // --- drill-down (только для CONFIG.hierarchyRoot) ---
     // drillPath: стек открытых узлов дерева НИЖЕ корневого уровня,
     // каждый элемент {parentId, label} — id открытой записи и её
@@ -535,6 +638,104 @@ function enginePage() {
         hideJsError();
         this.editing = { ...item };
         this.modalOpen = true;
+        this.addingItem = false;
+        if (this.isItemsModal()) {
+          this.loadKitItems();
+        }
+      } catch (err) { showJsError(err); }
+    },
+
+    // --- items_modal (kit: модалка состава вместо формы редактирования) ---
+
+    isItemsModal() {
+      // Раньше вызова currentLevel() у плоских таблиц (CONFIG.hierarchyRoot
+      // === false) не бывает — там всегда обычная модалка (снаружи есть
+      // серверная развилка на верхнем уровне шаблона), но на всякий
+      // случай не падаем, если currentLevel() вернёт undefined (drillPath
+      // временно не совпадает с LEVELS в момент между двумя load()).
+      const lvl = this.currentLevel ? this.currentLevel() : null;
+      return !!(lvl && lvl.editMode === 'items_modal');
+    },
+
+    async loadKitItems() {
+      // Загружает состав ТЕКУЩЕГО открытого комплекта (editing.id) через
+      // тот же универсальный parent_id-механизм, что и drill-down между
+      // уровнями дерева (см. app/engine/api.py list_items) — kit_item
+      // не уровень дерева, но hierarchy.parent_field у него задан именно
+      // ради этого переиспользования.
+      try {
+        hideJsError();
+        const src = this.currentLevel().itemsSource;
+        const params = new URLSearchParams();
+        params.set('parent_id', this.editing.id);
+        params.set('page_size', 1000);
+        const res = await fetch('/api/' + src.key + '?' + params.toString());
+        const data = await res.json();
+        this.kitItems = data.items;
+        // подтягиваем опции для отображения названия материала в списке
+        // (itemsSourceRelationName) — те же relations, что понадобятся
+        // и форме добавления, грузим один раз при открытии модалки, а
+        // не заново при каждом openAddItem().
+        for (const rel of src.relations) {
+          if (rel.field === 'kit_id') continue; // kit_id проставляется автоматически, select для него не нужен
+          const optRes = await fetch('/api/' + rel.target_table + '?page_size=1000');
+          const optData = await optRes.json();
+          this.itemRelationOptions[rel.field] = optData.items;
+        }
+      } catch (err) { showJsError(err); }
+    },
+
+    itemsSourceRelationFor(fieldName) {
+      const src = this.currentLevel().itemsSource;
+      return src.relations.find(r => r.field === fieldName) || null;
+    },
+
+    itemsSourceRelationName(fieldName, id) {
+      const rel = this.itemsSourceRelationFor(fieldName);
+      if (!rel) return '';
+      const opts = this.itemRelationOptions[fieldName] || [];
+      const found = opts.find(o => o.id === id);
+      return found ? found[rel.display_field] : '';
+    },
+
+    openAddItem() {
+      try {
+        hideJsError();
+        const src = this.currentLevel().itemsSource;
+        const blank = {};
+        for (const f of src.fields) {
+          if (f.name === 'kit_id') continue; // проставляется автоматически при сохранении, не часть формы
+          blank[f.name] = (f.default !== null && f.default !== undefined) ? f.default : (f.isNumeric ? 0 : '');
+        }
+        this.newItem = blank;
+        this.addingItem = true;
+      } catch (err) { showJsError(err); }
+    },
+
+    async saveNewItem() {
+      try {
+        hideJsError();
+        const src = this.currentLevel().itemsSource;
+        // kit_id проставляется здесь, а не в форме — hierarchy.parentField
+        // источника (kit_item.hierarchy.parent_field === "kit_id")
+        // указывает, каким полем связать новую запись с открытым
+        // комплектом, тем же способом, что и drill-down создание внутри
+        // узла дерева (см. openCreate выше).
+        const payload = { ...this.newItem };
+        if (src.hierarchy && src.hierarchy.parentField) {
+          payload[src.hierarchy.parentField] = this.editing.id;
+        }
+        const res = await fetch('/api/' + src.key, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+          showJsError(await extractErrorMessage(res));
+          return;
+        }
+        this.addingItem = false;
+        await this.loadKitItems();
       } catch (err) { showJsError(err); }
     },
 
@@ -724,7 +925,12 @@ function enginePage() {
     },
 
     close() {
-      try { hideJsError(); this.modalOpen = false; } catch (err) { showJsError(err); }
+      try {
+        hideJsError();
+        this.modalOpen = false;
+        this.addingItem = false;
+        this.kitItems = [];
+      } catch (err) { showJsError(err); }
     }
   };
 }
@@ -852,7 +1058,29 @@ def _serialize_level_config(config: TableConfig) -> dict:
             "childKey": config.hierarchy.child_key,
             "rootLabel": config.hierarchy.root_label,
         } if config.hierarchy else None,
+        "itemsSource": _serialize_items_source(config) if config.edit_mode == "items_modal" else None,
     }
+
+
+def _serialize_items_source(config: TableConfig) -> Optional[dict]:
+    """Для edit_mode="items_modal" сериализует ДОЧЕРНЮЮ таблицу
+    (config.items_source_table_key, например kit_item для kit)
+    рекурсивно через ту же _serialize_level_config — переиспользует
+    формат уровня дерева (fields/relations/formLayoutFields), так как
+    модалке состава нужно ровно то же самое: чем загрузить список
+    (?parent_id={editing.id} через hierarchy.parent_field дочерней
+    таблицы) и чем отрисовать простую форму добавления новой записи.
+    Возвращает None и не падает, если items_source_table_key не задан
+    или таблица с таким key не найдена в ALL_TABLES — ошибка
+    конфигурации, а не пользователя, но лучше показать пустую модалку,
+    чем уронить всю страницу дерева."""
+    if not config.items_source_table_key:
+        return None
+    from app.engine.tables import ALL_TABLES
+    source = next((t for t in ALL_TABLES if t.key == config.items_source_table_key), None)
+    if not source:
+        return None
+    return _serialize_level_config(source)
 
 
 def _build_hierarchy_levels(root_config: TableConfig) -> list[dict]:

@@ -388,3 +388,25 @@ footer.hint { padding: 10px 20px 30px; font-size: 12px; color: var(--ink-soft); 
 }
 .drill-row-add:hover { color: var(--ink); background: var(--accent-soft, #f0eee9); }
 
+/* --- items_modal (движок: список состава внутри модалки, сейчас kit/kit_item) --- */
+.items-modal-list {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+.items-modal-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+.items-modal-row:last-child { border-bottom: none; }
+.items-modal-qty { color: var(--ink-soft); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.items-modal-empty { color: var(--ink-soft); font-size: 13.5px; justify-content: center; }
+.items-modal-add-btn { width: 100%; justify-content: center; }
+
+

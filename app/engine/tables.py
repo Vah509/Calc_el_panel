@@ -117,18 +117,7 @@ kit_section_table = TableConfig(
     title_singular="подраздел комплектов",
     search_placeholder="Поиск по названию…",
     delete_mode="simple",
-    # ВРЕМЕННО (v39): child_key НЕ указывает на "kit" — хотя
-    # концептуально kit_section является родителем kit в дереве
-    # (kit_group -> kit_section -> kit), сам kit пока заведён как
-    # ОБЫЧНАЯ ПЛОСКАЯ таблица старого движка (см. kit_table ниже и
-    # app/models/kit.py) — вручную заносим пробные записи перед тем
-    # как проектировать полноценный подбор материалов внутри карточки.
-    # Если здесь проставить child_key="kit", _build_hierarchy_levels
-    # (page.py) молча включит kit в цепочку уровней дерева как узел
-    # БЕЗ hierarchy (AttributeError/некорректный JSON) — child_key
-    # вернётся, когда kit станет настоящим drill-down уровнем
-    # (hierarchy=Hierarchy(parent_field=..., parent_key="kit_section")).
-    hierarchy=Hierarchy(parent_field="kit_group_id", parent_key="kit_group"),
+    hierarchy=Hierarchy(parent_field="kit_group_id", parent_key="kit_group", child_key="kit"),
     fields=[
         FieldConfig(name="name", label="Название", required=True, searchable=True),
         FieldConfig(name="kit_group_id", label="Группа", widget="select", required=True, in_list=False, in_form=False),
@@ -138,45 +127,65 @@ kit_section_table = TableConfig(
 )
 
 
-# kit / kit_item — ВРЕМЕННО (v39) обычные плоские таблицы старого
-# движка, не часть drill-down дерева (см. развёрнутое обоснование в
-# app/models/kit.py и app/models/kit_item.py). Позволяют вручную
-# занести пробные записи, пока полноценный подбор материалов внутри
-# карточки kit не спроектирован. kit_section_id/kit_id/material_id —
-# простые select без поиска, по образцу material_table.brand_id.
+# kit — 3-й, нижний уровень дерева drill-down (kit_group -> kit_section
+# -> kit). До этого шага (v39/v39.1) был временной плоской таблицей
+# старого движка — теперь подключён к дереву. hierarchy БЕЗ child_key
+# (это последний уровень — заходить вглубь больше некуда, kit_items
+# не отдельный уровень дерева, а СОСТАВ, показывается внутри модалки
+# этого узла, см. edit_mode ниже).
+#
+# edit_mode="items_modal" (новый режим, см. app/engine/config.py и
+# page.py): вместо обычной формы редактирования (название+поля)
+# модалка показывает состав комплекта (список KitItem — материал +
+# количество) и кнопку "Добавить". На ЭТОМ шаге модалка состава —
+# ТОЛЬКО ПРОСМОТР + добавление новой позиции через простую форму
+# (select материала + количество) — редактирование/удаление
+# существующих позиций состава, переименование самого комплекта и
+# полноценный подбор материалов (поиск/фильтры) сознательно отложены,
+# обсудим отдельно после того как убедимся что дерево+модалка в
+# принципе показывают данные корректно (прямое указание Вахтанга).
 kit_table = TableConfig(
     key="kit",
     model=Kit,
-    title="Комплекты (временный список)",
+    title="Комплекты",
     title_singular="комплект",
     search_placeholder="Поиск по названию…",
     delete_mode="soft",
+    edit_mode="items_modal",
+    items_source_table_key="kit_item",
+    hierarchy=Hierarchy(parent_field="kit_section_id", parent_key="kit_section"),
     fields=[
         FieldConfig(name="name", label="Название", required=True, searchable=True),
-        FieldConfig(name="kit_section_id", label="Раздел", widget="select", required=True),
+        FieldConfig(name="kit_section_id", label="Раздел", widget="select", required=True, in_list=False, in_form=False),
         FieldConfig(name="sort_order", label="Порядок", widget="number",
-                    is_numeric=True, list_width="100px", default=0),
-    ],
-    relations=[
-        Relation(field="kit_section_id", target_table="kit_section", display_field="name", label="Раздел"),
-    ],
-    form_rows=[
-        FormRow(field_names=["kit_section_id", "sort_order"]),
+                    is_numeric=True, list_width="100px", default=0, in_list=False),
     ],
 )
 
 
+# kit_item — состав комплектов (материал + количество). НЕ отдельный
+# уровень дерева (kit.hierarchy не указывает на него через child_key —
+# он последний уровень) — но hierarchy здесь всё равно нужен, ЧИСТО
+# ради parent_field: это даёт GET /api/kit_item?parent_id={kit_id}
+# бесплатно через уже существующий универсальный механизм движка
+# (см. app/engine/api.py list_items, реализовано в v38 для дерева
+# групп/разделов) — используется модалкой состава (edit_mode=
+# "items_modal" у kit) для загрузки строк текущего комплекта, а не
+# как самостоятельная страница списка (страница /kit_item-v2 и пункт
+# меню убраны в этой сессии — состав теперь виден только изнутри
+# модалки конкретного комплекта).
 kit_item_table = TableConfig(
     key="kit_item",
     model=KitItem,
-    title="Состав комплектов (временный список)",
+    title="Состав комплекта",
     title_singular="позиция состава",
     search_placeholder="Поиск…",
+    hierarchy=Hierarchy(parent_field="kit_id", parent_key="kit"),
     # delete_mode не указан -> дефолт "hard": на KitItem ничего не
     # ссылается (см. обоснование в app/models/kit_item.py), удаление
     # позиции состава всегда безусловное и немедленное, без пометки.
     fields=[
-        FieldConfig(name="kit_id", label="Комплект", widget="select", required=True),
+        FieldConfig(name="kit_id", label="Комплект", widget="select", required=True, in_list=False, in_form=False),
         FieldConfig(name="material_id", label="Материал", widget="select", required=True),
         FieldConfig(name="quantity", label="Количество", widget="number",
                     is_numeric=True, list_width="100px", default=1, form_width="110px"),
@@ -184,19 +193,6 @@ kit_item_table = TableConfig(
     relations=[
         Relation(field="kit_id", target_table="kit", display_field="name", label="Комплект"),
         Relation(field="material_id", target_table="material", display_field="short_name", label="Материал"),
-    ],
-    # "Материал" — отдельной широкой строкой (не половина ширины
-    # рядом с "Комплект"): название материала обычно длиннее, чем
-    # умещается в половину модалки на телефоне (см. на скрине —
-    # значение "—" в узком select нечитаемо). "Комплект" и
-    # "Количество" делят одну строку — количество узкое
-    # (form_width="110px" у FieldConfig), под него не нужна половина
-    # экрана. Временное решение по прямому запросу Вахтанга — это
-    # предварительная таблица только для ручного ввода тестовых
-    # данных, не финальный UI.
-    form_rows=[
-        FormRow(field_names=["kit_id", "quantity"]),
-        FormRow(field_names=["material_id"]),
     ],
 )
 

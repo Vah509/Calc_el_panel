@@ -556,15 +556,20 @@ footer.hint { padding: 10px 20px 30px; font-size: 12px; color: var(--ink-soft); 
 .picker-search-row-name { font-weight: 500; }
 .picker-search-row-sub { font-size: 13px; color: var(--ink-soft); }
 
-.picker-footer {
+/* Кнопки "Отмена"/"Сохранить состав" — в шапке (см. комментарий в
+   page.py у .picker-top-actions про причину переноса из футера: футер
+   снизу на реальном телефоне физически не помещался на экран, когда
+   список результатов поиска был длинным). Шапка flex-shrink:0 и стоит
+   ПЕРВОЙ в flex-column — единственная позиция, гарантированно всегда
+   видимая независимо от объёма контента ниже. */
+.picker-top-actions {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
   padding: 14px 20px;
-  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
   background: var(--panel);
   flex-shrink: 0;
 }
-.picker-footer .btn { padding: 11px 20px; font-size: 15px; }
-
+.picker-top-actions .btn { padding: 11px 20px; font-size: 15px; }
 

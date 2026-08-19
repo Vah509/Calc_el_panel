@@ -382,8 +382,24 @@ _PAGE_TEMPLATE_SOURCE = r"""
        финальной кнопки) + нижняя зона (поиск материалов, плоский
        список — без групп/дерева, см. HANDOFF_kits_and_calculation.md
        раздел 2.8-2.9). Между зонами — перетаскиваемая пальцем полоса
-       (pickerSplit, 15%-85%, см. CSS .picker-handle). -->
+       (pickerSplit, 15%-85%, см. CSS .picker-handle).
+
+       Кнопки "Отмена"/"Сохранить состав" — В ШАПКЕ, не в футере снизу.
+       Раньше (v42-v46) они были в .picker-footer под обеими зонами и
+       на реальном телефоне физически не попадали в видимую область —
+       список результатов поиска снизу растягивал общую высоту
+       содержимого больше, чем 100dvh, а .picker-footer, будучи
+       ПОСЛЕДНИМ элементом flex-column, надёжно оказывался за пределами
+       экрана (см. отчёт Вахтанга со скриншотом: кнопок не видно
+       вообще). Шапка — единственная позиция, которая гарантированно
+       остаётся на экране независимо от объёма контента ниже (она
+       flex-shrink:0 и стоит ПЕРВОЙ, а не последней). -->
   <div class="picker-overlay" x-show="pickerOpen" x-cloak>
+    <div class="picker-top-actions">
+      <button type="button" class="btn btn-ghost" @click="pickerCancel()">Отмена</button>
+      <button type="button" class="btn btn-primary" @click="pickerSave()">Сохранить состав</button>
+    </div>
+
     <div class="picker-pane picker-pane-top" :style="'flex: 0 0 ' + pickerSplit + '%;'">
       <div class="picker-pane-header">
         <span x-text="pickerDraft.length + ' позиций'"></span>
@@ -449,11 +465,6 @@ _PAGE_TEMPLATE_SOURCE = r"""
         </template>
         <div class="picker-search-row-item picker-row-empty" x-show="pickerResults.length === 0">Ничего не найдено</div>
       </div>
-    </div>
-
-    <div class="picker-footer">
-      <button type="button" class="btn btn-ghost" @click="pickerCancel()">Отмена</button>
-      <button type="button" class="btn btn-primary" @click="pickerSave()">Сохранить состав</button>
     </div>
   </div>
 

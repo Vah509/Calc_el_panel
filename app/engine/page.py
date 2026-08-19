@@ -208,8 +208,15 @@ _PAGE_TEMPLATE_SOURCE = r"""
                  :checked="selectedIds.includes(item.id)" @click.stop="toggleSelect(item.id)">
         </template>
         <span class="status-dot" x-show="currentLevel().deleteMode === 'soft' && item.is_deleted" title="Помечено к удалению"></span>
+        <!-- Иконка ✎ остаётся видимой как явная подсказка "здесь можно
+             редактировать", но перестала быть ЕДИНСТВЕННЫМ способом
+             открыть карточку/модалку — раньше тело строки на нижнем
+             уровне дерева (kit, hasNextLevel=false) не реагировало на
+             клик вообще, приходилось точно попадать по маленькой
+             иконке (см. правку ниже и HANDOFF: "выбор можно было
+             осуществить прямо непосредственно тапнув на позицию"). -->
         <button type="button" class="drill-row-edit" @click.stop="openEdit(item)" title="Редактировать">✎</button>
-        <div class="drill-row-body" :class="{'drill-row-body-clickable': hasNextLevel}" @click="drillOpen(item)">
+        <div class="drill-row-body" :class="{'drill-row-body-clickable': true}" @click="rowClick(item)">
           <span x-text="item.name"></span>
         </div>
         <span class="drill-row-arrow" x-show="hasNextLevel">›</span>
@@ -1162,6 +1169,21 @@ function enginePage() {
         this.selectedIds = [];
         await this.load();
       } catch (err) { showJsError(err); }
+    },
+
+    rowClick(item) {
+      // Клик по телу строки drill-list: если есть следующий уровень
+      // дерева — углубляемся (kit_group → kit_section, и т.д.), если
+      // это нижний уровень (kit) — сразу открываем карточку/модалку
+      // редактирования, тем же способом, что и раньше давала только
+      // отдельная маленькая иконка ✎ (см. HANDOFF: тап по всей строке
+      // должен работать, не только по иконке — иконку сложно поймать
+      // пальцем на телефоне).
+      if (this.hasNextLevel) {
+        this.drillOpen(item);
+      } else {
+        this.openEdit(item);
+      }
     },
 
     async drillBack() {

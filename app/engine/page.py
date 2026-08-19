@@ -278,6 +278,13 @@ _PAGE_TEMPLATE_SOURCE = r"""
         {% if config.computed_pairs %}
         <div class="vat-note">↻ Пересчитывается автоматически при изменении одного из полей — можно переопределить вручную.</div>
         {% endif %}
+        {% if config.extra_actions %}
+        <div class="extra-actions" x-show="editing.id">
+          {% for action_label in config.extra_actions %}
+          <button type="button" class="btn btn-ghost" disabled title="Пока недоступно">{{ action_label }}</button>
+          {% endfor %}
+        </div>
+        {% endif %}
 
         {% else %}
         <!-- hierarchy-таблица: три взаимоисключающих режима тела модалки,

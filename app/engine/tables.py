@@ -16,6 +16,8 @@ from app.models.kit_group import KitGroup
 from app.models.kit_section import KitSection
 from app.models.kit import Kit
 from app.models.kit_item import KitItem
+from app.models.client import Client
+from app.models.request import Request
 
 
 brand_table = TableConfig(
@@ -29,6 +31,70 @@ brand_table = TableConfig(
         FieldConfig(name="name", label="Название", required=True, searchable=True),
         FieldConfig(name="rate_vb", label="Курс ВБ", widget="number",
                     is_numeric=True, list_width="100px"),
+    ],
+)
+
+
+client_table = TableConfig(
+    key="client",
+    model=Client,
+    title="Клиенты",
+    title_singular="клиент",
+    search_placeholder="Поиск по названию…",
+    enable_search_toggles=True,
+    delete_mode="soft",
+    fields=[
+        FieldConfig(name="short_name", label="Короткое название", required=True,
+                    searchable=True, search_default=True, list_width="22%"),
+        FieldConfig(name="full_name", label="Полное название",
+                    searchable=True, search_default=False, list_width="28%"),
+        FieldConfig(name="egrpou_code", label="Код ЕГРПОУ", list_width="110px"),
+        FieldConfig(name="phone", label="Телефон", list_width="120px"),
+        FieldConfig(name="contact_person_name", label="Контактное лицо", in_list=False),
+        FieldConfig(name="contact_person_phone", label="Телефон контактного лица", in_list=False),
+    ],
+    form_rows=[
+        FormRow(field_names=["contact_person_name", "contact_person_phone"]),
+    ],
+)
+
+
+# Заявка (request) — первый документ цепочки zayavka -> calculation ->
+# specification -> invoice (docs/HANDOFF_kits_and_calculation.md, раздел 2).
+# Три слота бренда — три независимых варианта расчёта, всегда видны в
+# форме, каждый может быть пустым. Кнопки сборки спецификации по варианту
+# и общего пересчёта в этом шаге не реализуются (calculation ещё нет) —
+# см. request_stub_actions в FieldConfig ниже / page.py.
+request_table = TableConfig(
+    key="request",
+    model=Request,
+    title="Заявки",
+    title_singular="заявка",
+    search_placeholder="Поиск по клиенту…",
+    delete_mode="soft",
+    fields=[
+        FieldConfig(name="client_id", label="Клиент (заказчик)", widget="select", required=True),
+        FieldConfig(name="client_invoice_id", label="Клиент (для счёта)", widget="select"),
+        FieldConfig(name="brand_slot_1_id", label="Вариант 1 — бренд", widget="select"),
+        FieldConfig(name="brand_slot_2_id", label="Вариант 2 — бренд", widget="select"),
+        FieldConfig(name="brand_slot_3_id", label="Вариант 3 — бренд", widget="select"),
+    ],
+    relations=[
+        Relation(field="client_id", target_table="client", display_field="short_name", label="Клиент (заказчик)"),
+        Relation(field="client_invoice_id", target_table="client", display_field="short_name", label="Клиент (для счёта)"),
+        Relation(field="brand_slot_1_id", target_table="brand", display_field="name", label="Вариант 1 — бренд"),
+        Relation(field="brand_slot_2_id", target_table="brand", display_field="name", label="Вариант 2 — бренд"),
+        Relation(field="brand_slot_3_id", target_table="brand", display_field="name", label="Вариант 3 — бренд"),
+    ],
+    form_rows=[
+        FormRow(field_names=["client_id", "client_invoice_id"]),
+        FormRow(field_names=["brand_slot_1_id", "brand_slot_2_id", "brand_slot_3_id"]),
+    ],
+    extra_actions=[
+        "Спецификация — вариант 1",
+        "Спецификация — вариант 2",
+        "Спецификация — вариант 3",
+        "Пересчитать всё",
     ],
 )
 
@@ -218,5 +284,5 @@ constant_table = TableConfig(
 
 ALL_TABLES = [
     brand_table, material_table, kit_group_table, kit_section_table,
-    kit_table, kit_item_table, constant_table,
+    kit_table, kit_item_table, constant_table, client_table, request_table,
 ]

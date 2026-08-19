@@ -434,12 +434,17 @@ _PAGE_TEMPLATE_SOURCE = r"""
       </div>
       <div class="picker-search-results">
         <template x-for="mat in pickerResults" :key="mat.id">
-          <div class="picker-search-row-item">
+          <!-- Тап по ВСЕЙ строке добавляет материал в "Отобрано" — та же
+               логика, что и в v45 для drill-list: маленькая кнопка
+               "+ Добавить" остаётся видимой как визуальный ориентир, но
+               перестала быть единственным способом (по прямой просьбе:
+               "вместо кнопочки добавить просто тапнуть на позицию"). -->
+          <div class="picker-search-row-item" @click="pickerAddMaterial(mat)">
             <div class="picker-search-row-info">
               <span class="picker-search-row-name" x-text="mat.short_name"></span>
               <span class="picker-search-row-sub" x-text="materialBrandName(mat.brand_id) + (mat.sku_article ? ' · ' + mat.sku_article : '')"></span>
             </div>
-            <button type="button" class="btn btn-primary picker-add-btn" @click="pickerAddMaterial(mat)">+ Добавить</button>
+            <button type="button" class="btn btn-primary picker-add-btn" @click.stop="pickerAddMaterial(mat)">+ Добавить</button>
           </div>
         </template>
         <div class="picker-search-row-item picker-row-empty" x-show="pickerResults.length === 0">Ничего не найдено</div>

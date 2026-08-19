@@ -537,6 +537,25 @@ footer.hint { padding: 10px 20px 30px; font-size: 12px; color: var(--ink-soft); 
 .picker-search-row-item:hover { background: #faf9f6; }
 .picker-add-btn { flex-shrink: 0; padding: 9px 18px; font-size: 14px; }
 
+.picker-search-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 20px 0;
+  background: var(--panel);
+}
+.picker-brand-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 20px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.picker-search-row-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.picker-search-row-name { font-weight: 500; }
+.picker-search-row-sub { font-size: 13px; color: var(--ink-soft); }
+
 .picker-footer {
   display: flex;
   justify-content: flex-end;

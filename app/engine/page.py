@@ -400,14 +400,38 @@ _PAGE_TEMPLATE_SOURCE = r"""
     <div class="picker-handle" @pointerdown="pickerDragStart($event)"><div class="picker-handle-bar"></div></div>
 
     <div class="picker-pane picker-pane-bottom" :style="'flex: 0 0 ' + (100 - pickerSplit) + '%;'">
+      <div class="picker-search-toggles">
+        <label class="search-toggle-chip">
+          <input type="checkbox" x-model="pickerSearchFields.short_name" @change="pickerSearch()">
+          Short name
+        </label>
+        <label class="search-toggle-chip">
+          <input type="checkbox" x-model="pickerSearchFields.full_name" @change="pickerSearch()">
+          Full name
+        </label>
+        <label class="search-toggle-chip">
+          <input type="checkbox" x-model="pickerSearchFields.sku_article" @change="pickerSearch()">
+          Артикул производителя
+        </label>
+      </div>
       <div class="picker-search-row">
-        <input type="text" class="picker-search-input" placeholder="Поиск материала…"
+        <input type="text" class="picker-search-input" placeholder="Поиск по названию или артикулу…"
                x-model="pickerQuery" @input.debounce.300ms="pickerSearch()">
+      </div>
+      <div class="picker-brand-chips">
+        <span class="chip" :class="{active: !pickerBrandFilter}" @click="pickerSetBrandFilter(null)">Все</span>
+        <template x-for="b in pickerBrands" :key="b.id">
+          <span class="chip" :class="{active: pickerBrandFilter === b.id}"
+                @click="pickerSetBrandFilter(b.id)" x-text="b.name"></span>
+        </template>
       </div>
       <div class="picker-search-results">
         <template x-for="mat in pickerResults" :key="mat.id">
           <div class="picker-search-row-item">
-            <span x-text="mat.short_name"></span>
+            <div class="picker-search-row-info">
+              <span class="picker-search-row-name" x-text="mat.short_name"></span>
+              <span class="picker-search-row-sub" x-text="materialBrandName(mat.brand_id) + (mat.sku_article ? ' · ' + mat.sku_article : '')"></span>
+            </div>
             <button type="button" class="btn btn-primary picker-add-btn" @click="pickerAddMaterial(mat)">+ Добавить</button>
           </div>
         </template>
@@ -510,6 +534,16 @@ function enginePage() {
     pickerDraft: [],
     pickerDraftSeq: 0,
     pickerQuery: '',
+    // pickerSearchFields/pickerBrandFilter/pickerBrands: те же
+    // возможности поиска, что и в обычной плоской таблице материалов
+    // (чекбоксы полей поиска + чипы брендов) — по прямой просьбе
+    // "где фильтры по брендам, поиск по артикулу и все остальные
+    // возможности поиска в плоской таблице". short_name включён по
+    // умолчанию, full_name/sku_article выключены — те же дефолты, что
+    // и у material_table в tables.py (search_default).
+    pickerSearchFields: { short_name: true, full_name: false, sku_article: false },
+    pickerBrandFilter: null,
+    pickerBrands: [],
     pickerResults: [],
     // pickerSplit: процент высоты верхней зоны ("Отобрано"), диапазон
     // 15-85 — см. pickerDragStart/pickerDragMove, HANDOFF раздел 2.8.
@@ -770,7 +804,7 @@ function enginePage() {
       return found ? found.short_name : '';
     },
 
-    openMaterialPicker() {
+    async openMaterialPicker() {
       try {
         hideJsError();
         // Предзаполнение: черновик стартует с текущим составом kit
@@ -784,9 +818,27 @@ function enginePage() {
         }));
         this.pickerDraftSeq = this.pickerDraft.length;
         this.pickerQuery = '';
+        this.pickerSearchFields = { short_name: true, full_name: false, sku_article: false };
+        this.pickerBrandFilter = null;
         this.pickerResults = [];
         this.pickerSplit = 40;
+        // Модалка kit закрывается — MaterialPicker открывается ВМЕСТО
+        // неё, не поверх (см. HANDOFF, раздел 2.9: "клик «Редактировать»
+        // закрывает модалку, открывается MaterialPicker на весь экран").
+        // Раньше modalOpen не трогался, из-за чего модалка оставалась
+        // открытой (затемнённым фоном) под пикером — баг, замеченный
+        // Вахтангом на скриншоте: "открытое окно всё равно не ушло".
+        this.modalOpen = false;
         this.pickerOpen = true;
+        // Список брендов для чипов-фильтров — те же данные, что и у
+        // обычной таблицы материалов (relationOptions['brand_id']), но
+        // грузим отдельно и кэшируем в pickerBrands (не завязано на то,
+        // открыта ли сейчас страница material-v2).
+        if (this.pickerBrands.length === 0) {
+          const res = await fetch('/api/brand?page_size=1000');
+          const data = await res.json();
+          this.pickerBrands = data.items;
+        }
         // Список виден сразу при открытии, как в обычной плоской
         // таблице материалов (не только после ввода текста в поиск) —
         // по прямой просьбе "интерфейс подбора такой же, как у обычных
@@ -795,21 +847,40 @@ function enginePage() {
       } catch (err) { showJsError(err); }
     },
 
+    materialBrandName(brandId) {
+      const found = this.pickerBrands.find(b => b.id === brandId);
+      return found ? found.name : '';
+    },
+
     async pickerSearch() {
-      // Переиспользует существующий GET /api/material?q=... — тот же
-      // эндпоинт, что и обычная плоская таблица материалов. Пустой
-      // запрос ('' — как при первом открытии) возвращает первую
-      // страницу без фильтра, а не пустой список — см. выше.
+      // Переиспользует существующий GET /api/material?q=...&search_fields=
+      // — тот же эндпоинт и те же параметры, что и обычная плоская
+      // таблица материалов, включая мультивыбор полей поиска и фильтр
+      // по бренду (?brand_id=) — по прямой просьбе "где фильтры по
+      // брендам, поиск по артикулу и все остальные возможности поиска
+      // в плоской таблице". Пустой запрос ('' — как при первом
+      // открытии) возвращает первую страницу без фильтра.
       try {
         hideJsError();
         const params = new URLSearchParams();
         const query = this.pickerQuery.trim();
-        if (query) params.set('q', query);
+        if (query) {
+          params.set('q', query);
+          for (const [field, enabled] of Object.entries(this.pickerSearchFields)) {
+            if (enabled) params.append('search_fields', field);
+          }
+        }
+        if (this.pickerBrandFilter) params.set('brand_id', this.pickerBrandFilter);
         params.set('page_size', 50);
         const res = await fetch('/api/material?' + params.toString());
         const data = await res.json();
         this.pickerResults = data.items;
       } catch (err) { showJsError(err); }
+    },
+
+    pickerSetBrandFilter(brandId) {
+      this.pickerBrandFilter = brandId;
+      this.pickerSearch();
     },
 
     pickerAddMaterial(material) {
@@ -841,9 +912,13 @@ function enginePage() {
 
     pickerCancel() {
       // Черновик просто отбрасывается — ничего на сервере не менялось
-      // (см. HANDOFF, 2.9: кнопка "Отмена" обязательна).
+      // (см. HANDOFF, 2.9: кнопка "Отмена" обязательна). Возврат в
+      // модалку kit (не полное закрытие) — она была закрыта при входе
+      // в пикер (см. openMaterialPicker), сейчас открывается заново с
+      // тем же editing, kitItems уже загружены и не поменялись.
       this.pickerOpen = false;
       this.pickerDraft = [];
+      this.modalOpen = true;
     },
 
     async pickerSave() {
@@ -864,6 +939,10 @@ function enginePage() {
         this.pickerOpen = false;
         this.pickerDraft = [];
         await this.loadKitItems();
+        // Возврат в модалку kit с уже обновлённым составом (см.
+        // HANDOFF, 2.9: "после сохранения — возврат в модалку просмотра
+        // состава, уже с обновлёнными данными").
+        this.modalOpen = true;
       } catch (err) { showJsError(err); }
     },
 

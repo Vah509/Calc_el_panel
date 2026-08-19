@@ -62,9 +62,12 @@ client_table = TableConfig(
 # Заявка (request) — первый документ цепочки zayavka -> calculation ->
 # specification -> invoice (docs/HANDOFF_kits_and_calculation.md, раздел 2).
 # Три слота бренда — три независимых варианта расчёта, всегда видны в
-# форме, каждый может быть пустым. Кнопки сборки спецификации по варианту
-# и общего пересчёта в этом шаге не реализуются (calculation ещё нет) —
-# см. request_stub_actions в FieldConfig ниже / page.py.
+# форме, каждый может быть пустым. У каждого слота — своя пара кнопок
+# «Спецификация»/«Пересчитать» рядом с выбором бренда (FieldConfig.
+# row_actions), пока неактивные заглушки — реализуются вместе с
+# calculation. Общей кнопки "Пересчитать всё" сознательно нет — по
+# прямому решению Вахтанга (2026-08-19): пересчёт всегда по одному
+# варианту, так проще уследить, что где пересчиталось.
 request_table = TableConfig(
     key="request",
     model=Request,
@@ -75,9 +78,12 @@ request_table = TableConfig(
     fields=[
         FieldConfig(name="client_id", label="Клиент (заказчик)", widget="select", required=True),
         FieldConfig(name="client_invoice_id", label="Клиент (для счёта)", widget="select"),
-        FieldConfig(name="brand_slot_1_id", label="Вариант 1 — бренд", widget="select"),
-        FieldConfig(name="brand_slot_2_id", label="Вариант 2 — бренд", widget="select"),
-        FieldConfig(name="brand_slot_3_id", label="Вариант 3 — бренд", widget="select"),
+        FieldConfig(name="brand_slot_1_id", label="Вариант 1 — бренд", widget="select",
+                    row_actions=["Спецификация", "Пересчитать"]),
+        FieldConfig(name="brand_slot_2_id", label="Вариант 2 — бренд", widget="select",
+                    row_actions=["Спецификация", "Пересчитать"]),
+        FieldConfig(name="brand_slot_3_id", label="Вариант 3 — бренд", widget="select",
+                    row_actions=["Спецификация", "Пересчитать"]),
     ],
     relations=[
         Relation(field="client_id", target_table="client", display_field="short_name", label="Клиент (заказчик)"),
@@ -86,16 +92,11 @@ request_table = TableConfig(
         Relation(field="brand_slot_2_id", target_table="brand", display_field="name", label="Вариант 2 — бренд"),
         Relation(field="brand_slot_3_id", target_table="brand", display_field="name", label="Вариант 3 — бренд"),
     ],
-    form_rows=[
-        FormRow(field_names=["client_id", "client_invoice_id"]),
-        FormRow(field_names=["brand_slot_1_id", "brand_slot_2_id", "brand_slot_3_id"]),
-    ],
-    extra_actions=[
-        "Спецификация — вариант 1",
-        "Спецификация — вариант 2",
-        "Спецификация — вариант 3",
-        "Пересчитать всё",
-    ],
+    # Ни один из полей не сгруппирован в form_rows намеренно — client_id/
+    # client_invoice_id идут каждое отдельным рядом на всю ширину (клиенты
+    # бывают с длинными названиями, в два столбца не помещались), брендовые
+    # слоты тоже по одному в ряд, т.к. у каждого теперь своя пара кнопок
+    # рядом (row_actions) — в общем ряду на троих было бы тесно.
 )
 
 

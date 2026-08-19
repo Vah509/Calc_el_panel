@@ -275,6 +275,16 @@ tbody tr:hover { background: #faf9f6; }
 .extra-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
 .extra-actions .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
 
+/* Кнопки-заглушки рядом с конкретным полем (FieldConfig.row_actions) —
+   select занимает основную ширину, кнопки — справа от него в том же
+   ряду. На узком экране (телефон) переносятся под select, не сжимая
+   его до нечитаемости. */
+.field-with-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.field-with-actions select { flex: 1 1 140px; min-width: 100px; }
+.row-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.btn-small { padding: 6px 10px; font-size: 12px; }
+.btn-small[disabled] { opacity: 0.5; cursor: not-allowed; }
+
 .modal-footer { padding: 14px 20px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; background: #fafaf8; }
 .modal-footer-right { display: flex; gap: 8px; }
 

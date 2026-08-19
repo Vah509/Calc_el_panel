@@ -72,6 +72,17 @@ class FieldConfig:
     source_constant_key: Optional[str] = None  # для virtual-полей: ключ константы
                                     # в справочнике constants, откуда фронт берёт
                                     # значение для отображения в форме/списке.
+    row_actions: list[str] = field(default_factory=list)
+                                    # Заголовки кнопок-заглушек, показанных СРАЗУ
+                                    # ЗА этим полем в том же ряду формы (не под
+                                    # формой целиком, в отличие от
+                                    # TableConfig.extra_actions). Кнопки неактивны
+                                    # (disabled), видны только у существующей
+                                    # записи (editing.id). Пример: у request каждое
+                                    # поле brand_slot_N_id получает свою кнопку
+                                    # «Спецификация» и «Пересчитать» рядом с
+                                    # выбором бренда этого варианта — их логика
+                                    # появится вместе с calculation.
 
 
 @dataclass

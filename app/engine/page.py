@@ -254,12 +254,21 @@ _PAGE_TEMPLATE_SOURCE = r"""
             <label>{{ f.label }}</label>
             {% endif %}
             {% if rel %}
-            <select x-model.number="editing.{{ f.name }}">
-              <option :value="null">—</option>
-              <template x-for="opt in relationOptions['{{ f.name }}']" :key="opt.id">
-                <option :value="opt.id" x-text="opt['{{ rel.display_field }}']"></option>
-              </template>
-            </select>
+            <div class="field-with-actions">
+              <select x-model.number="editing.{{ f.name }}">
+                <option :value="null">—</option>
+                <template x-for="opt in relationOptions['{{ f.name }}']" :key="opt.id">
+                  <option :value="opt.id" x-text="opt['{{ rel.display_field }}']"></option>
+                </template>
+              </select>
+              {% if f.row_actions %}
+              <div class="row-actions" x-show="editing.id">
+                {% for action_label in f.row_actions %}
+                <button type="button" class="btn btn-ghost btn-small" disabled title="Пока недоступно">{{ action_label }}</button>
+                {% endfor %}
+              </div>
+              {% endif %}
+            </div>
             {% elif f.virtual %}
             <span class="field-readonly-text" x-text="constants['{{ f.source_constant_key }}'] ?? ''"></span>
             {% elif f.readonly %}

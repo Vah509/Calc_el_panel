@@ -1,0 +1,4 @@
+# Устаревшие entity_registry — заменены единым entity_registry.md
+# (актуализирован под v48, объединяет содержимое обоих файлов ниже)
+entity_registry_v1.md
+entity_registry_constants.md

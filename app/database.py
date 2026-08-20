@@ -45,6 +45,18 @@ def _ensure_is_deleted_columns() -> None:
     Название функции сохранено историческим (is_deleted было первым
     таким случаем) — по факту теперь покрывает любые новые колонки.
 
+    ВАЖНО НА БУДУЩЕЕ: если поле добавляется в МОДЕЛЬ УЖЕ СУЩЕСТВУЮЩЕЙ
+    НА PRODUCTION таблицы (не в новую таблицу, а в старую — как
+    document_number/document_date в Request в v51, при том что Request
+    как таблица появилась ещё в v49) — эту функцию НАДО обновить в ТОЙ
+    ЖЕ версии, иначе на SQLite (create_all создаёт таблицу с нуля,
+    ошибки не будет) всё протестируется зелёным, а на Postgres-проде
+    (таблица уже есть, колонки физически нет) любой INSERT упадёт 500 —
+    именно так был пропущен баг v51->v52 (см. HANDOFF.md, история
+    решения). Если поле добавляется в СОВСЕМ НОВУЮ таблицу (её первый
+    деплой) — этот список трогать не надо, create_all() создаст её
+    сразу со всеми полями.
+
     Для SQLite (локальная разработка) эта миграция не нужна —
     create_all и так создаёт таблицу с нуля со всеми полями модели.
     """
@@ -57,6 +69,15 @@ def _ensure_is_deleted_columns() -> None:
         ("brand", "is_deleted", "BOOLEAN NOT NULL DEFAULT false"),
         ("brand", "rate_vb", "DOUBLE PRECISION NOT NULL DEFAULT 0"),
         ("material", "price_vb_incl_vat", "DOUBLE PRECISION NOT NULL DEFAULT 0"),
+        # v51: document_number/document_date добавлены в модель Request
+        # ПОСЛЕ того, как таблица request уже была создана на Postgres
+        # в v49 (первый деплой request/client). create_all() не добавляет
+        # колонки в уже существующую таблицу — тот же класс проблемы, что
+        # и с is_deleted/rate_vb выше, просто для request. DEFAULT ''/
+        # CURRENT_DATE — безопасен для уже существующих строк (созданных
+        # в v49/v50 без этих полей).
+        ("request", "document_number", "VARCHAR NOT NULL DEFAULT ''"),
+        ("request", "document_date", "DATE NOT NULL DEFAULT CURRENT_DATE"),
     ]
     with engine.connect() as conn:
         for table, column, ddl_type in tables_columns:

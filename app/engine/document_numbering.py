@@ -31,6 +31,15 @@ from app.models.document_counter import DocumentCounter
 _NUMBER_RE = re.compile(r"(\d+)\s*$")
 
 
+def format_document_number(prefix: str, number: int) -> str:
+    """Единственное место, где собирается строка номера документа —
+    используется и при реальной генерации (next_document_number), и
+    при предпросмотре (peek_next_document_number в api.py), чтобы
+    формат (сейчас — 6 цифр с ведущими нулями, "R-000042", решение
+    Вахтанга 2026-08-19) не мог разъехаться между ними."""
+    return f"{prefix}-{number:06d}"
+
+
 def _get_or_create_counter(session: Session, prefix: str) -> DocumentCounter:
     counter = session.exec(
         select(DocumentCounter).where(DocumentCounter.prefix == prefix)
@@ -44,12 +53,12 @@ def _get_or_create_counter(session: Session, prefix: str) -> DocumentCounter:
 
 def next_document_number(session: Session, prefix: str) -> str:
     """Продвигает счётчик префикса на 1 и возвращает готовый номер
-    вида "{prefix}-{n}". Вызывается при создании документа, только
-    если человек не ввёл номер сам."""
+    (см. format_document_number для формата). Вызывается при создании
+    документа, только если человек не ввёл номер сам."""
     counter = _get_or_create_counter(session, prefix)
     counter.last_number += 1
     session.add(counter)
-    return f"{prefix}-{counter.last_number}"
+    return format_document_number(prefix, counter.last_number)
 
 
 def bump_counter_if_ahead(session: Session, prefix: str, document_number: str) -> None:

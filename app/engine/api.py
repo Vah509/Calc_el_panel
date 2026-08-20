@@ -197,11 +197,12 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
             вкладках), тут может быть небольшое расхождение — это
             подсказка, не резервирование."""
             from app.models.document_counter import DocumentCounter
+            from app.engine.document_numbering import format_document_number
             counter = session.exec(
                 select(DocumentCounter).where(DocumentCounter.prefix == config.document_prefix)
             ).first()
             next_number = (counter.last_number if counter else 0) + 1
-            return {"document_number": f"{config.document_prefix}-{next_number}"}
+            return {"document_number": format_document_number(config.document_prefix, next_number)}
 
     @router.get("")
     def list_items(

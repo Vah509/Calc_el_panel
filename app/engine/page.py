@@ -277,6 +277,8 @@ _PAGE_TEMPLATE_SOURCE = r"""
             <input type="number" step="0.01" x-model.number="editing.{{ f.name }}" @input="onComputedChange('{{ f.name }}')">
             {% elif f.widget == "number" %}
             <input type="number" step="0.01"{% if f.required %} required{% endif %} placeholder="{{ f.placeholder }}" x-model.number="editing.{{ f.name }}">
+            {% elif f.widget == "date" %}
+            <input type="date"{% if f.required %} required{% endif %} x-model="editing.{{ f.name }}">
             {% else %}
             <input type="text"{% if f.required %} required{% endif %} placeholder="{{ f.placeholder }}" x-model="editing.{{ f.name }}">
             {% endif %}
@@ -746,9 +748,27 @@ function enginePage() {
       try {
         hideJsError();
         const lvl = this.currentLevel();
+        const relationFieldNames = new Set(lvl.relations.map(r => r.field));
         const blank = {};
         for (const f of lvl.fields) {
-          if (f.default !== null && f.default !== undefined) {
+          if (relationFieldNames.has(f.name)) {
+            // relation-поле (select, ссылка на другую таблицу) — блан
+            // должен быть null, не '', иначе на Postgres (прод) пустая
+            // строка в integer-колонке падает ошибкой БД при сохранении
+            // (см. _normalize_relation_fields в api.py — подчищает то
+            // же самое на бэкенде как отдельная линия защиты, но здесь
+            // правильнее не производить '' вообще).
+            blank[f.name] = f.default ?? null;
+          } else if (f.widget === 'date' && (f.default === null || f.default === undefined)) {
+            // date-поле без явного default — подставляем сегодняшнюю
+            // дату сразу на фронте (видно человеку сразу при открытии
+            // формы), бэкенд всё равно перепроверит/дозаполнит своим
+            // default_factory, если поле придёт пустым (см.
+            // _normalize_date_fields в api.py).
+            const today = new Date();
+            const pad = (n) => String(n).padStart(2, '0');
+            blank[f.name] = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+          } else if (f.default !== null && f.default !== undefined) {
             blank[f.name] = f.default;
           } else {
             blank[f.name] = f.isNumeric ? 0 : '';

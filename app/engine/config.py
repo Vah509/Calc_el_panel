@@ -29,7 +29,7 @@ from typing import Any, Literal, Optional
 from sqlmodel import SQLModel
 
 
-FieldWidget = Literal["text", "number", "select"]
+FieldWidget = Literal["text", "number", "select", "date"]
 
 
 @dataclass
@@ -272,6 +272,20 @@ class TableConfig:
                                     # логика реализуется, кнопка либо получает
                                     # реальный @click и уходит из этого списка, либо
                                     # остаётся здесь до следующего шага.
+    document_number_field: Optional[str] = None
+                                    # Имя строкового поля модели, хранящего номер
+                                    # документа (например "document_number" у
+                                    # request) — None, если у таблицы нет своей
+                                    # нумерации (справочники вроде brand/client).
+                                    # Заполнено вместе с document_prefix (см. ниже) —
+                                    # включает автогенерацию номера при создании и
+                                    # подтяжку счётчика при сохранении, см.
+                                    # app/engine/document_numbering.py.
+    document_prefix: Optional[str] = None
+                                    # Префикс документа для нумерации (например "R"
+                                    # у request → номера вида "R-101") — свой у
+                                    # каждого типа документа, счётчики независимы
+                                    # (см. app/models/document_counter.py).
 
     def field_names(self) -> list[str]:
         """Имена полей, реально хранящихся в модели/БД — используется

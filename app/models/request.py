@@ -18,18 +18,29 @@
 # (1/2/3), не по самому brand_id — см. calculation.brand_slot в
 # HANDOFF_kits_and_calculation.md, раздел 2.3.
 #
-# Кнопки "Сформировать спецификацию по варианту N" и "Пересчитать
-# всё" — в этом шаге НЕ реализуются (нет ещё calculation, ссылаться
-# не на что), появляются в UI как неактивные заглушки. Архивация —
-# отдельный будущий обработчик, здесь не реализована.
+# document_number / document_date — номер и дата документа (v51).
+# Оба редактируются вручную человеком. При создании, если не заданы
+# явно — сервер сам подставляет: номер по счётчику префикса "R" (см.
+# app/models/document_counter.py), дату — сегодняшнюю. Дубликаты
+# номера НЕ проверяются (по решению Вахтанга — вручную можно вписать
+# любой номер, даже уже занятый другим документом). Подробности
+# генерации/подтяжки счётчика — см. app/engine/document_numbering.py.
+#
+# Кнопки "Спецификация"/"Пересчитать" у каждого варианта — в этом шаге
+# НЕ реализуются (нет ещё calculation, ссылаться не на что), появляются
+# в UI как неактивные заглушки. Архивация — отдельный будущий
+# обработчик, здесь не реализована.
 # ============================================================
 
+from datetime import date
 from typing import Optional
 from sqlmodel import SQLModel, Field
 
 
 class Request(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    document_number: str = Field(default="")
+    document_date: date = Field(default_factory=date.today)
     client_id: Optional[int] = Field(default=None, foreign_key="client.id")
     client_invoice_id: Optional[int] = Field(default=None, foreign_key="client.id")
     brand_slot_1_id: Optional[int] = Field(default=None, foreign_key="brand.id")

@@ -61,6 +61,69 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
             )
 
     numeric_field_names = {f.name for f in config.fields if f.is_numeric}
+    relation_field_names = {r.field for r in config.relations}
+    date_field_names = {f.name for f in config.fields if f.widget == "date"}
+
+    def _normalize_relation_fields(data: dict[str, Any]) -> dict[str, Any]:
+        """Приводит пустую строку в relation-поле (select с ссылкой на
+        другую таблицу, например brand_slot_1_id) к None.
+
+        Фронт инициализирует ЛЮБОЕ незаполненное поле новой записи как
+        '' (пустая строка) — единое правило для текста и чисел (см.
+        openCreate() в page.py), а для relation-полей ни один вариант
+        <select> не соответствует ''. Если ничего не выбрано, реально
+        нужен null (nullable FK), не пустая строка. На SQLite это
+        молча "проходит" (типы не проверяются), но на Postgres (прод)
+        пустая строка в integer-колонке — ошибка на уровне БД, а не
+        мягкая 422 с понятным текстом. Нормализуем здесь, а не чиним
+        каждую хierarchy-таблицу по отдельности — общий случай для
+        любого relation-поля движка."""
+        for name in relation_field_names:
+            if name in data and data[name] == "":
+                data[name] = None
+        return data
+
+    def _normalize_date_fields(data: dict[str, Any]) -> dict[str, Any]:
+        """Приводит date-поля (widget="date") к Python date.
+
+        Убирает пустую строку из data ПОЛНОСТЬЮ (не в None) — date-поля
+        модели, как правило, НЕ Optional (например Request.document_date),
+        и именно отсутствие ключа даёт сработать default_factory=date.today
+        модели. Непустую строку парсит в date явно: create/update_item
+        строят модель через `model(**clean_data)` в обход Pydantic-схемы
+        (payload — просто dict[str, Any]), поэтому автоматической
+        коэрсии строка->date, которую даёт обычная FastAPI-схема, тут
+        не происходит — без явного парсинга страдает SQLite сразу (см.
+        историю бага), а на Postgres тоже упало бы на INSERT."""
+        from datetime import date as date_cls
+        for name in date_field_names:
+            if name not in data:
+                continue
+            value = data[name]
+            if value == "":
+                del data[name]
+            elif isinstance(value, str):
+                data[name] = date_cls.fromisoformat(value)
+        return data
+
+    def _apply_document_numbering(data: dict[str, Any], session: Session) -> dict[str, Any]:
+        """Для таблиц с document_prefix (см. TableConfig) — генерирует
+        номер документа, если он не задан явно, и подтягивает счётчик
+        префикса вверх, если задан вручную номер больше текущего
+        счётчика. См. app/engine/document_numbering.py для полных
+        правил. Для таблиц без document_prefix (обычные справочники) —
+        не делает ничего."""
+        if not config.document_prefix or not config.document_number_field:
+            return data
+        from app.engine.document_numbering import next_document_number, bump_counter_if_ahead
+
+        field_name = config.document_number_field
+        current_value = data.get(field_name)
+        if not current_value:
+            data[field_name] = next_document_number(session, config.document_prefix)
+        else:
+            bump_counter_if_ahead(session, config.document_prefix, current_value)
+        return data
 
     def _round_numeric_fields(data: dict[str, Any]) -> dict[str, Any]:
         """Округляет все числовые (is_numeric) поля до 2 знаков после
@@ -214,6 +277,9 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
                 detail=f"Создание новых записей в «{config.title}» через интерфейс отключено.",
             )
         data = {k: v for k, v in payload.items() if k in field_names or k == "_changed_field"}
+        data = _normalize_relation_fields(data)
+        data = _normalize_date_fields(data)
+        data = _apply_document_numbering(data, session)
         _validate_required(data)
         data = _apply_computed_pairs(data, session)
         data = _round_numeric_fields(data)
@@ -234,6 +300,9 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
             k: v for k, v in payload.items()
             if (k in field_names and k not in readonly_field_names) or k == "_changed_field"
         }
+        data = _normalize_relation_fields(data)
+        data = _normalize_date_fields(data)
+        data = _apply_document_numbering(data, session)
         _validate_required(data)
         data = _apply_computed_pairs(data, session)
         data = _round_numeric_fields(data)

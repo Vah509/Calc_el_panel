@@ -18,6 +18,11 @@ from app.models.kit import Kit
 from app.models.kit_item import KitItem
 from app.models.client import Client
 from app.models.request import Request
+from app.models.document_counter import DocumentCounter  # noqa: F401 — не таблица
+# движка (нет своего TableConfig/страницы), но должна быть импортирована
+# здесь, чтобы SQLModel.metadata.create_all() увидела её при старте
+# (см. app/database.py) — единственное место, куда стягиваются импорты
+# всех моделей проекта.
 
 
 brand_table = TableConfig(
@@ -61,13 +66,17 @@ client_table = TableConfig(
 
 # Заявка (request) — первый документ цепочки zayavka -> calculation ->
 # specification -> invoice (docs/HANDOFF_kits_and_calculation.md, раздел 2).
-# Три слота бренда — три независимых варианта расчёта, всегда видны в
-# форме, каждый может быть пустым. У каждого слота — своя пара кнопок
-# «Спецификация»/«Пересчитать» рядом с выбором бренда (FieldConfig.
-# row_actions), пока неактивные заглушки — реализуются вместе с
-# calculation. Общей кнопки "Пересчитать всё" сознательно нет — по
-# прямому решению Вахтанга (2026-08-19): пересчёт всегда по одному
-# варианту, так проще уследить, что где пересчиталось.
+# document_number/document_date — номер и дата документа, оба
+# редактируются вручную; номер при создании автогенерируется по
+# счётчику префикса "R" (document_prefix), если не введён явно —
+# см. app/engine/document_numbering.py. Три слота бренда — три
+# независимых варианта расчёта, всегда видны в форме, каждый может
+# быть пустым. У каждого слота — своя пара кнопок «Спецификация»/
+# «Пересчитать» рядом с выбором бренда (FieldConfig.row_actions), пока
+# неактивные заглушки — реализуются вместе с calculation. Общей кнопки
+# "Пересчитать всё" сознательно нет — по прямому решению Вахтанга
+# (2026-08-19): пересчёт всегда по одному варианту, так проще уследить,
+# что где пересчиталось.
 request_table = TableConfig(
     key="request",
     model=Request,
@@ -75,7 +84,11 @@ request_table = TableConfig(
     title_singular="заявка",
     search_placeholder="Поиск по клиенту…",
     delete_mode="soft",
+    document_number_field="document_number",
+    document_prefix="R",
     fields=[
+        FieldConfig(name="document_number", label="Номер", list_width="90px"),
+        FieldConfig(name="document_date", label="Дата", widget="date", list_width="110px"),
         FieldConfig(name="client_id", label="Клиент (заказчик)", widget="select", required=True),
         FieldConfig(name="client_invoice_id", label="Клиент (для счёта)", widget="select"),
         FieldConfig(name="brand_slot_1_id", label="Вариант 1 — бренд", widget="select",
@@ -92,7 +105,10 @@ request_table = TableConfig(
         Relation(field="brand_slot_2_id", target_table="brand", display_field="name", label="Вариант 2 — бренд"),
         Relation(field="brand_slot_3_id", target_table="brand", display_field="name", label="Вариант 3 — бренд"),
     ],
-    # Ни один из полей не сгруппирован в form_rows намеренно — client_id/
+    form_rows=[
+        FormRow(field_names=["document_number", "document_date"]),
+    ],
+    # Остальные поля не сгруппированы в form_rows намеренно — client_id/
     # client_invoice_id идут каждое отдельным рядом на всю ширину (клиенты
     # бывают с длинными названиями, в два столбца не помещались), брендовые
     # слоты тоже по одному в ряд, т.к. у каждого теперь своя пара кнопок

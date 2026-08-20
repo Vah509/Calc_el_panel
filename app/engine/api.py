@@ -230,8 +230,23 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
                                            # явное значение (например 1000 для relationOptions —
                                            # выпадающих списков/фильтров, которым нужен весь
                                            # справочник целиком, а не одна страница) — приоритетно
+        exact_prefix: bool = False,      # False (по умолчанию) — ищем ПОДСТРОКУ в любом месте
+                                           # поля ("ромашка" находит и "Ромашка", и "Крапивная
+                                           # Ромашка ООО"), True — ищем ТОЛЬКО с начала поля
+                                           # ("ромашка" находит "Ромашка ООО", но не "Крапивная
+                                           # Ромашка"). Одна общая галочка на всю строку поиска
+                                           # движка (не отдельная на поле) — переключает режим
+                                           # сразу для ВСЕХ активных полей/relation-поисков сразу,
+                                           # см. FilterBar в page.py. Работает одинаково что для
+                                           # обычных text-полей, что для join/подзапросов по
+                                           # relation (searchable_fields) — единая точка веток
+                                           # ниже, чтобы оба класса условий не разъехались.
         session: Session = Depends(get_engine_session),
     ):
+        def _text_match(column, value: str):
+            value = value.lower()
+            return func.lower(column).startswith(value) if exact_prefix else func.lower(column).contains(value)
+
         statement = select(model)
         all_searchable = config.searchable_fields()
         searchable_relations = config.searchable_relations()
@@ -243,7 +258,7 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
             active_fields = all_searchable
             active_relations = searchable_relations
         if q:
-            conditions = [func.lower(getattr(model, f)).contains(q.lower()) for f in active_fields]
+            conditions = [_text_match(getattr(model, f), q) for f in active_fields]
             if active_relations:
                 from app.engine.tables import ALL_TABLES  # локальный импорт — см. паттерн выше в файле
                 for rel in active_relations:
@@ -262,7 +277,7 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
                         continue
                     target_model = target_config.model
                     sub_conditions = [
-                        func.lower(getattr(target_model, fname)).contains(q.lower())
+                        _text_match(getattr(target_model, fname), q)
                         for fname in rel.searchable_fields
                         if fname in {f.name for f in target_config.fields}
                     ]

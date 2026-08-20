@@ -81,6 +81,11 @@ _PAGE_TEMPLATE_SOURCE = r"""
       {{ r.search_label or r.label }}
     </label>
     {% endfor %}
+    <span style="width:1px;height:20px;background:var(--line);margin:0 2px;"></span>
+    <label class="search-toggle-chip" title="Искать только совпадения, начинающиеся с введённого текста, а не любое вхождение">
+      <input type="checkbox" x-model="exactPrefix" @change="onSearchFieldsChange()">
+      Точное совпадение
+    </label>
   </div>
   {% endif %}
 
@@ -554,6 +559,7 @@ function enginePage() {
     activeFilters: {},
     searchFields: {},
     q: '',
+    exactPrefix: false,
     modalOpen: false,
     editing: {},
     sortBy: null,
@@ -712,6 +718,7 @@ function enginePage() {
         const lvl = this.currentLevel();
         const params = new URLSearchParams();
         if (this.q) params.set('q', this.q);
+        if (this.exactPrefix) params.set('exact_prefix', 'true');
         if (lvl.toggleableSearchFields.length > 0 || lvl.toggleableSearchRelations.length > 0) {
           // Явно передаём набор активных полей поиска — какие из
           // toggleable-полей отмечены галочкой + всегда-искомые поля

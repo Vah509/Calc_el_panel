@@ -67,12 +67,18 @@ _PAGE_TEMPLATE_SOURCE = r"""
   </div>
   {% endif %}
 
-  {% if config.enable_search_toggles and toggleable_search_fields %}
+  {% if config.enable_search_toggles and (toggleable_search_fields or toggleable_search_relations) %}
   <div class="search-toggles-row">
     {% for f in toggleable_search_fields %}
     <label class="search-toggle-chip">
       <input type="checkbox" x-model="searchFields['{{ f.name }}']" @change="onSearchFieldsChange()">
       {{ f.label }}
+    </label>
+    {% endfor %}
+    {% for r in toggleable_search_relations %}
+    <label class="search-toggle-chip">
+      <input type="checkbox" x-model="searchFields['rel:{{ r.field }}']" @change="onSearchFieldsChange()">
+      {{ r.search_label or r.label }}
     </label>
     {% endfor %}
   </div>
@@ -86,12 +92,14 @@ _PAGE_TEMPLATE_SOURCE = r"""
     </div>
     {% if config.relations %}
     {% for rel in config.relations %}
+    {% if rel.show_filter_chips %}
     <span style="width:1px;height:20px;background:var(--line);margin:0 4px;"></span>
     <span class="chip" :class="{active: !activeFilters['{{ rel.field }}']}" @click="activeFilters['{{ rel.field }}']=null; page=1; load()">Все</span>
     <template x-for="opt in relationOptions['{{ rel.field }}']" :key="opt.id">
       <span class="chip" :class="{active: activeFilters['{{ rel.field }}'] === opt.id}"
             @click="activeFilters['{{ rel.field }}'] = opt.id; page=1; load()" x-text="opt['{{ rel.display_field }}']"></span>
     </template>
+    {% endif %}
     {% endfor %}
     {% endif %}
 
@@ -639,6 +647,14 @@ function enginePage() {
           // страница открыта (не сбрасывается при новом поиске/фильтре).
           this.searchFields[f.name] = f.default;
         }
+        for (const r of lvl.toggleableSearchRelations) {
+          // то же самое, но для поиска по связанной таблице через
+          // relation (например request.client_id -> искать среди
+          // client.short_name/full_name) — см. Relation.searchable_fields.
+          // Ключ в searchFields — с префиксом 'rel:', чтобы не
+          // столкнуться с обычным полем с тем же именем.
+          this.searchFields['rel:' + r.field] = r.default;
+        }
         for (const rel of lvl.relations) {
           // page_size=1000 — выпадающему списку/фильтру нужен весь
           // справочник целиком, а не одна страница (см. решение по
@@ -696,7 +712,7 @@ function enginePage() {
         const lvl = this.currentLevel();
         const params = new URLSearchParams();
         if (this.q) params.set('q', this.q);
-        if (lvl.toggleableSearchFields.length > 0) {
+        if (lvl.toggleableSearchFields.length > 0 || lvl.toggleableSearchRelations.length > 0) {
           // Явно передаём набор активных полей поиска — какие из
           // toggleable-полей отмечены галочкой + всегда-искомые поля
           // (searchable=True, search_toggle=False, например артикул).
@@ -705,6 +721,12 @@ function enginePage() {
           }
           for (const name of lvl.alwaysSearchedFields) {
             params.append('search_fields', name);
+          }
+          for (const r of lvl.toggleableSearchRelations) {
+            if (this.searchFields['rel:' + r.field]) params.append('search_fields', 'rel:' + r.field);
+          }
+          for (const fieldName of lvl.alwaysSearchedRelationFields) {
+            params.append('search_fields', 'rel:' + fieldName);
           }
         }
         for (const [field, value] of Object.entries(this.activeFilters)) {
@@ -744,7 +766,7 @@ function enginePage() {
       if (this.page < this.totalPages) { this.page += 1; this.load(); }
     },
 
-    openCreate() {
+    async openCreate() {
       try {
         hideJsError();
         const lvl = this.currentLevel();
@@ -784,6 +806,20 @@ function enginePage() {
         }
         this.editing = blank;
         this.modalOpen = true;
+        if (lvl.documentNumberField) {
+          // Показываем человеку номер СРАЗУ при открытии формы, а не
+          // только после сохранения — иначе поле выглядит "сломанным"
+          // (пустое там, где ожидается автономер). Не резервирует номер —
+          // реальный номер присваивается на save (см. _apply_document_numbering
+          // в api.py); это просто предпросмотр (GET /api/{key}/next-document-number).
+          try {
+            const res = await fetch('/api/' + lvl.key + '/next-document-number');
+            if (res.ok) {
+              const data = await res.json();
+              this.editing[lvl.documentNumberField] = data.document_number;
+            }
+          } catch (e) { /* не критично — поле останется пустым, сервер всё равно сгенерирует номер на save */ }
+        }
       } catch (err) { showJsError(err); }
     },
 
@@ -1355,6 +1391,7 @@ def _serialize_level_config(config: TableConfig) -> dict:
         "allowCreate": config.allow_create,
         "allowDelete": config.allow_delete,
         "editMode": config.edit_mode,
+        "documentNumberField": config.document_number_field,
         "fields": [
             {
                 "name": f.name,
@@ -1363,6 +1400,7 @@ def _serialize_level_config(config: TableConfig) -> dict:
                 "default": f.default,
                 "required": f.required,
                 "virtual": f.virtual,
+                "widget": f.widget,
             }
             for f in config.fields
         ],
@@ -1388,6 +1426,17 @@ def _serialize_level_config(config: TableConfig) -> dict:
             for f in config.toggleable_search_fields()
         ] if config.enable_search_toggles else [],
         "alwaysSearchedFields": config.always_searched_fields() if config.enable_search_toggles else [],
+        "toggleableSearchRelations": [
+            {
+                "field": r.field,
+                "label": r.search_label or r.label,
+                "default": r.search_default,
+            }
+            for r in config.toggleable_search_relations()
+        ] if config.enable_search_toggles else [],
+        "alwaysSearchedRelationFields": (
+            [r.field for r in config.always_searched_relations()] if config.enable_search_toggles else []
+        ),
         "formLayoutFields": [
             {
                 "name": f.name,
@@ -1495,6 +1544,7 @@ def render_table_page(config: TableConfig, jinja_env) -> str:
 
     form_layout = _build_form_layout(config)
     toggleable_search_fields = config.toggleable_search_fields() if config.enable_search_toggles else []
+    toggleable_search_relations = config.toggleable_search_relations() if config.enable_search_toggles else []
 
     template = jinja_env.from_string(_PAGE_TEMPLATE_SOURCE)
     return template.render(
@@ -1503,4 +1553,5 @@ def render_table_page(config: TableConfig, jinja_env) -> str:
         form_layout=form_layout,
         computed_field_names=computed_field_names,
         toggleable_search_fields=toggleable_search_fields,
+        toggleable_search_relations=toggleable_search_relations,
     )

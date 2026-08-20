@@ -183,6 +183,26 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
             data["is_deleted"] = getattr(instance, "is_deleted", False)
         return data
 
+    if config.document_prefix and config.document_number_field:
+        @router.get("/next-document-number")
+        def peek_next_document_number(session: Session = Depends(get_engine_session)):
+            """Только ПОКАЗЫВАЕТ, каким будет следующий номер — НЕ трогает
+            счётчик (не то же самое, что next_document_number() из
+            document_numbering.py, который его продвигает). Вызывается
+            фронтом при открытии формы "Новая запись" (см. openCreate()
+            в page.py), чтобы номер был виден человеку сразу, а не
+            появлялся только после сохранения. Реальный номер всё равно
+            присваивается на save — если между просмотром и сохранением
+            кто-то ещё создаст документ (или проект открыт в двух
+            вкладках), тут может быть небольшое расхождение — это
+            подсказка, не резервирование."""
+            from app.models.document_counter import DocumentCounter
+            counter = session.exec(
+                select(DocumentCounter).where(DocumentCounter.prefix == config.document_prefix)
+            ).first()
+            next_number = (counter.last_number if counter else 0) + 1
+            return {"document_number": f"{config.document_prefix}-{next_number}"}
+
     @router.get("")
     def list_items(
         q: Optional[str] = None,
@@ -213,16 +233,50 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
     ):
         statement = select(model)
         all_searchable = config.searchable_fields()
+        searchable_relations = config.searchable_relations()
+        relation_by_field = {f"rel:{r.field}": r for r in searchable_relations}
         if search_fields is not None:
             active_fields = [f for f in search_fields if f in all_searchable]
+            active_relations = [relation_by_field[f] for f in search_fields if f in relation_by_field]
         else:
             active_fields = all_searchable
-        if q and active_fields:
+            active_relations = searchable_relations
+        if q:
             conditions = [func.lower(getattr(model, f)).contains(q.lower()) for f in active_fields]
-            combined = conditions[0]
-            for c in conditions[1:]:
-                combined = combined | c
-            statement = statement.where(combined)
+            if active_relations:
+                from app.engine.tables import ALL_TABLES  # локальный импорт — см. паттерн выше в файле
+                for rel in active_relations:
+                    # Поиск по текстовому полю СВЯЗАННОЙ таблицы (например
+                    # request.client_id -> client.short_name/full_name) —
+                    # через подзапрос id-шников связанной таблицы, у
+                    # которых что-то из searchable_fields содержит q.
+                    # Подзапрос (не JOIN) — чтобы не размножать строки
+                    # текущей таблицы, если бы у relation было несколько
+                    # совпадений (тут не может, id уникален, но подзапрос
+                    # также проще комбинировать с остальными OR-условиями).
+                    target_config = next(
+                        (t for t in ALL_TABLES if t.key == rel.target_table), None
+                    )
+                    if not target_config:
+                        continue
+                    target_model = target_config.model
+                    sub_conditions = [
+                        func.lower(getattr(target_model, fname)).contains(q.lower())
+                        for fname in rel.searchable_fields
+                        if fname in {f.name for f in target_config.fields}
+                    ]
+                    if not sub_conditions:
+                        continue
+                    sub_combined = sub_conditions[0]
+                    for c in sub_conditions[1:]:
+                        sub_combined = sub_combined | c
+                    matching_ids = select(target_model.id).where(sub_combined)
+                    conditions.append(getattr(model, rel.field).in_(matching_ids))
+            if conditions:
+                combined = conditions[0]
+                for c in conditions[1:]:
+                    combined = combined | c
+                statement = statement.where(combined)
         if brand_id is not None and "brand_id" in field_names:
             statement = statement.where(getattr(model, "brand_id") == brand_id)
         if parent_id is not None and config.hierarchy and config.hierarchy.parent_field:

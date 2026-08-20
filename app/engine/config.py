@@ -132,6 +132,43 @@ class Relation:
     target_table: str              # ключ таблицы в TABLE_REGISTRY, например "brand"
     display_field: str = "name"    # какое поле связанной записи показывать
     label: str = ""
+    show_filter_chips: bool = True
+                                    # Показывать ли ряд чипов-фильтров
+                                    # ("Все" + одна кнопка на каждое значение
+                                    # связанной таблицы) в верхней панели
+                                    # списка. По умолчанию True (как было
+                                    # у material/brand — один relation, один
+                                    # осмысленный ряд фильтров). У документов
+                                    # с несколькими relation-полями сразу
+                                    # (request — 5 штук: 2 клиента + 3 бренда)
+                                    # ряд чипов на КАЖДОЕ поле выглядит
+                                    # захламлённо и малополезно — там лучше
+                                    # обычный текстовый поиск (см. request_table,
+                                    # enable_search_toggles). False отключает
+                                    # чипы именно для этого relation-поля, не
+                                    # трогая остальные поля/таблицы.
+    searchable_fields: list[str] = field(default_factory=list)
+                                    # Текстовые поля СВЯЗАННОЙ (target_table)
+                                    # таблицы, по которым можно искать через
+                                    # этот relation (например для request.
+                                    # client_id -> ["short_name", "full_name"]
+                                    # клиента). Пусто — по этому relation
+                                    # текстовый поиск не ведётся (обычная
+                                    # ситуация для большинства relation-полей,
+                                    # где ищут через сам список/чипы, а не
+                                    # текстом). Заполнено — поле участвует в
+                                    # общем текстовом поиске (q=...) как JOIN
+                                    # по target_table, с тем же чекбоксом
+                                    # "искать по …" (enable_search_toggles),
+                                    # что и обычные текстовые FieldConfig —
+                                    # см. searchable_relations()/toggleable_
+                                    # search_relations() ниже и join-логику
+                                    # в list_items (api.py).
+    search_toggle: bool = True
+    search_default: bool = True
+    search_label: str = ""         # подпись чекбокса поиска (например
+                                    # "Клиент (заказчик)"); если пусто —
+                                    # используется label этого Relation.
 
 
 @dataclass
@@ -306,3 +343,15 @@ class TableConfig:
         """Searchable-поля, которые ищутся всегда, независимо от
         состояния чекбоксов (searchable=True, но search_toggle=False)."""
         return [f.name for f in self.fields if f.searchable and not f.search_toggle]
+
+    def searchable_relations(self) -> list["Relation"]:
+        """Relation-поля с непустым searchable_fields — участвуют в
+        общем текстовом поиске через JOIN на target_table (см.
+        Relation.searchable_fields)."""
+        return [r for r in self.relations if r.searchable_fields]
+
+    def toggleable_search_relations(self) -> list["Relation"]:
+        return [r for r in self.searchable_relations() if r.search_toggle]
+
+    def always_searched_relations(self) -> list["Relation"]:
+        return [r for r in self.searchable_relations() if not r.search_toggle]

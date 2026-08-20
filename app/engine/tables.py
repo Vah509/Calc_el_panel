@@ -77,6 +77,16 @@ client_table = TableConfig(
 # "Пересчитать всё" сознательно нет — по прямому решению Вахтанга
 # (2026-08-19): пересчёт всегда по одному варианту, так проще уследить,
 # что где пересчиталось.
+#
+# Поиск (v52, по фидбеку с реального устройства): у документа 5
+# relation-полей (2 клиента + 3 бренда) — стандартный ряд чипов-фильтров
+# "Все/АСКО/ABB/ETI" движка на КАЖДОЕ из них выглядел захламлённо и
+# бесполезно на телефоне (5 рядов чипов над списком заявок). Все чипы
+# отключены (show_filter_chips=False у каждого Relation) в пользу
+# обычного текстового поиска — по короткому и полному названию клиента,
+# ЧЕРЕЗ join/подзапрос на client (Relation.searchable_fields), с
+# переключаемыми чекбоксами "заказчик"/"для счёта" (enable_search_toggles,
+# тот же паттерн, что и у client_table для собственных текстовых полей).
 request_table = TableConfig(
     key="request",
     model=Request,
@@ -84,6 +94,7 @@ request_table = TableConfig(
     title_singular="заявка",
     search_placeholder="Поиск по клиенту…",
     delete_mode="soft",
+    enable_search_toggles=True,
     document_number_field="document_number",
     document_prefix="R",
     fields=[
@@ -99,11 +110,16 @@ request_table = TableConfig(
                     row_actions=["Спецификация", "Пересчитать"]),
     ],
     relations=[
-        Relation(field="client_id", target_table="client", display_field="short_name", label="Клиент (заказчик)"),
-        Relation(field="client_invoice_id", target_table="client", display_field="short_name", label="Клиент (для счёта)"),
-        Relation(field="brand_slot_1_id", target_table="brand", display_field="name", label="Вариант 1 — бренд"),
-        Relation(field="brand_slot_2_id", target_table="brand", display_field="name", label="Вариант 2 — бренд"),
-        Relation(field="brand_slot_3_id", target_table="brand", display_field="name", label="Вариант 3 — бренд"),
+        Relation(field="client_id", target_table="client", display_field="short_name", label="Клиент (заказчик)",
+                 show_filter_chips=False, searchable_fields=["short_name", "full_name"], search_default=True),
+        Relation(field="client_invoice_id", target_table="client", display_field="short_name", label="Клиент (для счёта)",
+                 show_filter_chips=False, searchable_fields=["short_name", "full_name"], search_default=False),
+        Relation(field="brand_slot_1_id", target_table="brand", display_field="name", label="Вариант 1 — бренд",
+                 show_filter_chips=False),
+        Relation(field="brand_slot_2_id", target_table="brand", display_field="name", label="Вариант 2 — бренд",
+                 show_filter_chips=False),
+        Relation(field="brand_slot_3_id", target_table="brand", display_field="name", label="Вариант 3 — бренд",
+                 show_filter_chips=False),
     ],
     form_rows=[
         FormRow(field_names=["document_number", "document_date"]),

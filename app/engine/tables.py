@@ -108,6 +108,7 @@ request_table = TableConfig(
                     row_actions=["Спецификация", "Пересчитать"]),
         FieldConfig(name="brand_slot_3_id", label="Вариант 3 — бренд", widget="select",
                     row_actions=["Спецификация", "Пересчитать"]),
+        FieldConfig(name="note", label="Заметка", widget="textarea", in_list=False, placeholder="К чему относится эта заявка…"),
     ],
     relations=[
         Relation(field="client_id", target_table="client", display_field="short_name", label="Клиент (заказчик)",

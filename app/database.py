@@ -78,6 +78,10 @@ def _ensure_is_deleted_columns() -> None:
         # в v49/v50 без этих полей).
         ("request", "document_number", "VARCHAR NOT NULL DEFAULT ''"),
         ("request", "document_date", "DATE NOT NULL DEFAULT CURRENT_DATE"),
+        # v55: note добавлено в модель Request ПОСЛЕ того, как таблица
+        # request уже существует на Postgres (та же ловушка, см. выше) —
+        # DEFAULT '' безопасен для уже существующих строк.
+        ("request", "note", "VARCHAR NOT NULL DEFAULT ''"),
     ]
     with engine.connect() as conn:
         for table, column, ddl_type in tables_columns:

@@ -247,7 +247,7 @@ tbody tr:hover { background: #faf9f6; }
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field label { font-size: 12px; font-weight: 600; color: var(--ink-soft); }
 .field .field-hint { font-size: 11px; color: var(--ink-soft); font-weight: 400; }
-.field input, .field select {
+.field input, .field select, .field textarea {
   padding: 8px 10px;
   border: 1px solid var(--line-strong);
   border-radius: 6px;
@@ -255,7 +255,8 @@ tbody tr:hover { background: #faf9f6; }
   font-family: inherit;
   background: white;
 }
-.field input:focus, .field select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.field textarea { resize: vertical; min-height: 44px; }
+.field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .field-readonly-text { padding: 8px 10px; font-size: 13.5px; color: var(--ink-soft); background: var(--bg-soft, #f4f3f1); border-radius: 6px; }
 .field-row { display: flex; flex-wrap: wrap; gap: 12px; }
 .field-row .field { flex: 1 1 140px; min-width: 0; }

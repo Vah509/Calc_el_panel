@@ -29,7 +29,7 @@ from typing import Any, Literal, Optional
 from sqlmodel import SQLModel
 
 
-FieldWidget = Literal["text", "number", "select", "date"]
+FieldWidget = Literal["text", "number", "select", "date", "textarea"]
 
 
 @dataclass

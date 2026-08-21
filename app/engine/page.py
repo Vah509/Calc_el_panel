@@ -292,6 +292,8 @@ _PAGE_TEMPLATE_SOURCE = r"""
             <input type="number" step="0.01"{% if f.required %} required{% endif %} placeholder="{{ f.placeholder }}" x-model.number="editing.{{ f.name }}">
             {% elif f.widget == "date" %}
             <input type="date"{% if f.required %} required{% endif %} x-model="editing.{{ f.name }}">
+            {% elif f.widget == "textarea" %}
+            <textarea rows="2"{% if f.required %} required{% endif %} placeholder="{{ f.placeholder }}" x-model="editing.{{ f.name }}"></textarea>
             {% else %}
             <input type="text"{% if f.required %} required{% endif %} placeholder="{{ f.placeholder }}" x-model="editing.{{ f.name }}">
             {% endif %}
@@ -1133,18 +1135,43 @@ function enginePage() {
           await this.load();
           this.openEdit(newKit);
         } else {
-          // Плоские таблицы (material/brand): как раньше — открывает
-          // форму, предзаполненную данными существующей записи, но
-          // БЕЗ id — save() увидит отсутствие id и отправит POST
-          // (создание новой независимой записи), а не PUT. is_deleted
-          // копии всегда сброшен в false. Остальные поля копируются
-          // как есть — пользователь правит вручную перед сохранением.
+          // Плоские таблицы (material/brand/request): открывает форму,
+          // предзаполненную данными существующей записи, но БЕЗ id —
+          // save() увидит отсутствие id и отправит POST (создание новой
+          // независимой записи), а не PUT. is_deleted копии всегда
+          // сброшен в false. Остальные поля копируются как есть —
+          // пользователь правит вручную перед сохранением.
+          const lvl = this.currentLevel();
           const copy = { ...item };
           delete copy.id;
           copy.is_deleted = false;
+          // Номер документа и дата — НЕ копируются "один в один" с
+          // оригинала (иначе копия заявки получила бы тот же номер и
+          // старую дату, что и источник — неверно для нового документа).
+          // Дата — сегодняшняя, тем же способом, что и в openCreate().
+          // Номер — подтягивается тем же предпросмотр-эндпоинтом
+          // (GET next-document-number), реальный номер присвоит save()
+          // на бэкенде (_apply_document_numbering), это только то, что
+          // видно человеку сразу при открытии формы копии.
+          for (const f of lvl.fields) {
+            if (f.widget === 'date') {
+              const today = new Date();
+              const pad = (n) => String(n).padStart(2, '0');
+              copy[f.name] = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+            }
+          }
           this.editing = copy;
           this.modalOpen = true;
           this.selectedIds = [];
+          if (lvl.documentNumberField) {
+            try {
+              const res = await fetch('/api/' + lvl.key + '/next-document-number');
+              if (res.ok) {
+                const data = await res.json();
+                this.editing[lvl.documentNumberField] = data.document_number;
+              }
+            } catch (e) { /* не критично — сервер всё равно сгенерирует номер на save */ }
+          }
         }
       } catch (err) { showJsError(err); }
     },

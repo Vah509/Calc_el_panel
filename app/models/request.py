@@ -30,6 +30,10 @@
 # НЕ реализуются (нет ещё calculation, ссылаться не на что), появляются
 # в UI как неактивные заглушки. Архивация — отдельный будущий
 # обработчик, здесь не реализована.
+#
+# note — свободная текстовая заметка (v55), к чему относится заявка.
+# НЕ показывается в списке/поиске (in_list=False, не searchable) —
+# только в форме открытой записи, многострочное поле (widget="textarea").
 # ============================================================
 
 from datetime import date
@@ -46,6 +50,7 @@ class Request(SQLModel, table=True):
     brand_slot_1_id: Optional[int] = Field(default=None, foreign_key="brand.id")
     brand_slot_2_id: Optional[int] = Field(default=None, foreign_key="brand.id")
     brand_slot_3_id: Optional[int] = Field(default=None, foreign_key="brand.id")
+    note: str = Field(default="")
 
     # is_deleted — визуальная пометка "к удалению" (soft-delete),
     # НЕ фильтрация — см. комментарий в app/models/material.py.

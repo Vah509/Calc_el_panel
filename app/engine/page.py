@@ -59,6 +59,9 @@ _PAGE_TEMPLATE_SOURCE = r"""
   <div class="selection-bar" x-show="selectedIds.length > 0" x-cloak>
     <span x-text="selectedIds.length + ' выделено'"></span>
     <button type="button" class="btn" :disabled="selectedIds.length !== 1" @click="copySelected()">Копировать</button>
+    {% for action_label in config.child_document_actions %}
+    <button type="button" class="btn" disabled title="Пока недоступно">{{ action_label }}</button>
+    {% endfor %}
     {% if config.delete_mode == "soft" %}
     <button type="button" class="btn" @click="bulkMarkDelete(true)">Пометить на удаление</button>
     <button type="button" class="btn" @click="bulkMarkDelete(false)">Снять пометку</button>
@@ -564,8 +567,15 @@ function enginePage() {
     exactPrefix: false,
     modalOpen: false,
     editing: {},
-    sortBy: null,
-    sortDir: 'asc',
+    // Начальная сортировка (v56) — из TableConfig.default_sort_field/
+    // default_sort_dir, если задано (например request сортируется по
+    // дате, новые сверху), иначе прежнее поведение (без сортировки).
+    // Для hierarchy эта опция пока не используется (LEVELS[0] === CONFIG
+    // для плоских таблиц — единственный случай, где default_sort_field
+    // сейчас заполняется), поэтому берём из CONFIG напрямую, не из
+    // currentLevel(), которая на момент инициализации ещё не нужна.
+    sortBy: CONFIG.defaultSortField ?? null,
+    sortDir: CONFIG.defaultSortDir ?? 'asc',
     page: 1,
     totalPages: 1,
     selectedIds: [],
@@ -1426,6 +1436,8 @@ def _serialize_level_config(config: TableConfig) -> dict:
         "allowDelete": config.allow_delete,
         "editMode": config.edit_mode,
         "documentNumberField": config.document_number_field,
+        "defaultSortField": config.default_sort_field,
+        "defaultSortDir": config.default_sort_dir,
         "fields": [
             {
                 "name": f.name,

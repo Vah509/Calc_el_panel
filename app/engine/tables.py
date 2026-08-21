@@ -97,16 +97,24 @@ request_table = TableConfig(
     enable_search_toggles=True,
     document_number_field="document_number",
     document_prefix="R",
+    child_document_actions=["Создать документ на основании", "Показать подчинённые документы"],
+    default_sort_field="document_date",
+    default_sort_dir="desc",
     fields=[
         FieldConfig(name="document_number", label="Номер", list_width="90px"),
         FieldConfig(name="document_date", label="Дата", widget="date", list_width="110px"),
-        FieldConfig(name="client_id", label="Клиент (заказчик)", widget="select", required=True),
-        FieldConfig(name="client_invoice_id", label="Клиент (для счёта)", widget="select"),
-        FieldConfig(name="brand_slot_1_id", label="Вариант 1 — бренд", widget="select",
+        FieldConfig(name="client_id", label="Клиент (заказчик)", widget="select", required=True, list_width="22%"),
+        FieldConfig(name="client_invoice_id", label="Клиент (для счёта)", widget="select", list_width="22%"),
+        # in_list=False у брендовых слотов (v56, по решению Вахтанга) —
+        # список заявок должен быть компактным (номер/дата/оба клиента),
+        # бренд варианта — деталь формы, не нужна для быстрого обзора
+        # журнала. in_form не трогаем (default True) — в форме видны
+        # как прежде, вместе со своими row_actions.
+        FieldConfig(name="brand_slot_1_id", label="Вариант 1 — бренд", widget="select", in_list=False,
                     row_actions=["Спецификация", "Пересчитать"]),
-        FieldConfig(name="brand_slot_2_id", label="Вариант 2 — бренд", widget="select",
+        FieldConfig(name="brand_slot_2_id", label="Вариант 2 — бренд", widget="select", in_list=False,
                     row_actions=["Спецификация", "Пересчитать"]),
-        FieldConfig(name="brand_slot_3_id", label="Вариант 3 — бренд", widget="select",
+        FieldConfig(name="brand_slot_3_id", label="Вариант 3 — бренд", widget="select", in_list=False,
                     row_actions=["Спецификация", "Пересчитать"]),
         FieldConfig(name="note", label="Заметка", widget="textarea", in_list=False, placeholder="К чему относится эта заявка…"),
     ],

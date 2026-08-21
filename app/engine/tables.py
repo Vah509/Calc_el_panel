@@ -8,7 +8,7 @@
 # написания нового роутера/шаблона вручную.
 # ============================================================
 
-from app.engine.config import TableConfig, FieldConfig, ComputedPair, Relation, FormRow, Hierarchy
+from app.engine.config import TableConfig, FieldConfig, ComputedPair, Relation, FormRow, Hierarchy, ActionButton
 from app.models.material import Material
 from app.models.brand import Brand
 from app.models.constant import Constant
@@ -18,6 +18,7 @@ from app.models.kit import Kit
 from app.models.kit_item import KitItem
 from app.models.client import Client
 from app.models.request import Request
+from app.models.calculation import Calculation
 from app.models.document_counter import DocumentCounter  # noqa: F401 — не таблица
 # движка (нет своего TableConfig/страницы), но должна быть импортирована
 # здесь, чтобы SQLModel.metadata.create_all() увидела её при старте
@@ -138,6 +139,87 @@ request_table = TableConfig(
     # бывают с длинными названиями, в два столбца не помещались), брендовые
     # слоты тоже по одному в ряд, т.к. у каждого теперь своя пара кнопок
     # рядом (row_actions) — в общем ряду на троих было бы тесно.
+)
+
+
+def _recalc_full_name_handler(instance: Calculation, session) -> dict:
+    """Обработчик кнопки «Пересчитать название» (ActionButton, вкладка
+    «Настройки») — собирает full_name из instance.name_template и
+    текущих значений полей (client_name/brand_slot/номер связанной
+    заявки), СРАЗУ сохраняет результат в БД (в отличие от простого
+    предпросмотра — Вахтанг ожидает, что после нажатия кнопки
+    результат уже записан, а не только показан в форме) и возвращает
+    его фронту для подмешивания в открытую форму без перезагрузки."""
+    from app.engine.name_template import build_full_name_for_calculation
+    instance.full_name = build_full_name_for_calculation(session, instance)
+    session.add(instance)
+    session.commit()
+    session.refresh(instance)
+    return {"full_name": instance.full_name}
+
+
+# Калькуляция (calculation) — второй документ цепочки zayavka ->
+# calculation -> specification -> invoice. Этот шаг — только "шапка"
+# документа, без состава (calculation_item — следующий шаг). См.
+# подробный комментарий в app/models/calculation.py.
+#
+# form_tabs=["Основное", "Настройки"] — первая таблица движка с
+# вкладками формы (см. TableConfig.form_tabs в config.py, введено
+# специально под эту потребность, но переиспользуемо для любой
+# будущей таблицы). На "Настройки" — только name_template и кнопка
+# "Пересчитать название" на этом шаге; сюда же позже лягут настройки
+# формулы расчёта стоимости (см. HANDOFF).
+#
+# full_name НЕ пересчитывается автоматически при сохранении формы —
+# только по кнопке (решение Вахтанга 2026-08-21: не терять руками
+# поправленное название при каждом save). full_name остаётся обычным
+# редактируемым текстовым полем (не readonly) — можно поправить
+# результат подстановки точечно, не трогая сам шаблон.
+calculation_table = TableConfig(
+    key="calculation",
+    model=Calculation,
+    title="Калькуляции",
+    title_singular="калькуляция",
+    search_placeholder="Поиск по названию…",
+    delete_mode="soft",
+    document_number_field="document_number",
+    document_prefix="K",
+    default_sort_fields=[("document_date", "desc"), ("document_time", "desc")],
+    form_tabs=["Основное", "Настройки"],
+    action_buttons=[
+        ActionButton(action="recalc_full_name", label="Пересчитать название", tab="Настройки"),
+    ],
+    action_handlers={
+        "recalc_full_name": _recalc_full_name_handler,
+    },
+    fields=[
+        FieldConfig(name="document_number", label="Номер", list_width="90px", tab="Основное"),
+        FieldConfig(name="document_date", label="Дата", widget="date", list_width="110px", tab="Основное"),
+        FieldConfig(name="document_time", label="Время", widget="time", list_width="90px", tab="Основное"),
+        FieldConfig(name="request_id", label="Заявка", widget="select", list_width="18%", tab="Основное"),
+        FieldConfig(name="client_name", label="Рабочее название", required=True, searchable=True,
+                    search_default=True, list_width="22%", tab="Основное"),
+        FieldConfig(name="full_name", label="Полное название", in_list=False, tab="Основное"),
+        FieldConfig(name="brand_slot", label="Вариант (слот бренда)", widget="number",
+                    is_numeric=True, list_width="90px", tab="Основное"),
+        FieldConfig(name="status", label="Статус", widget="select", list_width="130px", tab="Основное",
+                    options=[
+                        ("draft", "Черновик"),
+                        ("active", "Активна"),
+                        ("archived_pending", "К архивации"),
+                        ("delete_pending", "К удалению"),
+                    ]),
+        FieldConfig(name="name_template", label="Шаблон полного названия", widget="textarea",
+                    in_list=False, tab="Настройки",
+                    placeholder="Сборка {client_name}-{brand_slot}-{request_number}"),
+    ],
+    relations=[
+        Relation(field="request_id", target_table="request", display_field="document_number", label="Заявка",
+                 show_filter_chips=False),
+    ],
+    form_rows=[
+        FormRow(field_names=["document_number", "document_date", "document_time"]),
+    ],
 )
 
 
@@ -327,4 +409,5 @@ constant_table = TableConfig(
 ALL_TABLES = [
     brand_table, material_table, kit_group_table, kit_section_table,
     kit_table, kit_item_table, constant_table, client_table, request_table,
+    calculation_table,
 ]

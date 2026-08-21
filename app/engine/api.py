@@ -63,6 +63,7 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
     numeric_field_names = {f.name for f in config.fields if f.is_numeric}
     relation_field_names = {r.field for r in config.relations}
     date_field_names = {f.name for f in config.fields if f.widget == "date"}
+    time_field_names = {f.name for f in config.fields if f.widget == "time"}
 
     def _normalize_relation_fields(data: dict[str, Any]) -> dict[str, Any]:
         """Приводит пустую строку в relation-поле (select с ссылкой на
@@ -104,6 +105,32 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
                 del data[name]
             elif isinstance(value, str):
                 data[name] = date_cls.fromisoformat(value)
+        return data
+
+    def _normalize_time_fields(data: dict[str, Any]) -> dict[str, Any]:
+        """То же самое, что _normalize_date_fields, но для time-полей
+        (widget="time", введено для Calculation.document_time, v57) —
+        тот же класс проблемы (пустая строка не парсится Python'ом в
+        time напрямую, а модель не через Pydantic-схему создаётся, см.
+        комментарий у _normalize_date_fields), тот же приём: пустая
+        строка убирается из data целиком (даёт сработать
+        default_factory модели), непустая парсится через time.fromisoformat.
+        HTML <input type="time"> отдаёт "HH:MM" (без секунд) — time.
+        fromisoformat принимает такую строку начиная с Python 3.11,
+        подстраховываемся вручную на случай более старой версии в
+        окружении."""
+        from datetime import time as time_cls
+        for name in time_field_names:
+            if name not in data:
+                continue
+            value = data[name]
+            if value == "":
+                del data[name]
+            elif isinstance(value, str):
+                parts = value.split(":")
+                if len(parts) == 2:
+                    value = value + ":00"
+                data[name] = time_cls.fromisoformat(value)
         return data
 
     def _apply_document_numbering(data: dict[str, Any], session: Session) -> dict[str, Any]:
@@ -225,6 +252,15 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
                                            # чтобы нельзя было сортировать по произвольному
                                            # атрибуту модели через query-параметр
         sort_dir: str = "asc",           # "asc" | "desc"; любое другое значение — как "asc"
+        sort_fields: Optional[str] = None,
+                                           # JSON-строка [[field, dir], ...] — сортировка по
+                                           # НЕСКОЛЬКИМ полям сразу (TableConfig.
+                                           # default_sort_fields, например у calculation:
+                                           # document_date desc, потом document_time desc).
+                                           # Применяется ТОЛЬКО если sort_by не задан (клик
+                                           # по заголовку колонки — однополейный sort_by/
+                                           # sort_dir — всегда имеет приоритет). Поля вне
+                                           # field_names молча пропускаются, как и у sort_by.
         page: int = 1,                   # 1-based; < 1 трактуется как 1
         page_size: Optional[int] = None, # если не передан — берём default_page_size из constants;
                                            # явное значение (например 1000 для relationOptions —
@@ -305,9 +341,26 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
             field_cfg = next((f for f in config.fields if f.name == sort_by), None)
             # Текстовые поля сортируем без учёта регистра (func.lower) —
             # иначе "Яблоко" и "яблоко" расходятся по разным местам
-            # списка. Числовые поля — обычный ORDER BY по значению.
-            order_col = column if (field_cfg and field_cfg.is_numeric) else func.lower(column)
+            # списка. Числовые/date/time поля — обычный ORDER BY по
+            # значению (func.lower на date/time колонке в Postgres
+            # падает — не строковый тип).
+            use_lower = not (field_cfg and (field_cfg.is_numeric or field_cfg.widget in ("date", "time")))
+            order_col = func.lower(column) if use_lower else column
             statement = statement.order_by(order_col.desc() if sort_dir == "desc" else order_col.asc())
+        elif sort_fields:
+            import json as _json
+            try:
+                parsed = _json.loads(sort_fields)
+            except (ValueError, TypeError):
+                parsed = []
+            for name, direction in parsed:
+                if name not in field_names:
+                    continue
+                column = getattr(model, name)
+                field_cfg = next((f for f in config.fields if f.name == name), None)
+                use_lower = not (field_cfg and (field_cfg.is_numeric or field_cfg.widget in ("date", "time")))
+                order_col = func.lower(column) if use_lower else column
+                statement = statement.order_by(order_col.desc() if direction == "desc" else order_col.asc())
 
         # total считается ДО применения LIMIT/OFFSET — по тому же
         # statement (с учётом поиска/фильтра), иначе "Стр. X из Y"
@@ -349,6 +402,7 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
         data = {k: v for k, v in payload.items() if k in field_names or k == "_changed_field"}
         data = _normalize_relation_fields(data)
         data = _normalize_date_fields(data)
+        data = _normalize_time_fields(data)
         data = _apply_document_numbering(data, session)
         _validate_required(data)
         data = _apply_computed_pairs(data, session)
@@ -372,6 +426,7 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
         }
         data = _normalize_relation_fields(data)
         data = _normalize_date_fields(data)
+        data = _normalize_time_fields(data)
         data = _apply_document_numbering(data, session)
         _validate_required(data)
         data = _apply_computed_pairs(data, session)
@@ -502,6 +557,27 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
         session.commit()
         session.refresh(new_instance)
         return _serialize(new_instance)
+
+    @router.post("/{item_id}/actions/{action}")
+    def run_action(item_id: int, action: str, session: Session = Depends(get_engine_session)):
+        """Именованное действие с реальной логикой в теле формы (см.
+        TableConfig.action_buttons/action_handlers в config.py и
+        runAction() в engine/page.py) — например "Пересчитать название"
+        у calculation. В отличие от extra_actions (просто disabled-
+        заглушки без обработчика), здесь есть конкретная функция,
+        зарегистрированная таблицей в action_handlers. Обработчик сам
+        решает, что сохранять в БД; этот роут только диспетчеризует
+        вызов и возвращает результат фронту для подмешивания в editing."""
+        handler = config.action_handlers.get(action)
+        if not handler:
+            raise HTTPException(
+                status_code=422,
+                detail=f"«{config.title}» не поддерживает действие «{action}».",
+            )
+        instance = session.get(model, item_id)
+        if not instance:
+            raise HTTPException(status_code=404, detail=f"{config.title_singular} не найден(а)")
+        return handler(instance, session)
 
     @router.put("/{item_id}/items")
     def replace_items(item_id: int, payload: dict[str, Any], session: Session = Depends(get_engine_session)):

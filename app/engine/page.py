@@ -19,7 +19,7 @@
 import json
 from typing import Optional
 
-from app.engine.config import TableConfig
+from app.engine.config import TableConfig, FieldConfig
 
 
 _NON_ROOT_HIERARCHY_TEMPLATE_SOURCE = r"""
@@ -156,6 +156,8 @@ _PAGE_TEMPLATE_SOURCE = r"""
               <span x-text="constants['{{ f.source_constant_key }}'] ?? ''"></span>
               {% elif rel %}
               <span class="brand-badge" x-text="relationName('{{ f.name }}', item.{{ f.name }})"></span>
+              {% elif f.options %}
+              <span x-text="optionLabel('{{ f.name }}', item.{{ f.name }})"></span>
               {% elif f.is_numeric %}
               <span x-text="Number(item.{{ f.name }} ?? 0).toFixed(2)"></span>
               {% else %}
@@ -256,9 +258,8 @@ _PAGE_TEMPLATE_SOURCE = r"""
 
       <div id="js-error-banner" style="display:none; background:#f3e6e3; border:1px solid #9c3b2e; color:#9c3b2e; padding:10px 16px; margin:0 20px 14px; border-radius:6px; font-family:monospace; font-size:12px; white-space:pre-wrap;"></div>
 
-      <div class="modal-body">
-        {% if not config.hierarchy %}
-        {% for row in form_layout %}
+      {% macro render_form_rows(rows) %}
+        {% for row in rows %}
         <div{% if row.is_computed_pair %} class="price-pair"{% elif row.fields | length > 1 %} class="field-row"{% endif %}>
           {% for f in row.fields %}
           {% set rel = config.relations | selectattr("field", "equalto", f.name) | first %}
@@ -295,6 +296,15 @@ _PAGE_TEMPLATE_SOURCE = r"""
             <input type="number" step="0.01"{% if f.required %} required{% endif %} placeholder="{{ f.placeholder }}" x-model.number="editing.{{ f.name }}">
             {% elif f.widget == "date" %}
             <input type="date"{% if f.required %} required{% endif %} x-model="editing.{{ f.name }}">
+            {% elif f.widget == "time" %}
+            <input type="time"{% if f.required %} required{% endif %} x-model="editing.{{ f.name }}">
+            {% elif f.widget == "select" and f.options %}
+            <select x-model="editing.{{ f.name }}">
+              <option value="">—</option>
+              {% for value, label in f.options %}
+              <option value="{{ value }}">{{ label }}</option>
+              {% endfor %}
+            </select>
             {% elif f.widget == "textarea" %}
             <textarea rows="2"{% if f.required %} required{% endif %} placeholder="{{ f.placeholder }}" x-model="editing.{{ f.name }}"></textarea>
             {% else %}
@@ -304,15 +314,63 @@ _PAGE_TEMPLATE_SOURCE = r"""
           {% endfor %}
         </div>
         {% endfor %}
+      {% endmacro %}
+
+      {% macro render_action_buttons(buttons) %}
+        {% if buttons %}
+        <div class="extra-actions" x-show="editing.id">
+          {% for btn in buttons %}
+          <button type="button" class="btn btn-ghost" @click="runAction('{{ btn.action }}')">{{ btn.label }}</button>
+          {% endfor %}
+        </div>
+        {% endif %}
+      {% endmacro %}
+
+      <div class="modal-body">
+        {% if not config.hierarchy %}
+        {% if config.form_tabs %}
+        <!-- Форма с вкладками (TableConfig.form_tabs) — переключение
+             внутри модалки без закрытия/перезагрузки, чистый Alpine
+             x-show по индексу activeFormTab (см. JS state). Введено
+             для calculation: "Основное" (поля документа) + "Настройки"
+             (шаблон полного названия + кнопка "Пересчитать название",
+             см. ActionButton) — переиспользуемо для любой будущей
+             таблицы движка с похожей потребностью, не хак под
+             calculation конкретно. -->
+        <div class="form-tabs-bar">
+          {% for tab in config.form_tabs %}
+          <button type="button" class="form-tab-btn" :class="{'form-tab-btn-active': activeFormTab === {{ loop.index0 }}}" @click="activeFormTab = {{ loop.index0 }}">{{ tab }}</button>
+          {% endfor %}
+        </div>
+        {% for tab in config.form_tabs %}
+        <div x-show="activeFormTab === {{ loop.index0 }}">
+          {{ render_form_rows(form_layout_by_tab[tab]) }}
+          {% if loop.first and config.computed_pairs %}
+          <div class="vat-note">↻ Пересчитывается автоматически при изменении одного из полей — можно переопределить вручную.</div>
+          {% endif %}
+          {{ render_action_buttons(action_buttons_by_tab.get(tab, [])) }}
+          {% if loop.first and config.extra_actions %}
+          <div class="extra-actions" x-show="editing.id">
+            {% for action_label in config.extra_actions %}
+            <button type="button" class="btn btn-ghost" disabled title="Пока недоступно">{{ action_label }}</button>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </div>
+        {% endfor %}
+        {% else %}
+        {{ render_form_rows(form_layout_by_tab['']) }}
         {% if config.computed_pairs %}
         <div class="vat-note">↻ Пересчитывается автоматически при изменении одного из полей — можно переопределить вручную.</div>
         {% endif %}
+        {{ render_action_buttons(action_buttons_by_tab.get('', [])) }}
         {% if config.extra_actions %}
         <div class="extra-actions" x-show="editing.id">
           {% for action_label in config.extra_actions %}
           <button type="button" class="btn btn-ghost" disabled title="Пока недоступно">{{ action_label }}</button>
           {% endfor %}
         </div>
+        {% endif %}
         {% endif %}
 
         {% else %}
@@ -567,6 +625,12 @@ function enginePage() {
     exactPrefix: false,
     modalOpen: false,
     editing: {},
+    // activeFormTab: индекс активной вкладки формы (0-based), только
+    // для таблиц с CONFIG.formTabs непустым (см. TableConfig.form_tabs) —
+    // сбрасывается на 0 при каждом openCreate()/openEdit(), чтобы форма
+    // всегда открывалась на первой вкладке ("Основное"), а не на той,
+    // что была активна в предыдущий раз, когда модалку закрыли.
+    activeFormTab: 0,
     // Начальная сортировка (v56) — из TableConfig.default_sort_field/
     // default_sort_dir, если задано (например request сортируется по
     // дате, новые сверху), иначе прежнее поведение (без сортировки).
@@ -705,6 +769,17 @@ function enginePage() {
       return found ? found[rel.display_field] : '';
     },
 
+    optionLabel(fieldName, value) {
+      // Русская подпись для полей со статичным списком опций
+      // (FieldConfig.options, например Calculation.status) — аналог
+      // relationName(), но без обращения к relationOptions/API, т.к.
+      // список опций целиком приходит уже в CONFIG.fields.
+      const f = this.currentLevel().fields.find(x => x.name === fieldName);
+      if (!f || !f.options) return value ?? '';
+      const found = f.options.find(([v]) => v === value);
+      return found ? found[1] : (value ?? '');
+    },
+
     onSearchFieldsChange() {
       try { this.page = 1; this.load(); } catch (err) { showJsError(err); }
     },
@@ -754,6 +829,13 @@ function enginePage() {
         if (this.sortBy) {
           params.set('sort_by', this.sortBy);
           params.set('sort_dir', this.sortDir);
+        } else if (CONFIG.defaultSortFields && CONFIG.defaultSortFields.length > 0) {
+          // Сортировка по нескольким полям сразу (например у calculation:
+          // сначала document_date, потом document_time — "новые сверху",
+          // см. TableConfig.default_sort_fields) — применяется только пока
+          // человек НЕ кликнул по заголовку колонки вручную (sortBy пуст);
+          // однополейный sortBy/sortDir выше имеет приоритет, как обычно.
+          params.set('sort_fields', JSON.stringify(CONFIG.defaultSortFields));
         }
         // drill-down: текущий узел дерева фильтруется по родителю —
         // id последнего элемента drillPath (родитель уровня, который
@@ -809,6 +891,14 @@ function enginePage() {
             const today = new Date();
             const pad = (n) => String(n).padStart(2, '0');
             blank[f.name] = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+          } else if (f.widget === 'time' && (f.default === null || f.default === undefined)) {
+            // time-поле без явного default (Calculation.document_time,
+            // v57) — та же логика, что и у date выше: подставляем
+            // текущее время сразу на фронте, бэкенд перепроверит своим
+            // default_factory через _normalize_time_fields в api.py.
+            const now = new Date();
+            const pad = (n) => String(n).padStart(2, '0');
+            blank[f.name] = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
           } else if (f.default !== null && f.default !== undefined) {
             blank[f.name] = f.default;
           } else {
@@ -825,6 +915,7 @@ function enginePage() {
         }
         this.editing = blank;
         this.modalOpen = true;
+        this.activeFormTab = 0;
         if (lvl.documentNumberField) {
           // Показываем человеку номер СРАЗУ при открытии формы, а не
           // только после сохранения — иначе поле выглядит "сломанным"
@@ -847,9 +938,28 @@ function enginePage() {
         hideJsError();
         this.editing = { ...item };
         this.modalOpen = true;
+        this.activeFormTab = 0;
         if (this.isItemsModal()) {
           this.loadKitItems();
         }
+      } catch (err) { showJsError(err); }
+    },
+
+    async runAction(action) {
+      // Вызывает именованное действие с реальной логикой на бэкенде
+      // (см. TableConfig.action_buttons/ActionButton в config.py) —
+      // отличие от extra_actions-заглушек в том, что здесь ЕСТЬ
+      // обработчик: POST /api/{key}/{id}/actions/{action}, результат
+      // подмешивается в открытую форму (editing) без закрытия модалки
+      // и без отдельного save() — человек видит эффект сразу и может
+      // поправить получившееся значение вручную перед сохранением.
+      try {
+        hideJsError();
+        if (!this.editing.id) return;
+        const res = await fetch(`/api/${this.currentLevel().key}/${this.editing.id}/actions/${action}`, { method: 'POST' });
+        if (!res.ok) { showJsError(await res.text()); return; }
+        const data = await res.json();
+        this.editing = { ...this.editing, ...data };
       } catch (err) { showJsError(err); }
     },
 
@@ -1168,6 +1278,10 @@ function enginePage() {
               const today = new Date();
               const pad = (n) => String(n).padStart(2, '0');
               copy[f.name] = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+            } else if (f.widget === 'time') {
+              const now = new Date();
+              const pad = (n) => String(n).padStart(2, '0');
+              copy[f.name] = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
             }
           }
           this.editing = copy;
@@ -1369,7 +1483,7 @@ function enginePage() {
 """
 
 
-def _build_form_layout(config: TableConfig) -> list[dict]:
+def _build_form_layout(config: TableConfig, tab: Optional[str] = None) -> list[dict]:
     """
     Строит готовую раскладку полей формы по рядам, вычисляемую ДО
     рендера — чтобы в шаблоне не было двух отдельных циклов (form_rows
@@ -1382,12 +1496,25 @@ def _build_form_layout(config: TableConfig) -> list[dict]:
     Если поле не входит ни в один form_row — эмитит как одиночный ряд.
     Поля с in_form=False пропускаются полностью.
 
+    tab: если config.form_tabs задан — строит раскладку ТОЛЬКО для
+    полей этой вкладки (f.tab == tab; поле без явного tab считается
+    принадлежащим первой вкладке — form_tabs[0]). None (или у таблицы
+    вообще нет вкладок) — раскладка строится по всем полям сразу, как
+    было раньше.
+
     Возвращает список {"fields": [FieldConfig, ...], "is_computed_pair": bool}.
     """
     computed_field_names = {p.field_a for p in config.computed_pairs} | {
         p.field_b for p in config.computed_pairs
     }
     fields_by_name = {f.name: f for f in config.fields}
+    default_tab = config.form_tabs[0] if config.form_tabs else None
+
+    def _field_tab(f: FieldConfig) -> Optional[str]:
+        return f.tab or default_tab
+
+    def _in_tab(f: FieldConfig) -> bool:
+        return tab is None or _field_tab(f) == tab
 
     row_of_field: dict[str, int] = {}
     for row_index, row in enumerate(config.form_rows):
@@ -1398,7 +1525,7 @@ def _build_form_layout(config: TableConfig) -> list[dict]:
     layout: list[dict] = []
 
     for f in config.fields:
-        if not f.in_form:
+        if not f.in_form or not _in_tab(f):
             continue
         if f.name in row_of_field:
             row_index = row_of_field[f.name]
@@ -1409,7 +1536,7 @@ def _build_form_layout(config: TableConfig) -> list[dict]:
             row_fields = [
                 fields_by_name[name]
                 for name in row_field_names
-                if name in fields_by_name and fields_by_name[name].in_form
+                if name in fields_by_name and fields_by_name[name].in_form and _in_tab(fields_by_name[name])
             ]
             is_pair = any(name in computed_field_names for name in row_field_names)
             layout.append({"fields": row_fields, "is_computed_pair": is_pair})
@@ -1438,6 +1565,8 @@ def _serialize_level_config(config: TableConfig) -> dict:
         "documentNumberField": config.document_number_field,
         "defaultSortField": config.default_sort_field,
         "defaultSortDir": config.default_sort_dir,
+        "defaultSortFields": [[f, d] for f, d in config.default_sort_fields],
+        "formTabs": config.form_tabs,
         "fields": [
             {
                 "name": f.name,
@@ -1447,6 +1576,7 @@ def _serialize_level_config(config: TableConfig) -> dict:
                 "required": f.required,
                 "virtual": f.virtual,
                 "widget": f.widget,
+                "options": f.options,
             }
             for f in config.fields
         ],
@@ -1494,6 +1624,7 @@ def _serialize_level_config(config: TableConfig) -> dict:
                 "virtual": f.virtual,
                 "sourceConstantKey": f.source_constant_key,
                 "isComputed": f.name in computed_field_names,
+                "options": f.options,
             }
             for f in config.fields if f.in_form
         ],
@@ -1588,7 +1719,21 @@ def render_table_page(config: TableConfig, jinja_env) -> str:
     else:
         config_json = json.dumps(_serialize_level_config(config) | {"hierarchyRoot": False}, ensure_ascii=False)
 
-    form_layout = _build_form_layout(config)
+    # form_layout_by_tab: если у таблицы заданы вкладки формы
+    # (config.form_tabs), строим отдельную раскладку рядов НА КАЖДУЮ
+    # вкладку — {"Основное": [...], "Настройки": [...]}. Без вкладок
+    # (form_tabs пуст, как у всех таблиц до calculation) — один "виртуальный"
+    # таб под ключом "" с полной раскладкой, как было раньше; шаблон
+    # определяет наличие вкладок по config.form_tabs, не по этому словарю.
+    if config.form_tabs:
+        form_layout_by_tab = {tab: _build_form_layout(config, tab=tab) for tab in config.form_tabs}
+    else:
+        form_layout_by_tab = {"": _build_form_layout(config)}
+    action_buttons_by_tab: dict[str, list] = {}
+    for btn in config.action_buttons:
+        key = btn.tab or (config.form_tabs[0] if config.form_tabs else "")
+        action_buttons_by_tab.setdefault(key, []).append(btn)
+
     toggleable_search_fields = config.toggleable_search_fields() if config.enable_search_toggles else []
     toggleable_search_relations = config.toggleable_search_relations() if config.enable_search_toggles else []
 
@@ -1596,7 +1741,8 @@ def render_table_page(config: TableConfig, jinja_env) -> str:
     return template.render(
         config=config,
         config_json=config_json,
-        form_layout=form_layout,
+        form_layout_by_tab=form_layout_by_tab,
+        action_buttons_by_tab=action_buttons_by_tab,
         computed_field_names=computed_field_names,
         toggleable_search_fields=toggleable_search_fields,
         toggleable_search_relations=toggleable_search_relations,

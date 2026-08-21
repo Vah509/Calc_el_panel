@@ -29,7 +29,7 @@ from typing import Any, Literal, Optional
 from sqlmodel import SQLModel
 
 
-FieldWidget = Literal["text", "number", "select", "date", "textarea"]
+FieldWidget = Literal["text", "number", "select", "date", "time", "textarea"]
 
 
 @dataclass
@@ -38,6 +38,15 @@ class FieldConfig:
     name: str                      # имя атрибута в модели, например "short_name"
     label: str                     # подпись на русском для формы/списка
     widget: FieldWidget = "text"
+    options: list[tuple[str, str]] = field(default_factory=list)
+                                    # Статичный список опций (value, label) для
+                                    # widget="select" БЕЗ связи с другой таблицей
+                                    # (в отличие от Relation — тот всегда ссылается
+                                    # на реальную справочную таблицу с id/name).
+                                    # Пример: Calculation.status — фиксированный
+                                    # набор ["draft","active",...], не таблица в БД.
+                                    # Пусто — поле либо не select, либо select
+                                    # управляется через Relation как раньше.
     required: bool = False
     placeholder: str = ""
     in_list: bool = True           # показывать в таблице списка
@@ -83,6 +92,14 @@ class FieldConfig:
                                     # «Спецификация» и «Пересчитать» рядом с
                                     # выбором бренда этого варианта — их логика
                                     # появится вместе с calculation.
+    tab: Optional[str] = None      # Если у TableConfig задан form_tabs — на какой
+                                    # вкладке формы показывается это поле (должно
+                                    # совпадать с одним из значений form_tabs). None
+                                    # (или form_tabs не задан у таблицы вообще) —
+                                    # поле рендерится как раньше, без вкладок.
+                                    # Поля без tab при заданном form_tabs попадают
+                                    # на первую вкладку по умолчанию (см.
+                                    # _build_form_layout в page.py).
 
 
 @dataclass
@@ -184,6 +201,27 @@ class FormRow:
     TableConfig.fields.
     """
     field_names: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ActionButton:
+    """Кнопка в теле модалки формы (рядом с extra_actions-заглушками),
+    но с РЕАЛЬНОЙ логикой — вызывает конкретный именованный action на
+    бэкенде вместо простого disabled-плейсхолдера. Пример: кнопка
+    «Пересчитать название» у calculation — вызывает
+    POST /api/{key}/{id}/actions/{action} (см. app/engine/api.py),
+    получает готовое full_name и подставляет в открытую форму без
+    закрытия модалки и без отдельного сохранения. Не путать с
+    TableConfig.extra_actions (список заголовков disabled-заглушек
+    без реального обработчика) — этот механизм для случаев, когда
+    логика уже реализована, но кнопка не является обычным save/delete."""
+    action: str                    # ключ действия, например "recalc_full_name" —
+                                    # используется и в URL, и как имя метода
+                                    # в JS (см. runAction() в page.py)
+    label: str                     # подпись кнопки
+    tab: Optional[str] = None      # на какой вкладке формы показывается
+                                    # (см. FieldConfig.tab) — None, если
+                                    # у таблицы нет вкладок вообще
 
 
 @dataclass
@@ -345,6 +383,42 @@ class TableConfig:
                                     # задаёт начальный порядок). None — порядок не
                                     # гарантирован (как было раньше у всех таблиц).
     default_sort_dir: Literal["asc", "desc"] = "asc"
+    default_sort_fields: list[tuple[str, Literal["asc", "desc"]]] = field(default_factory=list)
+                                    # Сортировка списка по НЕСКОЛЬКИМ полям сразу, по
+                                    # порядку значимости (например у calculation:
+                                    # сначала document_date desc, потом document_time
+                                    # desc — "новые сверху", но при одинаковой дате
+                                    # решает время). Если задано — используется ВМЕСТО
+                                    # default_sort_field/default_sort_dir (те остаются
+                                    # для обратной совместимости однополевого случая,
+                                    # не удаляю их, чтобы не трогать request). Пусто —
+                                    # ведёт себя как раньше, по одиночному полю.
+    form_tabs: list[str] = field(default_factory=list)
+                                    # Названия вкладок формы, например ["Основное",
+                                    # "Настройки"] — переключение без закрытия модалки.
+                                    # Пусто (по умолчанию) — форма рендерится как
+                                    # раньше, без вкладок, ничего не меняется у
+                                    # существующих таблиц. Заполнено — КАЖДОЕ поле
+                                    # формы должно иметь FieldConfig.tab, указывающий
+                                    # на одно из этих названий (поле без tab уходит на
+                                    # первую вкладку по умолчанию, см. _build_form_layout).
+    action_buttons: list["ActionButton"] = field(default_factory=list)
+                                    # Кнопки с реальной логикой в теле модалки (не
+                                    # disabled-заглушки, см. ActionButton). Показываются
+                                    # только у существующей записи (editing.id), как и
+                                    # extra_actions. Если form_tabs задан — каждая
+                                    # кнопка рендерится на своей ActionButton.tab.
+    action_handlers: dict[str, Any] = field(default_factory=dict)
+                                    # Обработчики для action_buttons — {action_key: fn},
+                                    # где fn(instance, session) -> dict с полями, которые
+                                    # нужно подмешать в открытую форму на фронте (см.
+                                    # POST /api/{key}/{id}/actions/{action} в engine/api.py
+                                    # и runAction() в engine/page.py). Функция сама решает,
+                                    # сохранять ли изменения в БД (session.add/commit) —
+                                    # движок этого не делает автоматически, т.к. разным
+                                    # кнопкам может понадобиться разное (например
+                                    # "Пересчитать название" у calculation сразу сохраняет
+                                    # instance.full_name в БД, не только возвращает его).
 
     def field_names(self) -> list[str]:
         """Имена полей, реально хранящихся в модели/БД — используется

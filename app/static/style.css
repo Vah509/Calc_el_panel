@@ -276,6 +276,12 @@ tbody tr:hover { background: #faf9f6; }
 .extra-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
 .extra-actions .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
 
+/* Вкладки формы (TableConfig.form_tabs) — переключение внутри модалки
+   без закрытия/перезагрузки, см. activeFormTab в page.py. */
+.form-tabs-bar { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--line); }
+.form-tab-btn { background: none; border: none; padding: 8px 14px; font-size: 14px; color: var(--ink-soft); cursor: pointer; border-bottom: 2px solid transparent; }
+.form-tab-btn-active { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+
 /* Кнопки-заглушки рядом с конкретным полем (FieldConfig.row_actions) —
    select занимает основную ширину, кнопки — справа от него в том же
    ряду. На узком экране (телефон) переносятся под select, не сжимая

@@ -18,7 +18,7 @@ from app.models.kit import Kit
 from app.models.kit_item import KitItem
 from app.models.client import Client
 from app.models.request import Request
-from app.models.calculation import Calculation
+from app.models.calculation import Calculation, DEFAULT_NAME_TEMPLATE
 from app.models.document_counter import DocumentCounter  # noqa: F401 — не таблица
 # движка (нет своего TableConfig/страницы), но должна быть импортирована
 # здесь, чтобы SQLModel.metadata.create_all() увидела её при старте
@@ -266,7 +266,7 @@ calculation_table = TableConfig(
                         "delete_pending": "#9c3b2e",
                     }),
         FieldConfig(name="name_template", label="Шаблон полного названия", widget="textarea",
-                    in_list=False, tab="Настройки",
+                    in_list=False, tab="Настройки", default=DEFAULT_NAME_TEMPLATE,
                     placeholder="Сборка {client_name}",
                     hint="Доступные вставки: {client_name} — рабочее название, "
                          "{brand_slot} — номер варианта (1/2/3), {request_number} — "

@@ -275,7 +275,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
             {% endif %}
             {% if rel %}
             <div class="field-with-actions">
-              <select x-model.number="editing.{{ f.name }}">
+              <select x-model.number="editing.{{ f.name }}"{% if f.on_change_action %} @change="runAction('{{ f.on_change_action }}')"{% endif %}>
                 <option :value="null">—</option>
                 <template x-for="opt in relationOptions['{{ f.name }}']" :key="opt.id">
                   <option :value="opt.id" x-text="opt['{{ rel.display_field }}']"></option>
@@ -671,6 +671,33 @@ const CLIENT_ACTIONS = {
     }
     return { full_name: result };
   },
+
+  // brand_slot_labels — вызывается автоматически и при открытии формы
+  // (см. openEdit()), и при каждой смене поля "Заявка" в открытой форме
+  // (см. on_change_action у request_id в config.py) — работает
+  // целиком на клиенте, без похода на сервер, поэтому одинаково и для
+  // новой, и для уже сохранённой калькуляции (решение Вахтанга
+  // 2026-08-22: в подавляющем большинстве случаев калькуляция делается
+  // на основании заявки, значит бренды нужно видеть сразу как заявка
+  // выбрана, а не только после сохранения). Требует TableConfig.
+  // extra_lookups=["brand"] у таблицы (полный список брендов уже в
+  // appState.relationOptions.brand — см. init() в page.py).
+  brand_slot_labels(editing, appState) {
+    const labels = {};
+    if (!editing.request_id) return { brand_slot_labels: labels };
+    const requests = (appState && appState.relationOptions && appState.relationOptions.request_id) || [];
+    const brands = (appState && appState.relationOptions && appState.relationOptions.brand) || [];
+    const req = requests.find(r => r.id === editing.request_id);
+    if (!req) return { brand_slot_labels: labels };
+    const slotFieldByNumber = { 1: 'brand_slot_1_id', 2: 'brand_slot_2_id', 3: 'brand_slot_3_id' };
+    for (const [slot, field] of Object.entries(slotFieldByNumber)) {
+      const brandId = req[field];
+      if (!brandId) continue;
+      const brand = brands.find(b => b.id === brandId);
+      if (brand) labels[slot] = brand.name;
+    }
+    return { brand_slot_labels: labels };
+  },
 };
 
 function enginePage() {
@@ -812,11 +839,22 @@ function enginePage() {
           this.relationOptions[rel.field] = data.items;
           this.activeFilters[rel.field] = null;
         }
+        for (const tableKey of (lvl.extraLookups || [])) {
+          // Дополнительный справочник БЕЗ формального relation-поля
+          // (см. TableConfig.extra_lookups) — ключ в relationOptions
+          // здесь это имя таблицы (tableKey), а не имя поля формы, в
+          // отличие от обычных relations выше; используется клиентской
+          // JS-логикой напрямую (например поиск бренда по id для
+          // подписи радиокнопки), не рендером <select>.
+          const res = await fetch('/api/' + tableKey + '?page_size=1000');
+          const data = await res.json();
+          this.relationOptions[tableKey] = data.items;
+        }
         // Подтягиваем constants, если таблице нужна хотя бы одна
         // "живая ссылка" — virtual-поле (например ставка НДС в
         // карточке материала) или computed pair со ставкой из
         // справочника, а не из собственного поля записи.
-        const needsConstants = lvl.fields.some(f => f.virtual) ||
+        const needsConstants = lvl.needsConstants || lvl.fields.some(f => f.virtual) ||
           lvl.computedPairs.some(p => p.rateConstantKey);
         if (needsConstants) {
           const res = await fetch('/api/constant?page_size=1000');
@@ -955,6 +993,13 @@ function enginePage() {
             // же самое на бэкенде как отдельная линия защиты, но здесь
             // правильнее не производить '' вообще).
             blank[f.name] = f.default ?? null;
+          } else if (f.defaultFromConstant && this.constants[f.defaultFromConstant] !== undefined) {
+            // Динамический default из справочника constant (см.
+            // FieldConfig.default_from_constant) — приоритетнее
+            // статичного f.default, но только если constant реально
+            // загружен и ключ там есть; иначе падаем на обычные ветки
+            // ниже (статичный default как fallback).
+            blank[f.name] = this.constants[f.defaultFromConstant];
           } else if (f.widget === 'date' && (f.default === null || f.default === undefined)) {
             // date-поле без явного default — подставляем сегодняшнюю
             // дату сразу на фронте (видно человеку сразу при открытии
@@ -1016,25 +1061,18 @@ function enginePage() {
           this.loadKitItems();
         }
         // Автозагрузка динамических подписей для radio-полей (см.
-        // FieldConfig.radio_labels_field в config.py) — переиспользует
-        // тот же именованный action-механизм, что и обычные кнопки
-        // (runAction()/action_handlers в api.py), но вызывается сразу
-        // при открытии формы, без клика человека. Пример: Calculation.
-        // brand_slot -> action "brand_slot_labels" подтягивает реальные
-        // названия брендов из связанной заявки. Молча пропускается,
-        // если у таблицы нет ни одного radio-поля с radio_labels_field
-        // (обычный случай для всех таблиц кроме calculation) — не
-        // делаем лишний запрос впустую.
+        // FieldConfig.radio_labels_field/radio_labels_action в
+        // config.py) — переиспользует runAction(), поэтому идёт по
+        // клиентскому пути без похода на сервер, если действие
+        // зарегистрировано в CLIENT_ACTIONS (см. page.py), иначе — по
+        // старому серверному пути. Вызывается сразу при открытии формы,
+        // без клика человека. Молча пропускается, если у таблицы нет ни
+        // одного radio-поля с radio_labels_action (обычный случай для
+        // всех таблиц кроме calculation).
         const lvl = this.currentLevel ? this.currentLevel() : null;
         const radioActions = lvl ? lvl.fields.filter(f => f.widget === 'radio' && f.radioLabelsAction) : [];
         for (const f of radioActions) {
-          try {
-            const res = await fetch(`/api/${lvl.key}/${item.id}/actions/${f.radioLabelsAction}`, { method: 'POST' });
-            if (res.ok) {
-              const data = await res.json();
-              this.editing = { ...this.editing, ...data };
-            }
-          } catch (err) { /* тихо игнорируем — статичный fallback-label из options всё равно покажется */ }
+          await this.runAction(f.radioLabelsAction);
         }
       } catch (err) { showJsError(err); }
     },
@@ -1676,6 +1714,8 @@ def _serialize_level_config(config: TableConfig) -> dict:
         "defaultSortField": config.default_sort_field,
         "defaultSortDir": config.default_sort_dir,
         "defaultSortFields": [[f, d] for f, d in config.default_sort_fields],
+        "needsConstants": config.needs_constants,
+        "extraLookups": config.extra_lookups,
         "formTabs": config.form_tabs,
         "fields": [
             {
@@ -1683,6 +1723,7 @@ def _serialize_level_config(config: TableConfig) -> dict:
                 "label": f.label,
                 "isNumeric": f.is_numeric,
                 "default": f.default,
+                "defaultFromConstant": f.default_from_constant,
                 "required": f.required,
                 "virtual": f.virtual,
                 "widget": f.widget,

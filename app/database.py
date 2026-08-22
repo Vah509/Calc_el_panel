@@ -160,6 +160,7 @@ def seed_constants() -> None:
     defaults = [
         ("vat_rate", "20", "Ставка НДС (%), используется при пересчёте цен материалов"),
         ("default_page_size", "100", "Максимальное число строк в списках"),
+        ("calculation_name_template", "Сборка {client_name}", "Шаблон названия калькуляции по умолчанию"),
     ]
     with Session(engine) as session:
         for key, value, description in defaults:

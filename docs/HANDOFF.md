@@ -1,5 +1,65 @@
 # HANDOFF
 
+## Состояние (актуально на v61)
+
+Две доработки по калькуляции (решения Вахтанга 2026-08-22):
+
+1. **Дефолтный шаблон названия — редактируется через справочник
+   constant**, не хардкодом в коде. Новое поле в /constant-v2:
+   "Шаблон названия калькуляции по умолчанию" (ключ
+   `calculation_name_template`, значение по умолчанию `"Сборка
+   {client_name}"`). Меняешь его один раз в constant — все НОВЫЕ
+   калькуляции подхватывают новое значение; уже созданные калькуляции
+   не трогаются (у каждой своё `name_template`, можно переопределить
+   локально прямо в форме на вкладке «Настройки»).
+2. **Названия брендов у радиокнопок "Вариант 1/2/3" подтягиваются
+   СРАЗУ, как только выбрана заявка** — не только при открытии уже
+   сохранённой калькуляции, но и в НОВОЙ записи, реактивно при каждой
+   смене поля «Заявка», без похода на сервер и без сохранения (в 99%
+   случаев калькуляция и делается на основании заявки — данные должны
+   быть видны сразу).
+
+## Сделано в этой сессии (2026-08-22 — v61: constant-шаблон + реактивные бренды)
+
+**Дефолт шаблона из constant:** `app/database.py` (`seed_constants()`
+— третья запись `calculation_name_template`, идемпотентно, не тронет
+существующие `vat_rate`/`default_page_size` на проде при следующем
+деплое), `app/engine/config.py` (`FieldConfig.default_from_constant`
+— имя ключа constant, приоритетнее статичного `default`, но требует
+`TableConfig.needs_constants=True`, иначе falls back на статичный
+`default`), `app/engine/page.py` (`openCreate()` проверяет
+`f.defaultFromConstant` в `this.constants` раньше остальных веток),
+`app/engine/tables.py` (`name_template` теперь
+`default_from_constant="calculation_name_template"`, статичный
+`default=DEFAULT_NAME_TEMPLATE` остаётся как fallback).
+
+**Реактивные бренды по заявке:** новый `TableConfig.extra_lookups:
+list[str]` (config.py) — грузит целиком доп. справочник (не формальное
+relation-поле) в `relationOptions[имя_таблицы]` при открытии страницы;
+`calculation_table` → `extra_lookups=["brand"]`. Новый
+`FieldConfig.on_change_action` — вызывает `runAction()` при каждом
+`@change` relation-select'а (`request_id` → `on_change_action=
+"brand_slot_labels"`, рендер `@change` добавлен в `render_form_rows`).
+`CLIENT_ACTIONS.brand_slot_labels` (page.py) — целиком клиентская
+версия: ищет выбранную заявку в `relationOptions.request_id`, берёт
+её `brand_slot_1/2/3_id`, ищет название в `relationOptions.brand`,
+работает без id и без сервера. `openEdit()` переведён на вызов через
+`runAction()` вместо прямого `fetch` — единая точка входа что для
+автозагрузки при открытии, что для реакции на смену заявки; серверный
+`_brand_slot_labels_handler`/`action_handlers` остаётся
+зарегистрированным как fallback, но кнопка/автозагрузка теперь на
+него не ходит.
+
+**Проверено (e2e):** все HTML-страницы движка рендерятся без ошибок
+Jinja; `/calculation-v2` содержит `@change="runAction('brand_slot_
+labels')"` на select "Заявка"; JSON-конфиг содержит `extraLookups:
+["brand"]`, `needsConstants: true`, `defaultFromConstant:
+"calculation_name_template"`; `GET /api/constant` возвращает новую
+константу с описанием "Шаблон названия калькуляции по умолчанию";
+создание калькуляции с шаблоном/полным названием проходит нормально.
+
+---
+
 ## Состояние (актуально на v60)
 
 Исправлен реальный баг v58/v59: для НОВОЙ калькуляции «Сформировать

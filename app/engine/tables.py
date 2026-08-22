@@ -221,6 +221,8 @@ calculation_table = TableConfig(
     document_prefix="K",
     default_sort_fields=[("document_date", "desc"), ("document_time", "desc")],
     form_tabs=["Основное", "Настройки"],
+    needs_constants=True,
+    extra_lookups=["brand"],
     action_buttons=[
         ActionButton(action="recalc_full_name", label="Сформировать название", tab="Основное",
                      client_side=True),
@@ -242,7 +244,7 @@ calculation_table = TableConfig(
         FieldConfig(name="document_time", label="Время", widget="time", list_width="90px", tab="Основное",
                     form_width="110px"),
         FieldConfig(name="request_id", label="Заявка", widget="select", list_width="18%", tab="Основное",
-                    form_width="140px"),
+                    form_width="140px", on_change_action="brand_slot_labels"),
         FieldConfig(name="client_name", label="Рабочее название", required=True, searchable=True,
                     search_default=True, list_width="22%", tab="Основное"),
         FieldConfig(name="full_name", label="Полное название", in_list=False, tab="Основное",
@@ -267,6 +269,7 @@ calculation_table = TableConfig(
                     }),
         FieldConfig(name="name_template", label="Шаблон полного названия", widget="textarea",
                     in_list=False, tab="Настройки", default=DEFAULT_NAME_TEMPLATE,
+                    default_from_constant="calculation_name_template",
                     placeholder="Сборка {client_name}",
                     hint="Доступные вставки: {client_name} — рабочее название, "
                          "{brand_slot} — номер варианта (1/2/3), {request_number} — "

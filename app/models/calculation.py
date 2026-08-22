@@ -65,9 +65,13 @@ def _now_time() -> time:
 
 # Дефолтный шаблон полного названия, подставляемый при создании новой
 # калькуляции (человек может тут же поправить под конкретный случай —
-# см. комментарий у name_template выше). Плейсхолдеры разбираются в
-# app/engine/name_template.py.
-DEFAULT_NAME_TEMPLATE = "Сборка {client_name}-{brand_slot}-{request_number}"
+# см. комментарий у name_template выше). Согласовано 2026-08-21:
+# "Сборка " + рабочее название (client_name), без brand_slot/
+# request_number по умолчанию — их можно добавить вручную при
+# необходимости, полный список плейсхолдеров см. в подсказке под
+# полем "Шаблон полного названия" в форме (FieldConfig.hint,
+# app/engine/tables.py) и в app/engine/name_template.py.
+DEFAULT_NAME_TEMPLATE = "Сборка {client_name}"
 
 
 class Calculation(SQLModel, table=True):

@@ -156,6 +156,8 @@ _PAGE_TEMPLATE_SOURCE = r"""
               <span x-text="constants['{{ f.source_constant_key }}'] ?? ''"></span>
               {% elif rel %}
               <span class="brand-badge" x-text="relationName('{{ f.name }}', item.{{ f.name }})"></span>
+              {% elif f.list_as_dot and f.options %}
+              <span class="status-dot" :style="{ background: {{ f.dot_colors|tojson }}[item.{{ f.name }}] || '#c9c6bd' }" :title="optionLabel('{{ f.name }}', item.{{ f.name }})"></span>
               {% elif f.options %}
               <span x-text="optionLabel('{{ f.name }}', item.{{ f.name }})"></span>
               {% elif f.is_numeric %}
@@ -263,6 +265,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
         <div{% if row.is_computed_pair %} class="price-pair"{% elif row.fields | length > 1 %} class="field-row"{% endif %}>
           {% for f in row.fields %}
           {% set rel = config.relations | selectattr("field", "equalto", f.name) | first %}
+          {% set inline_btn = config.action_buttons | selectattr("action", "equalto", f.inline_action) | first if f.inline_action else None %}
           <div class="field"{% if f.form_width %} style="flex: 0 0 {{ f.form_width }};"{% endif %}>
             {% set pair_as_b = config.computed_pairs | selectattr("field_b", "equalto", f.name) | selectattr("rate_constant_key") | first %}
             {% if pair_as_b %}
@@ -286,6 +289,13 @@ _PAGE_TEMPLATE_SOURCE = r"""
               </div>
               {% endif %}
             </div>
+            {% elif inline_btn %}
+            <div class="field-with-actions">
+              <input type="text"{% if f.required %} required{% endif %} placeholder="{{ f.placeholder }}" x-model="editing.{{ f.name }}">
+              <div class="row-actions">
+                <button type="button" class="btn btn-ghost btn-small" @click="runAction('{{ inline_btn.action }}')" :disabled="!editing.id" :title="editing.id ? '' : 'Сначала сохраните запись'">{{ inline_btn.label }}</button>
+              </div>
+            </div>
             {% elif f.virtual %}
             <span class="field-readonly-text" x-text="constants['{{ f.source_constant_key }}'] ?? ''"></span>
             {% elif f.readonly %}
@@ -305,10 +315,22 @@ _PAGE_TEMPLATE_SOURCE = r"""
               <option value="{{ value }}">{{ label }}</option>
               {% endfor %}
             </select>
+            {% elif f.widget == "radio" and f.options %}
+            <div class="radio-group">
+              {% for value, label in f.options %}
+              <label class="radio-option">
+                <input type="radio" name="{{ f.name }}" value="{{ value }}" x-model="editing.{{ f.name }}">
+                <span x-text="(editing.{{ f.radio_labels_field or '_none_' }} && editing.{{ f.radio_labels_field or '_none_' }}['{{ value }}']) || '{{ label }}'"></span>
+              </label>
+              {% endfor %}
+            </div>
             {% elif f.widget == "textarea" %}
             <textarea rows="2"{% if f.required %} required{% endif %} placeholder="{{ f.placeholder }}" x-model="editing.{{ f.name }}"></textarea>
             {% else %}
             <input type="text"{% if f.required %} required{% endif %} placeholder="{{ f.placeholder }}" x-model="editing.{{ f.name }}">
+            {% endif %}
+            {% if f.hint %}
+            <p class="field-hint">{{ f.hint }}</p>
             {% endif %}
           </div>
           {% endfor %}
@@ -317,9 +339,14 @@ _PAGE_TEMPLATE_SOURCE = r"""
       {% endmacro %}
 
       {% macro render_action_buttons(buttons) %}
-        {% if buttons %}
+        {# Кнопки, у которых есть поле с inline_action на них (см.
+           render_form_rows) уже отрисованы рядом со своим полем —
+           здесь не дублируем, показываем только "бесхозные" действия. #}
+        {% set inline_action_names = config.fields | selectattr("inline_action") | map(attribute="inline_action") | list %}
+        {% set standalone = buttons | rejectattr("action", "in", inline_action_names) | list %}
+        {% if standalone %}
         <div class="extra-actions" x-show="editing.id">
-          {% for btn in buttons %}
+          {% for btn in standalone %}
           <button type="button" class="btn btn-ghost" @click="runAction('{{ btn.action }}')">{{ btn.label }}</button>
           {% endfor %}
         </div>
@@ -874,6 +901,13 @@ function enginePage() {
         const relationFieldNames = new Set(lvl.relations.map(r => r.field));
         const blank = {};
         for (const f of lvl.fields) {
+          if (f.inForm === false) {
+            // Поле не показывается в форме (например Calculation.status
+            // — статус проставляется точкой в списке, не полем формы) —
+            // не отправляем на сервер вообще, чтобы сработал
+            // default модели/default_factory, а не пустая строка.
+            continue;
+          }
           if (relationFieldNames.has(f.name)) {
             // relation-поле (select, ссылка на другую таблицу) — блан
             // должен быть null, не '', иначе на Postgres (прод) пустая
@@ -933,7 +967,7 @@ function enginePage() {
       } catch (err) { showJsError(err); }
     },
 
-    openEdit(item) {
+    async openEdit(item) {
       try {
         hideJsError();
         this.editing = { ...item };
@@ -941,6 +975,27 @@ function enginePage() {
         this.activeFormTab = 0;
         if (this.isItemsModal()) {
           this.loadKitItems();
+        }
+        // Автозагрузка динамических подписей для radio-полей (см.
+        // FieldConfig.radio_labels_field в config.py) — переиспользует
+        // тот же именованный action-механизм, что и обычные кнопки
+        // (runAction()/action_handlers в api.py), но вызывается сразу
+        // при открытии формы, без клика человека. Пример: Calculation.
+        // brand_slot -> action "brand_slot_labels" подтягивает реальные
+        // названия брендов из связанной заявки. Молча пропускается,
+        // если у таблицы нет ни одного radio-поля с radio_labels_field
+        // (обычный случай для всех таблиц кроме calculation) — не
+        // делаем лишний запрос впустую.
+        const lvl = this.currentLevel ? this.currentLevel() : null;
+        const radioActions = lvl ? lvl.fields.filter(f => f.widget === 'radio' && f.radioLabelsAction) : [];
+        for (const f of radioActions) {
+          try {
+            const res = await fetch(`/api/${lvl.key}/${item.id}/actions/${f.radioLabelsAction}`, { method: 'POST' });
+            if (res.ok) {
+              const data = await res.json();
+              this.editing = { ...this.editing, ...data };
+            }
+          } catch (err) { /* тихо игнорируем — статичный fallback-label из options всё равно покажется */ }
         }
       } catch (err) { showJsError(err); }
     },
@@ -955,7 +1010,10 @@ function enginePage() {
       // поправить получившееся значение вручную перед сохранением.
       try {
         hideJsError();
-        if (!this.editing.id) return;
+        if (!this.editing.id) {
+          showJsError('Сначала сохраните запись — действие доступно только для уже сохранённых.');
+          return;
+        }
         const res = await fetch(`/api/${this.currentLevel().key}/${this.editing.id}/actions/${action}`, { method: 'POST' });
         if (!res.ok) { showJsError(await res.text()); return; }
         const data = await res.json();
@@ -1577,6 +1635,11 @@ def _serialize_level_config(config: TableConfig) -> dict:
                 "virtual": f.virtual,
                 "widget": f.widget,
                 "options": f.options,
+                "radioLabelsField": f.radio_labels_field,
+                "radioLabelsAction": f.radio_labels_action,
+                "listAsDot": f.list_as_dot,
+                "dotColors": f.dot_colors,
+                "inForm": f.in_form,
             }
             for f in config.fields
         ],
@@ -1625,6 +1688,9 @@ def _serialize_level_config(config: TableConfig) -> dict:
                 "sourceConstantKey": f.source_constant_key,
                 "isComputed": f.name in computed_field_names,
                 "options": f.options,
+                "radioLabelsField": f.radio_labels_field,
+                "hint": f.hint,
+                "inlineAction": f.inline_action,
             }
             for f in config.fields if f.in_form
         ],

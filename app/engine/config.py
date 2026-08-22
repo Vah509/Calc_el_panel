@@ -29,7 +29,7 @@ from typing import Any, Literal, Optional
 from sqlmodel import SQLModel
 
 
-FieldWidget = Literal["text", "number", "select", "date", "time", "textarea"]
+FieldWidget = Literal["text", "number", "select", "date", "time", "textarea", "radio"]
 
 
 @dataclass
@@ -40,13 +40,45 @@ class FieldConfig:
     widget: FieldWidget = "text"
     options: list[tuple[str, str]] = field(default_factory=list)
                                     # Статичный список опций (value, label) для
-                                    # widget="select" БЕЗ связи с другой таблицей
-                                    # (в отличие от Relation — тот всегда ссылается
-                                    # на реальную справочную таблицу с id/name).
-                                    # Пример: Calculation.status — фиксированный
-                                    # набор ["draft","active",...], не таблица в БД.
-                                    # Пусто — поле либо не select, либо select
+                                    # widget="select"/"radio" БЕЗ связи с другой
+                                    # таблицей (в отличие от Relation — тот всегда
+                                    # ссылается на реальную справочную таблицу с
+                                    # id/name). Пример: Calculation.status —
+                                    # фиксированный набор ["draft","active",...],
+                                    # не таблица в БД. Для widget="radio" label
+                                    # каждой опции — ЗАГЛУШКА на случай, если
+                                    # динамическая подпись не подтянется (см.
+                                    # radio_labels_field ниже) — например
+                                    # Calculation.brand_slot использует
+                                    # ("1","Вариант 1") как fallback, пока не
+                                    # подтянуто название бренда из заявки. Пусто —
+                                    # поле либо не select/radio, либо select
                                     # управляется через Relation как раньше.
+    radio_labels_field: Optional[str] = None
+                                    # Только для widget="radio": имя ключа в
+                                    # editing (на фронте), где лежит СЛОВАРЬ
+                                    # {value: label} с динамическими подписями.
+                                    # Если подписи для конкретного value нет в
+                                    # этом словаре (или radio_labels_field вообще
+                                    # не задан) — используется статичный label
+                                    # из options. None — radio-поле показывает
+                                    # только статичные options-подписи.
+    radio_labels_action: Optional[str] = None
+                                    # Имя action (ключ в TableConfig.
+                                    # action_handlers) — вызывается АВТОМАТИЧЕСКИ
+                                    # при открытии формы существующей записи (см.
+                                    # openEdit() в page.py), без клика человека,
+                                    # результат подмешивается в editing тем же
+                                    # способом, что и обычная ActionButton.
+                                    # Используется вместе с radio_labels_field —
+                                    # обработчик должен вернуть {radio_labels_
+                                    # field: {value: label, ...}}. Пример:
+                                    # Calculation.brand_slot ->
+                                    # radio_labels_action="brand_slot_labels" —
+                                    # подтягивает реальные названия брендов из
+                                    # связанной заявки. None — подписи не
+                                    # подгружаются автоматически, используется
+                                    # только статичный fallback из options.
     required: bool = False
     placeholder: str = ""
     in_list: bool = True           # показывать в таблице списка
@@ -92,6 +124,48 @@ class FieldConfig:
                                     # «Спецификация» и «Пересчитать» рядом с
                                     # выбором бренда этого варианта — их логика
                                     # появится вместе с calculation.
+    list_as_dot: bool = False      # Только для select-полей со статичными
+                                    # options (widget="select"/"radio"): в списке
+                                    # показывать не текст значения, а цветную
+                                    # точку (аналог is_deleted status-dot) с
+                                    # подписью значения во всплывающей подсказке
+                                    # (title), а не отдельной текстовой колонкой.
+                                    # Цвет точки берётся по value через
+                                    # dot_colors. Пример: Calculation.status —
+                                    # компактнее текстовой колонки, особенно на
+                                    # телефоне. False — поле рендерится в списке
+                                    # как обычно (см. f.options -> optionLabel()).
+    dot_colors: dict[str, str] = field(default_factory=dict)
+                                    # Только вместе с list_as_dot=True: явное
+                                    # сопоставление value -> CSS-цвет точки
+                                    # (например {"draft": "#9c9c94", "active":
+                                    # "#3f7d4f", ...}). Значение без записи в
+                                    # словаре получает нейтральный цвет по
+                                    # умолчанию (см. page.py).
+    hint: str = ""                 # Короткая пояснительная строка, показанная
+                                    # СРАЗУ ПОД полем в форме (серым, мельче
+                                    # обычного текста) — например список доступных
+                                    # плейсхолдеров под полем name_template, чтобы
+                                    # не нужно было держать их в голове при вводе.
+                                    # Пусто — подсказка не показывается.
+    inline_action: Optional[str] = None
+                                    # Имя действия (совпадает с
+                                    # ActionButton.action из TableConfig.
+                                    # action_buttons) — если задано, кнопка с
+                                    # РЕАЛЬНЫМ обработчиком (не disabled-заглушка,
+                                    # в отличие от row_actions) рендерится СРАЗУ
+                                    # за этим полем в том же ряду формы, компактно,
+                                    # справа. Кнопка вызывает тот же runAction(),
+                                    # что и обычная ActionButton на вкладке — этим
+                                    # полем управляется только ЕЁ РАСПОЛОЖЕНИЕ
+                                    # (рядом с конкретным полем вместо отдельного
+                                    # блока под вкладкой целиком). Пример:
+                                    # Calculation.full_name -> inline_action=
+                                    # "recalc_full_name" — кнопка «Пересчитать
+                                    # название» стоит в одном ряду с полем
+                                    # «Полное название». Если задано — эта
+                                    # ActionButton НЕ дублируется отдельным блоком
+                                    # под вкладкой (см. render_action_buttons).
     tab: Optional[str] = None      # Если у TableConfig задан form_tabs — на какой
                                     # вкладке формы показывается это поле (должно
                                     # совпадать с одним из значений form_tabs). None

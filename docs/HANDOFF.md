@@ -1,22 +1,70 @@
 # HANDOFF
 
-## Состояние (актуально на v57)
+## Состояние (актуально на v58)
 
-Появилась `calculation` (калькуляция) — второй документ цепочки
-zayavka → calculation → specification → invoice. Пока только "шапка"
-документа (без состава — calculation_item будет следующим шагом).
-Страница `/calculation-v2`, пункт меню «Документы» → «Калькуляции».
+Форма calculation доработана по итогам разбора скриншотов прототипа
+(2026-08-22): номер/дата/время в одну компактную строку; кнопка
+«Пересчитать название» перенесена на вкладку «Основное», в один ряд с
+полем «Полное название» (была на «Настройки», отдельным блоком);
+«Вариант (слот бренда)» — три радиокнопки с реальными названиями
+брендов, подтянутыми из связанной заявки (не голые цифры 1/2/3); поле
+«Статус» убрано из формы совсем — в списке показывается цветной точкой
+(аналог is_deleted, но с 4 цветами по значению status); дефолт
+`name_template` упрощён до `"Сборка {client_name}"`; под полем шаблона
+на «Настройки» — подсказка с доступными плейсхолдерами. Также
+исправлено: кнопка «Пересчитать название» раньше молча ничего не
+делала на несохранённой записи — теперь показывает понятное
+сообщение вместо тишины.
 
-Движок получил три новые универсальные фичи (не хаки под calculation):
-вкладки формы (`TableConfig.form_tabs`/`FieldConfig.tab`), кнопки с
-реальной логикой в теле модалки (`TableConfig.action_buttons`/
-`action_handlers`, в отличие от `extra_actions` — это просто
-disabled-заглушки) и статичный список опций для select без связи с
-другой таблицей (`FieldConfig.options`, например статус). Виджет
-`widget="time"` — по аналогии с `"date"`. Сортировка списка по
-нескольким полям сразу — `TableConfig.default_sort_fields`.
+Движок получил новые универсальные фичи (не хаки под calculation):
+`widget="radio"` с опциональной динамической подгрузкой подписей
+(`FieldConfig.radio_labels_field`/`radio_labels_action` — action
+вызывается автоматически при открытии формы, не по клику);
+`FieldConfig.list_as_dot`/`dot_colors` — любое select-поле может
+показываться в списке цветной точкой вместо текста; `FieldConfig.hint`
+— короткая подсказка под полем формы; `FieldConfig.inline_action` —
+любую ActionButton можно поставить в ряд конкретного поля вместо
+отдельного блока под вкладкой.
 
-## Сделано в этой сессии (2026-08-21 — v57: calculation, шапка документа)
+## Сделано в этой сессии (2026-08-22 — v58: правки формы calculation)
+
+Файлы: `app/engine/config.py` (`FieldWidget +"radio"`, `FieldConfig.
+radio_labels_field/radio_labels_action/list_as_dot/dot_colors/hint/
+inline_action`), `app/engine/page.py` (рендер radio/hint/inline-кнопки
+в форме, точка-статус в списке, `openEdit` теперь `async` и подтягивает
+`radio_labels_action` при открытии, `runAction` даёт понятное сообщение
+вместо тихого выхода на несохранённой записи, `openCreate` пропускает
+`in_form=False` поля вместо отправки пустой строки), `app/engine/
+tables.py` (`calculation_table` — form_rows/radio/dot/hint/
+inline_action, новый обработчик `_brand_slot_labels_handler`),
+`app/models/calculation.py` (`DEFAULT_NAME_TEMPLATE` упрощён),
+`app/static/style.css` (`.radio-group`/`.radio-option`,
+`.field-with-actions input`).
+
+**Важно про `in_form=False` (нашли и закрыли реальный баг класса):**
+`openCreate()`/`copySelected()` раньше проходили по ВСЕМ полям таблицы
+независимо от `in_form`, включая скрытые (`status` у calculation) —
+это отправляло на сервер `status: ""` вместо того, чтобы дать
+сработать `default="draft"` модели. Теперь `openCreate()` явно
+пропускает поля с `in_form=False`. Стоит перепроверить на будущих
+in_form=False полях у других таблиц, если такие появятся.
+
+**Проверено вручную (TestClient, e2e):** создание заявки с брендами →
+создание калькуляции на её основе → `POST .../actions/
+brand_slot_labels` вернул реальные названия брендов → выставление
+`brand_slot` → `POST .../actions/recalc_full_name` корректно посчитал
+`full_name` из `name_template`. Все HTML-страницы движка (`calculation-
+v2`, `request-v2`, `material-v2`, `kit_group-v2`, `brand-v2`)
+рендерятся без ошибок Jinja после правок макросов.
+
+**Не тронуто в этом шаге (сознательно, отдельные задачи):**
+автоподстановка `request_id` при создании калькуляции с карточки
+заявки (по-прежнему выбирается вручную из списка); MaterialPicker;
+calculation_item.
+
+---
+
+## Сделано в сессии 2026-08-21 — v57: calculation, шапка документа
 
 Реализована модель `Calculation` и таблица `calculation_table` —
 второй документ цепочки. Поля: `request_id` (FK на request, nullable —

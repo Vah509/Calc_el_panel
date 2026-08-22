@@ -158,6 +158,37 @@ def _recalc_full_name_handler(instance: Calculation, session) -> dict:
     return {"full_name": instance.full_name}
 
 
+def _brand_slot_labels_handler(instance: Calculation, session) -> dict:
+    """Обработчик, вызываемый ПРИ ОТКРЫТИИ формы редактирования
+    (openEdit() -> runAction() в page.py), а не по клику на кнопку —
+    подтягивает реальные названия трёх брендов из СВЯЗАННОЙ заявки
+    (Request.brand_slot_1/2/3_id), чтобы радиокнопки "Вариант (слот
+    бренда)" показывали не голые цифры 1/2/3, а название бренда
+    каждого варианта (решение Вахтанга 2026-08-21: калькуляция всегда
+    создаётся на основании заявки, значит данные уже доступны).
+    Возвращает {"1": "...", "2": "...", "3": "..."} — только для
+    слотов, где бренд в заявке реально выбран; отсутствующий ключ
+    даёт статичный fallback-label из FieldConfig.options на фронте
+    (см. radio_labels_field). Пустой словарь, если заявка не привязана
+    (request_id пуст) или бренд ни в одном слоте не выбран."""
+    from app.models.request import Request
+    from app.models.brand import Brand
+    labels: dict[str, str] = {}
+    if instance.request_id:
+        req = session.get(Request, instance.request_id)
+        if req:
+            for slot, brand_id in (
+                (1, req.brand_slot_1_id),
+                (2, req.brand_slot_2_id),
+                (3, req.brand_slot_3_id),
+            ):
+                if brand_id:
+                    brand = session.get(Brand, brand_id)
+                    if brand:
+                        labels[str(slot)] = brand.name
+    return {"brand_slot_labels": labels}
+
+
 # Калькуляция (calculation) — второй документ цепочки zayavka ->
 # calculation -> specification -> invoice. Этот шаг — только "шапка"
 # документа, без состава (calculation_item — следующий шаг). См.
@@ -187,31 +218,54 @@ calculation_table = TableConfig(
     default_sort_fields=[("document_date", "desc"), ("document_time", "desc")],
     form_tabs=["Основное", "Настройки"],
     action_buttons=[
-        ActionButton(action="recalc_full_name", label="Пересчитать название", tab="Настройки"),
+        ActionButton(action="recalc_full_name", label="Пересчитать название", tab="Основное"),
+        # brand_slot_labels — НЕ показывается как кнопка (нет ActionButton
+        # с этим action в списке выше нарочно): вызывается автоматически
+        # при открытии формы (см. openEdit() в page.py), а не по клику
+        # человека. Регистрация только в action_handlers ниже достаточна
+        # для работы POST /api/calculation/{id}/actions/brand_slot_labels.
     ],
     action_handlers={
         "recalc_full_name": _recalc_full_name_handler,
+        "brand_slot_labels": _brand_slot_labels_handler,
     },
     fields=[
-        FieldConfig(name="document_number", label="Номер", list_width="90px", tab="Основное"),
-        FieldConfig(name="document_date", label="Дата", widget="date", list_width="110px", tab="Основное"),
-        FieldConfig(name="document_time", label="Время", widget="time", list_width="90px", tab="Основное"),
-        FieldConfig(name="request_id", label="Заявка", widget="select", list_width="18%", tab="Основное"),
+        FieldConfig(name="document_number", label="Номер", list_width="90px", tab="Основное",
+                    form_width="120px"),
+        FieldConfig(name="document_date", label="Дата", widget="date", list_width="110px", tab="Основное",
+                    form_width="140px"),
+        FieldConfig(name="document_time", label="Время", widget="time", list_width="90px", tab="Основное",
+                    form_width="110px"),
+        FieldConfig(name="request_id", label="Заявка", widget="select", list_width="18%", tab="Основное",
+                    form_width="140px"),
         FieldConfig(name="client_name", label="Рабочее название", required=True, searchable=True,
                     search_default=True, list_width="22%", tab="Основное"),
-        FieldConfig(name="full_name", label="Полное название", in_list=False, tab="Основное"),
-        FieldConfig(name="brand_slot", label="Вариант (слот бренда)", widget="number",
-                    is_numeric=True, list_width="90px", tab="Основное"),
-        FieldConfig(name="status", label="Статус", widget="select", list_width="130px", tab="Основное",
+        FieldConfig(name="full_name", label="Полное название", in_list=False, tab="Основное",
+                    inline_action="recalc_full_name"),
+        FieldConfig(name="brand_slot", label="Вариант (слот бренда)", widget="radio",
+                    list_width="90px", tab="Основное",
+                    radio_labels_field="brand_slot_labels", radio_labels_action="brand_slot_labels",
+                    options=[("1", "Вариант 1"), ("2", "Вариант 2"), ("3", "Вариант 3")]),
+        FieldConfig(name="status", label="Статус", widget="select", list_width="46px", tab="Основное",
+                    in_form=False, list_as_dot=True,
                     options=[
                         ("draft", "Черновик"),
                         ("active", "Активна"),
                         ("archived_pending", "К архивации"),
                         ("delete_pending", "К удалению"),
-                    ]),
+                    ],
+                    dot_colors={
+                        "draft": "#9c9c94",
+                        "active": "#3f7d4f",
+                        "archived_pending": "#b8862f",
+                        "delete_pending": "#9c3b2e",
+                    }),
         FieldConfig(name="name_template", label="Шаблон полного названия", widget="textarea",
                     in_list=False, tab="Настройки",
-                    placeholder="Сборка {client_name}-{brand_slot}-{request_number}"),
+                    placeholder="Сборка {client_name}",
+                    hint="Доступные вставки: {client_name} — рабочее название, "
+                         "{brand_slot} — номер варианта (1/2/3), {request_number} — "
+                         "номер связанной заявки. Например: Сборка {client_name}"),
     ],
     relations=[
         Relation(field="request_id", target_table="request", display_field="document_number", label="Заявка",

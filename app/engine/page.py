@@ -293,7 +293,11 @@ _PAGE_TEMPLATE_SOURCE = r"""
             <div class="field-with-actions">
               <input type="text"{% if f.required %} required{% endif %} placeholder="{{ f.placeholder }}" x-model="editing.{{ f.name }}">
               <div class="row-actions">
+                {% if inline_btn.client_side %}
+                <button type="button" class="btn btn-ghost btn-small" @click="runAction('{{ inline_btn.action }}')">{{ inline_btn.label }}</button>
+                {% else %}
                 <button type="button" class="btn btn-ghost btn-small" @click="runAction('{{ inline_btn.action }}')" :disabled="!editing.id" :title="editing.id ? '' : 'Сначала сохраните запись'">{{ inline_btn.label }}</button>
+                {% endif %}
               </div>
             </div>
             {% elif f.virtual %}
@@ -345,9 +349,9 @@ _PAGE_TEMPLATE_SOURCE = r"""
         {% set inline_action_names = config.fields | selectattr("inline_action") | map(attribute="inline_action") | list %}
         {% set standalone = buttons | rejectattr("action", "in", inline_action_names) | list %}
         {% if standalone %}
-        <div class="extra-actions" x-show="editing.id">
+        <div class="extra-actions">
           {% for btn in standalone %}
-          <button type="button" class="btn btn-ghost" @click="runAction('{{ btn.action }}')">{{ btn.label }}</button>
+          <button type="button" class="btn btn-ghost" @click="runAction('{{ btn.action }}')"{% if not btn.client_side %} x-show="editing.id"{% endif %}>{{ btn.label }}</button>
           {% endfor %}
         </div>
         {% endif %}
@@ -633,6 +637,41 @@ function applyFormula(formulaName, direction, value, rate) {
   if (!formula) { showJsError('Неизвестная формула: ' + formulaName); return value; }
   return formula[direction](value, rate);
 }
+
+// Клиентские action-обработчики (см. ActionButton.client_side в
+// config.py) — считают результат ЦЕЛИКОМ в браузере, без похода на
+// сервер, поэтому работают и для ещё НЕ сохранённой записи (нет
+// editing.id). Каждая функция(editing, appState) -> patch-объект,
+// подмешиваемый в editing, или null/undefined, если менять нечего.
+//
+// recalc_full_name — зеркало app/engine/name_template.py::
+// render_name_template() на бэкенде. ДЕРЖАТЬ В СИНХРОНЕ: тот же набор
+// плейсхолдеров, та же логика подстановки. Номер связанной заявки
+// берётся не отдельным запросом к серверу, а из уже загруженного
+// relationOptions['request_id'] (тот же список, что показывается в
+// <select> поля "Заявка") — это единственная причина, по которой
+// appState передаётся вторым аргументом.
+const CLIENT_ACTIONS = {
+  recalc_full_name(editing, appState) {
+    const template = editing.name_template || '';
+    let requestNumber = '';
+    if (editing.request_id) {
+      const requests = (appState && appState.relationOptions && appState.relationOptions.request_id) || [];
+      const req = requests.find(r => r.id === editing.request_id);
+      if (req) requestNumber = req.document_number || '';
+    }
+    const values = {
+      client_name: editing.client_name || '',
+      brand_slot: editing.brand_slot ? String(editing.brand_slot) : '',
+      request_number: requestNumber,
+    };
+    let result = template;
+    for (const key of Object.keys(values)) {
+      result = result.split('{' + key + '}').join(values[key]);
+    }
+    return { full_name: result };
+  },
+};
 
 function enginePage() {
   const CONFIG = {{ config_json | safe }};
@@ -1001,15 +1040,28 @@ function enginePage() {
     },
 
     async runAction(action) {
-      // Вызывает именованное действие с реальной логикой на бэкенде
-      // (см. TableConfig.action_buttons/ActionButton в config.py) —
-      // отличие от extra_actions-заглушек в том, что здесь ЕСТЬ
-      // обработчик: POST /api/{key}/{id}/actions/{action}, результат
-      // подмешивается в открытую форму (editing) без закрытия модалки
-      // и без отдельного save() — человек видит эффект сразу и может
-      // поправить получившееся значение вручную перед сохранением.
+      // Вызывает именованное действие с реальной логикой — либо
+      // ЦЕЛИКОМ в браузере (CLIENT_ACTIONS, см. ниже — action
+      // помечен client_side=True в TableConfig.action_buttons),
+      // либо на бэкенде (см. TableConfig.action_handlers в
+      // config.py): POST /api/{key}/{id}/actions/{action}, результат
+      // подмешивается в открытую форму (editing) без закрытия
+      // модалки и без отдельного save() — человек видит эффект сразу
+      // и может поправить получившееся значение вручную перед
+      // сохранением.
       try {
         hideJsError();
+        const clientFn = CLIENT_ACTIONS[action];
+        if (clientFn) {
+          // Клиентское действие — не требует editing.id, работает
+          // одинаково и для новой, и для уже сохранённой записи (см.
+          // FieldConfig.hint у name_template и решение Вахтанга
+          // 2026-08-22 — "Сформировать название" должно работать
+          // сразу, без обязательного сохранения).
+          const patch = clientFn(this.editing, this);
+          if (patch) this.editing = { ...this.editing, ...patch };
+          return;
+        }
         if (!this.editing.id) {
           showJsError('Сначала сохраните запись — действие доступно только для уже сохранённых.');
           return;

@@ -143,13 +143,17 @@ request_table = TableConfig(
 
 
 def _recalc_full_name_handler(instance: Calculation, session) -> dict:
-    """Обработчик кнопки «Пересчитать название» (ActionButton, вкладка
-    «Настройки») — собирает full_name из instance.name_template и
-    текущих значений полей (client_name/brand_slot/номер связанной
-    заявки), СРАЗУ сохраняет результат в БД (в отличие от простого
-    предпросмотра — Вахтанг ожидает, что после нажатия кнопки
-    результат уже записан, а не только показан в форме) и возвращает
-    его фронту для подмешивания в открытую форму без перезагрузки."""
+    """Серверная версия сборки full_name — НЕ используется напрямую
+    кнопкой формы (см. ActionButton(client_side=True) в
+    calculation_table ниже — с 2026-08-22 кнопка «Сформировать
+    название» считает результат в браузере, см. CLIENT_ACTIONS.
+    recalc_full_name в app/engine/page.py, чтобы работать и для ещё не
+    сохранённой записи). Оставлен зарегистрированным в
+    action_handlers на случай будущей серверной надобности (например
+    массовый пересчёт нескольких записей сразу) — сам по себе
+    достижим через POST /api/calculation/{id}/actions/recalc_full_name
+    для уже сохранённой записи, просто кнопка UI туда больше не
+    ходит."""
     from app.engine.name_template import build_full_name_for_calculation
     instance.full_name = build_full_name_for_calculation(session, instance)
     session.add(instance)
@@ -218,7 +222,8 @@ calculation_table = TableConfig(
     default_sort_fields=[("document_date", "desc"), ("document_time", "desc")],
     form_tabs=["Основное", "Настройки"],
     action_buttons=[
-        ActionButton(action="recalc_full_name", label="Пересчитать название", tab="Основное"),
+        ActionButton(action="recalc_full_name", label="Сформировать название", tab="Основное",
+                     client_side=True),
         # brand_slot_labels — НЕ показывается как кнопка (нет ActionButton
         # с этим action в списке выше нарочно): вызывается автоматически
         # при открытии формы (см. openEdit() в page.py), а не по клику

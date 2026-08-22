@@ -59,9 +59,16 @@ _PAGE_TEMPLATE_SOURCE = r"""
   <div class="selection-bar" x-show="selectedIds.length > 0" x-cloak>
     <span x-text="selectedIds.length + ' выделено'"></span>
     <button type="button" class="btn" :disabled="selectedIds.length !== 1" @click="copySelected()">Копировать</button>
+    {% if config.create_child_document_url %}
+    <button type="button" class="btn" :disabled="selectedIds.length !== 1" @click="createChildDocument()">{{ config.child_document_actions[0] }}</button>
+    {% for action_label in config.child_document_actions[1:] %}
+    <button type="button" class="btn" disabled title="Пока недоступно">{{ action_label }}</button>
+    {% endfor %}
+    {% else %}
     {% for action_label in config.child_document_actions %}
     <button type="button" class="btn" disabled title="Пока недоступно">{{ action_label }}</button>
     {% endfor %}
+    {% endif %}
     {% if config.delete_mode == "soft" %}
     <button type="button" class="btn" @click="bulkMarkDelete(true)">Пометить на удаление</button>
     <button type="button" class="btn" @click="bulkMarkDelete(false)">Снять пометку</button>
@@ -862,7 +869,32 @@ function enginePage() {
           for (const row of data.items) { this.constants[row.key] = row.value; }
         }
         await this.load();
+        await this.maybeOpenFromRequest();
       } catch (err) { showJsError(err); }
+    },
+
+    async maybeOpenFromRequest() {
+      // Подхватывает ?from_request={id} в адресе страницы (v62) —
+      // редирект сюда делает createChildDocument() со страницы заявок
+      // ("Создать документ на основании"). Работает для ЛЮБОЙ таблицы
+      // с полем "request_id" в форме (сейчас единственная — calculation),
+      // не хардкод под неё по имени таблицы — так тот же путь
+      // переиспользуется, если в будущем у другого документа тоже
+      // появится request_id. Если параметра нет в адресе — ничего не
+      // делает, обычная загрузка страницы не затронута.
+      const params = new URLSearchParams(window.location.search);
+      const requestId = params.get('from_request');
+      if (!requestId) return;
+      const lvl = this.currentLevel ? this.currentLevel() : null;
+      const hasRequestField = lvl && lvl.fields.some(f => f.name === 'request_id');
+      if (!hasRequestField) return;
+      // Убираем параметр из адресной строки сразу — иначе повторное
+      // открытие формы (закрыть/создать новую вручную) снова подставило
+      // бы ту же заявку при каждой перезагрузке страницы.
+      window.history.replaceState({}, '', window.location.pathname);
+      await this.openCreate();
+      this.editing.request_id = Number(requestId);
+      await this.runAction('brand_slot_labels');
     },
 
     relationName(fieldName, id) {
@@ -1448,6 +1480,23 @@ function enginePage() {
       } catch (err) { showJsError(err); }
     },
 
+    createChildDocument() {
+      // "Создать документ на основании" (request → calculation, v62):
+      // активна только при РОВНО одном выделенном элементе (см.
+      // :disabled в разметке). Переход на страницу дочернего документа
+      // (сейчас единственная — /calculation-v2, из createChildDocumentUrl)
+      // с query-параметром ?from_request={id} — сама целевая страница
+      // (её init(), см. ниже) подхватывает параметр, открывает форму
+      // новой записи и предзаполняет request_id, дальше подтягивает
+      // бренды тем же путём, что и обычное ручное открытие формы.
+      // Полная перезагрузка страницы (не SPA-переход) — сознательно
+      // просто, две разные страницы движка, велосипед клиентского
+      // роутинга между ними не нужен.
+      if (this.selectedIds.length !== 1 || !CONFIG.createChildDocumentUrl) return;
+      const id = this.selectedIds[0];
+      window.location.href = CONFIG.createChildDocumentUrl + '?from_request=' + encodeURIComponent(id);
+    },
+
     async bulkMarkDelete(value) {
       // Групповая пометка/снятие пометки на удаление — БЕЗУСЛОВНО
       // проставляет is_deleted=value всем выделенным записям (не
@@ -1717,6 +1766,7 @@ def _serialize_level_config(config: TableConfig) -> dict:
         "needsConstants": config.needs_constants,
         "extraLookups": config.extra_lookups,
         "formTabs": config.form_tabs,
+        "createChildDocumentUrl": config.create_child_document_url,
         "fields": [
             {
                 "name": f.name,

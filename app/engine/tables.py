@@ -8,6 +8,7 @@
 # написания нового роутера/шаблона вручную.
 # ============================================================
 
+from sqlmodel import select
 from app.engine.config import TableConfig, FieldConfig, ComputedPair, Relation, FormRow, Hierarchy, ActionButton
 from app.models.material import Material
 from app.models.brand import Brand
@@ -20,6 +21,7 @@ from app.models.kit_item import KitItem
 from app.models.client import Client
 from app.models.request import Request
 from app.models.calculation import Calculation, DEFAULT_NAME_TEMPLATE
+from app.models.calculation_item import CalculationItem
 from app.models.document_counter import DocumentCounter  # noqa: F401 — не таблица
 # движка (нет своего TableConfig/страницы), но должна быть импортирована
 # здесь, чтобы SQLModel.metadata.create_all() увидела её при старте
@@ -187,6 +189,33 @@ def _recalc_full_name_handler(instance: Calculation, session) -> dict:
     return {"full_name": instance.full_name}
 
 
+def _recalc_material_prices_handler(instance: Calculation, session) -> dict:
+    """Кнопка "Пересчитать" на вкладке "Материалы" (2026-08-23) — по
+    прямой просьбе Вахтанга: проходит по ВСЕМ позициям calculation_item
+    текущей калькуляции, заходит в справочник material и переписывает
+    price_excl_vat каждой позиции текущим Material.price_excl_vat.
+    Между двумя нажатиями цена в позиции — "замороженный" снэпшот
+    (см. обоснование в app/models/calculation_item.py), даже если
+    материал в справочнике подорожал/подешевел за это время.
+    Материал, удалённый из справочника после того как попал в
+    калькуляцию, — пропускается (позиция сохраняет прежнюю цену),
+    не роняет весь пересчёт."""
+    from app.models.material import Material
+    items = session.exec(
+        select(CalculationItem).where(CalculationItem.calculation_id == instance.id)
+    ).all()
+    updated = 0
+    for item in items:
+        material = session.get(Material, item.material_id)
+        if not material:
+            continue
+        item.price_excl_vat = material.price_excl_vat
+        session.add(item)
+        updated += 1
+    session.commit()
+    return {"recalculated": updated}
+
+
 def _brand_slot_labels_handler(instance: Calculation, session) -> dict:
     """Обработчик, вызываемый ПРИ ОТКРЫТИИ формы редактирования
     (openEdit() -> runAction() в page.py), а не по клику на кнопку —
@@ -245,9 +274,12 @@ calculation_table = TableConfig(
     document_number_field="document_number",
     document_prefix="K",
     default_sort_fields=[("document_date", "desc"), ("document_time", "desc")],
-    form_tabs=["Основное", "Настройки"],
+    form_tabs=["Основное", "Настройки", "Материалы"],
     needs_constants=True,
     extra_lookups=["brand"],
+    materials_tab="Материалы",
+    materials_item_table_key="calculation_item",
+    materials_recalc_action="recalc_material_prices",
     action_buttons=[
         ActionButton(action="recalc_full_name", label="Сформировать название", tab="Основное",
                      client_side=True),
@@ -256,10 +288,16 @@ calculation_table = TableConfig(
         # при открытии формы (см. openEdit() в page.py), а не по клику
         # человека. Регистрация только в action_handlers ниже достаточна
         # для работы POST /api/calculation/{id}/actions/brand_slot_labels.
+        # recalc_material_prices — тоже НЕ через ActionButton (кнопка
+        # рендерится отдельно самим виджетом вкладки "Материалы", не
+        # универсальным render_action_buttons) — регистрации в
+        # action_handlers ниже достаточно для работы
+        # POST /api/calculation/{id}/actions/recalc_material_prices.
     ],
     action_handlers={
         "recalc_full_name": _recalc_full_name_handler,
         "brand_slot_labels": _brand_slot_labels_handler,
+        "recalc_material_prices": _recalc_material_prices_handler,
     },
     fields=[
         FieldConfig(name="document_number", label="Номер", list_width="90px", tab="Основное",
@@ -477,6 +515,48 @@ kit_item_table = TableConfig(
 )
 
 
+# calculation_item — позиции материалов калькуляции (вкладка
+# "Материалы" формы calculation). hierarchy здесь, как и у kit_item,
+# ЧИСТО ради parent_field: даёт GET /api/calculation_item?parent_id=
+# {calculation_id} бесплатно через универсальный механизм движка.
+# Не отдельная страница списка/пункт меню — виден только внутри
+# вкладки "Материалы" конкретной калькуляции (см. TableConfig.
+# materials_tab у calculation_table и виджет в page.py).
+#
+# Отличие от kit_item — есть своё поле price_excl_vat (СНЭПШОТ, не
+# живая ссылка на material.price_excl_vat, см. подробное обоснование
+# в app/models/calculation_item.py) — движок читает и пишет его как
+# обычное поле формы движка (in_form/in_list), хотя сама форма
+# добавления позиции здесь не используется движком напрямую (виджон
+# вкладки "Материалы" — специальный код, не универсальная модалка) —
+# TableConfig всё равно нужен целиком, т.к. отсюда берутся relations
+# (material_id -> short_name) и field_names() для API-эндпоинтов.
+calculation_item_table = TableConfig(
+    key="calculation_item",
+    model=CalculationItem,
+    title="Материалы калькуляции",
+    title_singular="позиция материала",
+    search_placeholder="Поиск…",
+    hierarchy=Hierarchy(parent_field="calculation_id", parent_key="calculation"),
+    # delete_mode не указан -> дефолт "hard": ничто не ссылается на
+    # конкретный CalculationItem напрямую (см. обоснование в модели),
+    # удаление позиции — всегда безусловное физическое удаление сразу.
+    fields=[
+        FieldConfig(name="calculation_id", label="Калькуляция", widget="select", required=True,
+                    in_list=False, in_form=False),
+        FieldConfig(name="material_id", label="Материал", widget="select", required=True),
+        FieldConfig(name="quantity", label="Количество", widget="number",
+                    is_numeric=True, list_width="100px", default=1, form_width="110px"),
+        FieldConfig(name="price_excl_vat", label="Цена без НДС", widget="number",
+                    is_numeric=True, list_width="120px", default=0, form_width="120px"),
+    ],
+    relations=[
+        Relation(field="calculation_id", target_table="calculation", display_field="full_name", label="Калькуляция"),
+        Relation(field="material_id", target_table="material", display_field="short_name", label="Материал"),
+    ],
+)
+
+
 constant_table = TableConfig(
     key="constant",
     model=Constant,
@@ -499,5 +579,5 @@ constant_table = TableConfig(
 ALL_TABLES = [
     brand_table, unit_table, material_table, kit_group_table, kit_section_table,
     kit_table, kit_item_table, constant_table, client_table, request_table,
-    calculation_table,
+    calculation_table, calculation_item_table,
 ]

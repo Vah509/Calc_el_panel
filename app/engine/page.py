@@ -382,6 +382,58 @@ _PAGE_TEMPLATE_SOURCE = r"""
         </div>
         {% for tab in config.form_tabs %}
         <div x-show="activeFormTab === {{ loop.index0 }}">
+          {% if config.materials_tab == tab %}
+          <!-- Вкладка "Материалы" (TableConfig.materials_tab, calculation,
+               2026-08-23) — НЕ обычные поля формы, а отдельный виджет
+               состава: список позиций + сумма без НДС сверху + выделение/
+               копирование/массовое удаление + инлайн-редактирование
+               количества + кнопка "Добавить" (переиспользует
+               MaterialPicker в "режиме добавления", см. openMaterialAdder()
+               в JS) + кнопка "Пересчитать" (materials_recalc_action). Не
+               показывается для ещё НЕ сохранённой записи — позиции
+               материалов физически привязаны к calculation_id, которого
+               ещё нет у новой записи (человек сначала сохраняет "шапку"
+               документа на вкладке "Основное", потом переходит сюда). -->
+          <div x-show="!editing.id" class="materials-tab-hint">Сначала сохраните калькуляцию — материалы можно добавить после.</div>
+          <div x-show="editing.id" x-cloak>
+            <div class="materials-summary">
+              <span>Сумма без НДС:</span>
+              <span x-text="materialsTotal.toFixed(2)"></span>
+            </div>
+            <div class="materials-toolbar">
+              <button type="button" class="btn btn-primary" @click="openMaterialAdder()">+ Добавить</button>
+              {% if config.materials_recalc_action %}
+              <button type="button" class="btn btn-ghost" @click="runAction('{{ config.materials_recalc_action }}').then(() => loadMaterialsItems())">Пересчитать</button>
+              {% endif %}
+            </div>
+            <div class="selection-bar" x-show="materialsSelectedIds.length > 0" x-cloak>
+              <span x-text="materialsSelectedIds.length + ' выделено'"></span>
+              <button type="button" class="btn" :disabled="materialsSelectedIds.length !== 1" @click="copyMaterialItem()">Копировать</button>
+              <button type="button" class="btn btn-danger-ghost" @click="deleteSelectedMaterialItems()">Удалить</button>
+              <button type="button" class="selection-clear" @click="materialsSelectedIds = []">Снять выделение</button>
+            </div>
+            <div class="materials-list">
+              <template x-for="row in materialsItems" :key="row.id">
+                <div class="materials-row">
+                  <input type="checkbox" class="drill-row-checkbox" :value="row.id"
+                         :checked="materialsSelectedIds.includes(row.id)" @click="toggleMaterialSelect(row.id)">
+                  <div class="materials-row-info">
+                    <span class="materials-row-name" x-text="materialItemLabel(row.material_id)"></span>
+                    <span class="materials-row-unit" x-text="materialItemUnit(row.material_id)"></span>
+                  </div>
+                  <div class="picker-qty-control">
+                    <button type="button" class="picker-qty-btn" @click="materialItemDecrement(row)">−</button>
+                    <span class="picker-qty-value" x-text="row.quantity"></span>
+                    <button type="button" class="picker-qty-btn" @click="materialItemIncrement(row)">+</button>
+                  </div>
+                  <span class="materials-row-price" x-text="Number(row.price_excl_vat ?? 0).toFixed(2)"></span>
+                  <span class="materials-row-sum" x-text="(Number(row.price_excl_vat ?? 0) * Number(row.quantity ?? 0)).toFixed(2)"></span>
+                </div>
+              </template>
+              <div class="materials-row materials-row-empty" x-show="materialsItems.length === 0">Пока пусто — материалы не добавлены</div>
+            </div>
+          </div>
+          {% else %}
           {{ render_form_rows(form_layout_by_tab[tab]) }}
           {% if loop.first and config.computed_pairs %}
           <div class="vat-note">↻ Пересчитывается автоматически при изменении одного из полей — можно переопределить вручную.</div>
@@ -393,6 +445,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
             <button type="button" class="btn btn-ghost" disabled title="Пока недоступно">{{ action_label }}</button>
             {% endfor %}
           </div>
+          {% endif %}
           {% endif %}
         </div>
         {% endfor %}
@@ -527,12 +580,26 @@ _PAGE_TEMPLATE_SOURCE = r"""
        остаётся на экране независимо от объёма контента ниже (она
        flex-shrink:0 и стоит ПЕРВОЙ, а не последней). -->
   <div class="picker-overlay" x-show="pickerOpen" x-cloak>
-    <div class="picker-top-actions">
-      <button type="button" class="btn btn-ghost" @click="pickerCancel()">Отмена</button>
-      <button type="button" class="btn btn-primary" @click="pickerSave()">Сохранить состав</button>
-    </div>
+    <!-- pickerAddMode=true — вкладка "Материалы" калькуляции (2026-08-23):
+         "Добавить" сразу создаёт позицию на сервере при тапе (нет
+         черновика для отмены), поэтому шапка — просто одна кнопка
+         "Готово" вместо пары "Отмена"/"Сохранить состав" у kit. Верхняя
+         зона показывает не редактируемый черновик, а счётчик того, что
+         уже есть в калькуляции (materialsItems, не pickerDraft). -->
+    <template x-if="pickerAddMode">
+      <div class="picker-top-actions">
+        <span style="flex:1;"></span>
+        <button type="button" class="btn btn-primary" @click="materialAdderDone()">Готово</button>
+      </div>
+    </template>
+    <template x-if="!pickerAddMode">
+      <div class="picker-top-actions">
+        <button type="button" class="btn btn-ghost" @click="pickerCancel()">Отмена</button>
+        <button type="button" class="btn btn-primary" @click="pickerSave()">Сохранить состав</button>
+      </div>
+    </template>
 
-    <div class="picker-pane picker-pane-top" :style="'flex: 0 0 ' + pickerSplit + '%;'">
+    <div class="picker-pane picker-pane-top" x-show="!pickerAddMode" :style="'flex: 0 0 ' + pickerSplit + '%;'">
       <div class="picker-pane-header">
         <span x-text="pickerDraft.length + ' позиций'"></span>
       </div>
@@ -551,10 +618,13 @@ _PAGE_TEMPLATE_SOURCE = r"""
         <div class="picker-row picker-row-empty" x-show="pickerDraft.length === 0">Пока ничего не выбрано</div>
       </div>
     </div>
+    <div class="picker-pane-header" x-show="pickerAddMode">
+      <span x-text="materialsItems.length + ' позиций в калькуляции'"></span>
+    </div>
 
-    <div class="picker-handle" @pointerdown="pickerDragStart($event)"><div class="picker-handle-bar"></div></div>
+    <div class="picker-handle" x-show="!pickerAddMode" @pointerdown="pickerDragStart($event)"><div class="picker-handle-bar"></div></div>
 
-    <div class="picker-pane picker-pane-bottom" :style="'flex: 0 0 ' + (100 - pickerSplit) + '%;'">
+    <div class="picker-pane picker-pane-bottom" :style="pickerAddMode ? 'flex: 1 1 auto;' : ('flex: 0 0 ' + (100 - pickerSplit) + '%;')">
       <div class="picker-search-toggles">
         <label class="search-toggle-chip">
           <input type="checkbox" x-model="pickerSearchFields.short_name" @change="pickerSearch()">
@@ -582,17 +652,21 @@ _PAGE_TEMPLATE_SOURCE = r"""
       </div>
       <div class="picker-search-results">
         <template x-for="mat in pickerResults" :key="mat.id">
-          <!-- Тап по ВСЕЙ строке добавляет материал в "Отобрано" — та же
-               логика, что и в v45 для drill-list: маленькая кнопка
-               "+ Добавить" остаётся видимой как визуальный ориентир, но
-               перестала быть единственным способом (по прямой просьбе:
-               "вместо кнопочки добавить просто тапнуть на позицию"). -->
-          <div class="picker-search-row-item" @click="pickerAddMaterial(mat)">
+          <!-- Тап по ВСЕЙ строке добавляет материал — та же логика, что
+               и в v45 для drill-list: маленькая кнопка "+ Добавить"
+               остаётся видимой как визуальный ориентир, но не
+               единственный способ. pickerAddMode переключает КУДА
+               добавляется — в черновик кита (pickerAddMaterial) или
+               сразу в калькуляцию на сервер
+               (pickerAddMaterialToCalculation). -->
+          <div class="picker-search-row-item"
+               @click="pickerAddMode ? pickerAddMaterialToCalculation(mat) : pickerAddMaterial(mat)">
             <div class="picker-search-row-info">
               <span class="picker-search-row-name" x-text="mat.short_name"></span>
               <span class="picker-search-row-sub" x-text="materialBrandName(mat.brand_id) + (mat.sku_article ? ' · ' + mat.sku_article : '')"></span>
             </div>
-            <button type="button" class="btn btn-primary picker-add-btn" @click.stop="pickerAddMaterial(mat)">+ Добавить</button>
+            <button type="button" class="btn btn-primary picker-add-btn"
+                    @click.stop="pickerAddMode ? pickerAddMaterialToCalculation(mat) : pickerAddMaterial(mat)">+ Добавить</button>
           </div>
         </template>
         <div class="picker-search-row-item picker-row-empty" x-show="pickerResults.length === 0">Ничего не найдено</div>
@@ -731,6 +805,22 @@ function enginePage() {
     // всегда открывалась на первой вкладке ("Основное"), а не на той,
     // что была активна в предыдущий раз, когда модалку закрыли.
     activeFormTab: 0,
+    // --- Вкладка "Материалы" калькуляции (CONFIG.materialsTab,
+    // 2026-08-23) — состав ТЕКУЩЕЙ открытой калькуляции (editing.id),
+    // отдельно от items_modal/kitItems выше (другая модель хранения:
+    // каждая позиция хранит СВОЙ снэпшот цены, не replace-all). ---
+    materialsItems: [],
+    materialsSelectedIds: [],
+    materialsMaterialOptions: [],
+    materialsUnitOptions: [],
+    get materialsTotal() {
+      // Сумма без НДС по всем позициям — Σ(price_excl_vat × quantity),
+      // цена берётся из СНЭПШОТА позиции (row.price_excl_vat), не live
+      // из справочника material (см. HANDOFF: "именно так").
+      return this.materialsItems.reduce(
+        (sum, row) => sum + Number(row.price_excl_vat ?? 0) * Number(row.quantity ?? 0), 0
+      );
+    },
     // Начальная сортировка (v56) — из TableConfig.default_sort_field/
     // default_sort_dir, если задано (например request сортируется по
     // дате, новые сверху), иначе прежнее поведение (без сортировки).
@@ -1092,6 +1182,9 @@ function enginePage() {
         if (this.isItemsModal()) {
           this.loadKitItems();
         }
+        if (CONFIG.materialsTab && this.editing.id) {
+          this.loadMaterialsItems();
+        }
         // Автозагрузка динамических подписей для radio-полей (см.
         // FieldConfig.radio_labels_field/radio_labels_action в
         // config.py) — переиспользует runAction(), поэтому идёт по
@@ -1388,6 +1481,192 @@ function enginePage() {
       if (next < 15) next = 15;
       if (next > 85) next = 85;
       this.pickerSplit = next;
+    },
+
+    // --- Вкладка "Материалы" калькуляции (CONFIG.materialsTab,
+    // 2026-08-23) — список позиций CalculationItem текущей открытой
+    // калькуляции. В отличие от items_modal/MaterialPicker выше (kit:
+    // черновик + replace-all при сохранении), здесь КАЖДАЯ операция
+    // (добавить/изменить количество/удалить/скопировать) идёт сразу
+    // на сервер отдельным запросом — нет "черновика", нечего
+    // "отменять" одной кнопкой, ровно как у обычных плоских таблиц
+    // движка (material/brand). ---
+
+    async loadMaterialsItems() {
+      try {
+        hideJsError();
+        const key = CONFIG.materialsItemTableKey;
+        const params = new URLSearchParams();
+        params.set('parent_id', this.editing.id);
+        params.set('page_size', 1000);
+        const res = await fetch('/api/' + key + '?' + params.toString());
+        const data = await res.json();
+        this.materialsItems = data.items;
+        this.materialsSelectedIds = [];
+        if (this.materialsMaterialOptions.length === 0) {
+          const matRes = await fetch('/api/material?page_size=1000');
+          const matData = await matRes.json();
+          this.materialsMaterialOptions = matData.items;
+        }
+        if (this.materialsUnitOptions.length === 0) {
+          const unitRes = await fetch('/api/unit?page_size=1000');
+          const unitData = await unitRes.json();
+          this.materialsUnitOptions = unitData.items;
+        }
+      } catch (err) { showJsError(err); }
+    },
+
+    materialItemLabel(materialId) {
+      const found = this.materialsMaterialOptions.find(m => m.id === materialId);
+      return found ? found.short_name : '';
+    },
+
+    materialItemUnit(materialId) {
+      const material = this.materialsMaterialOptions.find(m => m.id === materialId);
+      if (!material || !material.unit_id) return '';
+      const unit = this.materialsUnitOptions.find(u => u.id === material.unit_id);
+      return unit ? unit.name : '';
+    },
+
+    toggleMaterialSelect(id) {
+      const idx = this.materialsSelectedIds.indexOf(id);
+      if (idx === -1) { this.materialsSelectedIds.push(id); } else { this.materialsSelectedIds.splice(idx, 1); }
+    },
+
+    async materialItemSetQuantity(row, quantity) {
+      // Инлайн-редактирование количества прямо в строке списка (решение
+      // Вахтанга 2026-08-23: "менять количество прямо в режиме
+      // просмотра", без открытия MaterialPicker заново) — сохраняет
+      // сразу на сервер (PUT), не ждёт отдельной кнопки "Сохранить".
+      const clean = quantity > 0 ? Math.round(quantity * 100) / 100 : 1;
+      row.quantity = clean;
+      try {
+        hideJsError();
+        const res = await fetch('/api/' + CONFIG.materialsItemTableKey + '/' + row.id, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            calculation_id: this.editing.id,
+            material_id: row.material_id,
+            quantity: clean,
+            price_excl_vat: row.price_excl_vat,
+          }),
+        });
+        if (!res.ok) { showJsError(await extractErrorMessage(res)); return; }
+      } catch (err) { showJsError(err); }
+    },
+
+    materialItemIncrement(row) { this.materialItemSetQuantity(row, Number(row.quantity ?? 0) + 1); },
+    materialItemDecrement(row) { this.materialItemSetQuantity(row, Number(row.quantity ?? 0) - 1); },
+
+    async copyMaterialItem() {
+      // Копирование доступно только при РОВНО одном выделенном элементе,
+      // тот же принцип, что и copySelected() в обычных плоских таблицах
+      // (см. решение сессии v33) — создаёт независимую новую позицию
+      // с теми же material_id/quantity/price_excl_vat.
+      if (this.materialsSelectedIds.length !== 1) return;
+      const row = this.materialsItems.find(r => r.id === this.materialsSelectedIds[0]);
+      if (!row) return;
+      try {
+        hideJsError();
+        const res = await fetch('/api/' + CONFIG.materialsItemTableKey, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            calculation_id: this.editing.id,
+            material_id: row.material_id,
+            quantity: row.quantity,
+            price_excl_vat: row.price_excl_vat,
+          }),
+        });
+        if (!res.ok) { showJsError(await extractErrorMessage(res)); return; }
+        this.materialsSelectedIds = [];
+        await this.loadMaterialsItems();
+      } catch (err) { showJsError(err); }
+    },
+
+    async deleteSelectedMaterialItems() {
+      // Массовое удаление выделенных позиций — физическое (delete_mode
+      // не задан у calculation_item -> "hard", см. модель), безусловное,
+      // без подтверждения (тот же принцип, что и у обычного DELETE
+      // одной позиции состава кита). Каждая позиция удаляется отдельным
+      // запросом (нет отдельного bulk-эндпоинта под calculation_item —
+      // осознанно не заводили ради простоты, см. HANDOFF).
+      if (this.materialsSelectedIds.length === 0) return;
+      try {
+        hideJsError();
+        await Promise.all(this.materialsSelectedIds.map(id =>
+          fetch('/api/' + CONFIG.materialsItemTableKey + '/' + id, { method: 'DELETE' })
+        ));
+        this.materialsSelectedIds = [];
+        await this.loadMaterialsItems();
+      } catch (err) { showJsError(err); }
+    },
+
+    // --- MaterialPicker в "режиме добавления" для вкладки "Материалы"
+    // (pickerAddMode=true) — переиспользует ТОТ ЖЕ picker-overlay/CSS/
+    // поиск/фильтры по бренду, что и MaterialPicker кита, но с другой
+    // семантикой: тап по материалу сразу СОЗДАЁТ новую позицию на
+    // сервере (POST), не копит черновик для последующего replace-all —
+    // потому что каждая позиция calculation_item существует независимо
+    // (свой снэпшот цены), а не как часть одного "состава", целиком
+    // переписываемого разом. ---
+    pickerAddMode: false,
+
+    async openMaterialAdder() {
+      try {
+        hideJsError();
+        this.pickerAddMode = true;
+        this.pickerDraft = [];
+        this.pickerQuery = '';
+        this.pickerSearchFields = { short_name: true, full_name: false, sku_article: false };
+        this.pickerBrandFilter = null;
+        this.pickerResults = [];
+        this.pickerSplit = 40;
+        this.modalOpen = false;
+        this.pickerOpen = true;
+        if (this.pickerBrands.length === 0) {
+          const res = await fetch('/api/brand?page_size=1000');
+          const data = await res.json();
+          this.pickerBrands = data.items;
+        }
+        this.pickerSearch();
+      } catch (err) { showJsError(err); }
+    },
+
+    async pickerAddMaterialToCalculation(material) {
+      // Добавляет ОДНУ позицию сразу на сервер (POST) — снэпшот цены
+      // берётся из material.price_excl_vat В МОМЕНТ добавления (см.
+      // HANDOFF: "фиксируем цену на данный момент"), quantity=1 по
+      // умолчанию, правится потом инлайн в списке.
+      try {
+        hideJsError();
+        const res = await fetch('/api/' + CONFIG.materialsItemTableKey, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            calculation_id: this.editing.id,
+            material_id: material.id,
+            quantity: 1,
+            price_excl_vat: material.price_excl_vat,
+          }),
+        });
+        if (!res.ok) { showJsError(await extractErrorMessage(res)); return; }
+        const opts = this.materialsMaterialOptions;
+        if (!opts.some(o => o.id === material.id)) { this.materialsMaterialOptions = [...opts, material]; }
+      } catch (err) { showJsError(err); }
+    },
+
+    materialAdderDone() {
+      // "Готово" в шапке picker'а — в отличие от pickerCancel()/
+      // pickerSave() (kit), здесь нечего откатывать или сохранять
+      // разом: каждая позиция уже создана на сервере отдельным
+      // запросом при тапе (см. pickerAddMaterialToCalculation). Просто
+      // закрывает picker и обновляет список на вкладке "Материалы".
+      this.pickerAddMode = false;
+      this.pickerOpen = false;
+      this.modalOpen = true;
+      this.loadMaterialsItems();
     },
 
     toggleSelect(id) {
@@ -1767,6 +2046,9 @@ def _serialize_level_config(config: TableConfig) -> dict:
         "extraLookups": config.extra_lookups,
         "formTabs": config.form_tabs,
         "createChildDocumentUrl": config.create_child_document_url,
+        "materialsTab": config.materials_tab,
+        "materialsItemTableKey": config.materials_item_table_key,
+        "materialsRecalcAction": config.materials_recalc_action,
         "fields": [
             {
                 "name": f.name,

@@ -387,13 +387,18 @@ _PAGE_TEMPLATE_SOURCE = r"""
                2026-08-23) — НЕ обычные поля формы, а отдельный виджет
                состава: список позиций + сумма без НДС сверху + выделение/
                копирование/массовое удаление + инлайн-редактирование
-               количества + кнопка "Добавить" (переиспользует
-               MaterialPicker в "режиме добавления", см. openMaterialAdder()
-               в JS) + кнопка "Пересчитать" (materials_recalc_action). Не
-               показывается для ещё НЕ сохранённой записи — позиции
-               материалов физически привязаны к calculation_id, которого
-               ещё нет у новой записи (человек сначала сохраняет "шапку"
-               документа на вкладке "Основное", потом переходит сюда). -->
+               количества + кнопка "Добавить" (открывает ТОТ ЖЕ picker-
+               интерфейс, что и MaterialPicker кита — верхняя зона
+               черновика + хэндл + нижняя зона поиска, см.
+               openMaterialAdder()/pickerTarget='calculation' в JS,
+               по прямой просьбе "тот же интерфейс, что и в подборе для
+               комплектов") + кнопка "Пересчитать" (materials_recalc_action,
+               алиас: обновляет цены без открытия picker'а, когда состав
+               менять не нужно). Не показывается для ещё НЕ сохранённой
+               записи — позиции материалов физически привязаны к
+               calculation_id, которого ещё нет у новой записи (человек
+               сначала сохраняет "шапку" документа на вкладке "Основное",
+               потом переходит сюда). -->
           <div x-show="!editing.id" class="materials-tab-hint">Сначала сохраните калькуляцию — материалы можно добавить после.</div>
           <div x-show="editing.id" x-cloak>
             <div class="materials-summary">
@@ -580,26 +585,19 @@ _PAGE_TEMPLATE_SOURCE = r"""
        остаётся на экране независимо от объёма контента ниже (она
        flex-shrink:0 и стоит ПЕРВОЙ, а не последней). -->
   <div class="picker-overlay" x-show="pickerOpen" x-cloak>
-    <!-- pickerAddMode=true — вкладка "Материалы" калькуляции (2026-08-23):
-         "Добавить" сразу создаёт позицию на сервере при тапе (нет
-         черновика для отмены), поэтому шапка — просто одна кнопка
-         "Готово" вместо пары "Отмена"/"Сохранить состав" у kit. Верхняя
-         зона показывает не редактируемый черновик, а счётчик того, что
-         уже есть в калькуляции (materialsItems, не pickerDraft). -->
-    <template x-if="pickerAddMode">
-      <div class="picker-top-actions">
-        <span style="flex:1;"></span>
-        <button type="button" class="btn btn-primary" @click="materialAdderDone()">Готово</button>
-      </div>
-    </template>
-    <template x-if="!pickerAddMode">
-      <div class="picker-top-actions">
-        <button type="button" class="btn btn-ghost" @click="pickerCancel()">Отмена</button>
-        <button type="button" class="btn btn-primary" @click="pickerSave()">Сохранить состав</button>
-      </div>
-    </template>
+    <!-- Единый интерфейс подбора для kit И calculation (2026-08-23,
+         по прямой просьбе: "тот же интерфейс, что и в подборе для
+         комплектов") — верхняя зона черновика (pickerDraft) + хэндл +
+         нижняя зона поиска, с шапкой "Отмена"/"Сохранить состав".
+         pickerTarget ('kit' | 'calculation') различает только КУДА
+         сохраняется состав при pickerSave() — сама разметка одинакова
+         для обоих случаев. -->
+    <div class="picker-top-actions">
+      <button type="button" class="btn btn-ghost" @click="pickerCancel()">Отмена</button>
+      <button type="button" class="btn btn-primary" @click="pickerSave()">Сохранить состав</button>
+    </div>
 
-    <div class="picker-pane picker-pane-top" x-show="!pickerAddMode" :style="'flex: 0 0 ' + pickerSplit + '%;'">
+    <div class="picker-pane picker-pane-top" :style="'flex: 0 0 ' + pickerSplit + '%;'">
       <div class="picker-pane-header">
         <span x-text="pickerDraft.length + ' позиций'"></span>
       </div>
@@ -618,13 +616,10 @@ _PAGE_TEMPLATE_SOURCE = r"""
         <div class="picker-row picker-row-empty" x-show="pickerDraft.length === 0">Пока ничего не выбрано</div>
       </div>
     </div>
-    <div class="picker-pane-header" x-show="pickerAddMode">
-      <span x-text="materialsItems.length + ' позиций в калькуляции'"></span>
-    </div>
 
-    <div class="picker-handle" x-show="!pickerAddMode" @pointerdown="pickerDragStart($event)"><div class="picker-handle-bar"></div></div>
+    <div class="picker-handle" @pointerdown="pickerDragStart($event)"><div class="picker-handle-bar"></div></div>
 
-    <div class="picker-pane picker-pane-bottom" :style="pickerAddMode ? 'flex: 1 1 auto;' : ('flex: 0 0 ' + (100 - pickerSplit) + '%;')">
+    <div class="picker-pane picker-pane-bottom" :style="'flex: 0 0 ' + (100 - pickerSplit) + '%;'">
       <div class="picker-search-toggles">
         <label class="search-toggle-chip">
           <input type="checkbox" x-model="pickerSearchFields.short_name" @change="pickerSearch()">
@@ -652,21 +647,16 @@ _PAGE_TEMPLATE_SOURCE = r"""
       </div>
       <div class="picker-search-results">
         <template x-for="mat in pickerResults" :key="mat.id">
-          <!-- Тап по ВСЕЙ строке добавляет материал — та же логика, что
-               и в v45 для drill-list: маленькая кнопка "+ Добавить"
-               остаётся видимой как визуальный ориентир, но не
-               единственный способ. pickerAddMode переключает КУДА
-               добавляется — в черновик кита (pickerAddMaterial) или
-               сразу в калькуляцию на сервер
-               (pickerAddMaterialToCalculation). -->
-          <div class="picker-search-row-item"
-               @click="pickerAddMode ? pickerAddMaterialToCalculation(mat) : pickerAddMaterial(mat)">
+          <!-- Тап по ВСЕЙ строке добавляет материал в черновик — та же
+               логика, что и в v45 для drill-list: маленькая кнопка
+               "+ Добавить" остаётся видимой как визуальный ориентир, но
+               не единственный способ. -->
+          <div class="picker-search-row-item" @click="pickerAddMaterial(mat)">
             <div class="picker-search-row-info">
               <span class="picker-search-row-name" x-text="mat.short_name"></span>
               <span class="picker-search-row-sub" x-text="materialBrandName(mat.brand_id) + (mat.sku_article ? ' · ' + mat.sku_article : '')"></span>
             </div>
-            <button type="button" class="btn btn-primary picker-add-btn"
-                    @click.stop="pickerAddMode ? pickerAddMaterialToCalculation(mat) : pickerAddMaterial(mat)">+ Добавить</button>
+            <button type="button" class="btn btn-primary picker-add-btn" @click.stop="pickerAddMaterial(mat)">+ Добавить</button>
           </div>
         </template>
         <div class="picker-search-row-item picker-row-empty" x-show="pickerResults.length === 0">Ничего не найдено</div>
@@ -846,8 +836,14 @@ function enginePage() {
     // не должны путать друг друга при одинаковых именах полей.
     itemRelationOptions: {},
     // --- MaterialPicker (отдельный полноэкранный экран поверх modal-
-    // backdrop, открывается кнопкой "Редактировать" в модалке kit) ---
+    // backdrop, открывается кнопкой "Редактировать" в модалке kit, и
+    // кнопкой "Добавить" на вкладке "Материалы" calculation) ---
     pickerOpen: false,
+    // pickerTarget: 'kit' | 'calculation' — куда pickerSave() отправляет
+    // финальный PUT .../items и куда pickerCancel()/pickerSave() должны
+    // вернуть человека после закрытия (см. openMaterialPicker vs
+    // openMaterialAdder). null — picker ещё не открывали в этой сессии.
+    pickerTarget: null,
     // pickerDraft: черновик состава в памяти экрана, НЕ синхронизирован
     // с сервером до pickerSave(). Каждая строка {_key, material_id,
     // quantity} — _key нужен как стабильный :key для x-for (не material_id,
@@ -1296,8 +1292,16 @@ function enginePage() {
     // замена состава на сервере через PUT /api/kit/{id}/items). -->
 
     materialLabel(materialId) {
-      const opts = this.itemRelationOptions['material_id'] || [];
-      const found = opts.find(o => o.id === materialId);
+      // Единый источник подписи для черновика picker'а (pickerDraft) —
+      // используется ОБОИМИ pickerTarget ('kit' и 'calculation').
+      // itemRelationOptions['material_id'] — кэш кита (заполняется при
+      // loadKitItems), materialsMaterialOptions — кэш калькуляции
+      // (заполняется при loadMaterialsItems) — проверяем оба, т.к.
+      // предзаполнение черновика может ссылаться на материал, который
+      // есть только в одном из них.
+      const kitOpts = this.itemRelationOptions['material_id'] || [];
+      const found = kitOpts.find(o => o.id === materialId) ||
+        this.materialsMaterialOptions.find(o => o.id === materialId);
       return found ? found.short_name : '';
     },
 
@@ -1314,6 +1318,7 @@ function enginePage() {
           quantity: Number(item.quantity ?? 1),
         }));
         this.pickerDraftSeq = this.pickerDraft.length;
+        this.pickerTarget = 'kit';
         this.pickerQuery = '';
         this.pickerSearchFields = { short_name: true, full_name: false, sku_article: false };
         this.pickerBrandFilter = null;
@@ -1340,6 +1345,46 @@ function enginePage() {
         // таблице материалов (не только после ввода текста в поиск) —
         // по прямой просьбе "интерфейс подбора такой же, как у обычных
         // таблиц плоских".
+        this.pickerSearch();
+      } catch (err) { showJsError(err); }
+    },
+
+    // --- Вкладка "Материалы" калькуляции (calculation, 2026-08-23) ---
+    // По прямому решению Вахтанга кнопка "Добавить" открывает ТОТ ЖЕ
+    // самый picker-интерфейс, что и MaterialPicker кита (верхняя зона
+    // "черновик" + хэндл + нижняя зона поиска), а не урезанный вариант
+    // "тап = сразу на сервер". Полная замена состава по кнопке
+    // "Сохранить состав" (см. pickerSave ниже — общий метод для обоих
+    // pickerTarget). Единственное архитектурное отличие calculation от
+    // kit — цена: replace_items на бэке при каждом сохранении состава
+    // проставляет ТЕКУЩУЮ material.price_excl_vat всем строкам заново
+    // (решение Вахтанга: "цена берётся в момент каждого сохранения
+    // состава" — старый снэпшот при полной замене не сохраняется).
+    async openMaterialAdder() {
+      try {
+        hideJsError();
+        // Предзаполнение из ТЕКУЩИХ calculation_item (materialsItems уже
+        // загружены при openEdit/loadMaterialsItems) — та же логика
+        // предзаполнения, что и у openMaterialPicker() для kit.
+        this.pickerDraft = this.materialsItems.map(item => ({
+          _key: 'existing-' + item.id,
+          material_id: item.material_id,
+          quantity: Number(item.quantity ?? 1),
+        }));
+        this.pickerDraftSeq = this.pickerDraft.length;
+        this.pickerTarget = 'calculation';
+        this.pickerQuery = '';
+        this.pickerSearchFields = { short_name: true, full_name: false, sku_article: false };
+        this.pickerBrandFilter = null;
+        this.pickerResults = [];
+        this.pickerSplit = 40;
+        this.modalOpen = false;
+        this.pickerOpen = true;
+        if (this.pickerBrands.length === 0) {
+          const res = await fetch('/api/brand?page_size=1000');
+          const data = await res.json();
+          this.pickerBrands = data.items;
+        }
         this.pickerSearch();
       } catch (err) { showJsError(err); }
     },
@@ -1386,11 +1431,18 @@ function enginePage() {
       this.pickerDraftSeq += 1;
       this.pickerDraft.push({ _key: 'new-' + this.pickerDraftSeq, material_id: material.id, quantity: 1 });
       // подпись новой строки должна резолвиться сразу — если материала
-      // ещё нет в itemRelationOptions (например появился после того как
-      // модалка kit уже загрузилась), добавляем его на лету.
+      // ещё нет в списке подписей, добавляем его на лету. kit использует
+      // itemRelationOptions['material_id'], calculation — отдельный кэш
+      // materialsMaterialOptions (см. materialItemLabel/materialLabel).
       const opts = this.itemRelationOptions['material_id'] || [];
       if (!opts.some(o => o.id === material.id)) {
         this.itemRelationOptions['material_id'] = [...opts, material];
+      }
+      if (this.pickerTarget === 'calculation') {
+        const matOpts = this.materialsMaterialOptions;
+        if (!matOpts.some(o => o.id === material.id)) {
+          this.materialsMaterialOptions = [...matOpts, material];
+        }
       }
     },
 
@@ -1409,15 +1461,24 @@ function enginePage() {
 
     pickerCancel() {
       // Черновик просто отбрасывается — ничего на сервере не менялось
-      // (см. HANDOFF, 2.9: кнопка "Отмена" обязательна). Возврат СРАЗУ
-      // на экран со списком комплектов (drill-list), БЕЗ промежуточного
-      // показа модалки просмотра состава — раньше здесь стояло
-      // modalOpen = true, и после закрытия пикера человек попадал на
-      // модалку "Подключение 25а", которую нужно было закрывать ещё
-      // раз отдельным тапом (см. HANDOFF: "окно там не нужно, его можно
-      // закрывать и сам не выходить на экран с перечнем комплектов").
+      // (см. HANDOFF, 2.9: кнопка "Отмена" обязательна).
       this.pickerOpen = false;
       this.pickerDraft = [];
+      if (this.pickerTarget === 'calculation') {
+        // Возврат на форму калькуляции (вкладка "Материалы"), НЕ на
+        // список калькуляций целиком — в отличие от kit, здесь есть
+        // полноценная форма с другими вкладками, которую не нужно
+        // закрывать только потому что отменили подбор материалов.
+        this.modalOpen = true;
+        return;
+      }
+      // kit — возврат СРАЗУ на экран со списком комплектов (drill-list),
+      // БЕЗ промежуточного показа модалки просмотра состава — раньше
+      // здесь стояло modalOpen = true, и после закрытия пикера человек
+      // попадал на модалку "Подключение 25а", которую нужно было
+      // закрывать ещё раз отдельным тапом (см. HANDOFF: "окно там не
+      // нужно, его можно закрывать и сам не выходить на экран с
+      // перечнем комплектов").
       this.modalOpen = false;
       this.editing = {};
       this.kitItems = [];
@@ -1429,7 +1490,10 @@ function enginePage() {
         const payload = {
           items: this.pickerDraft.map(row => ({ material_id: row.material_id, quantity: row.quantity })),
         };
-        const res = await fetch('/api/kit/' + this.editing.id + '/items', {
+        const endpoint = this.pickerTarget === 'calculation'
+          ? '/api/calculation/' + this.editing.id + '/items'
+          : '/api/kit/' + this.editing.id + '/items';
+        const res = await fetch(endpoint, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
@@ -1438,14 +1502,21 @@ function enginePage() {
           showJsError(await extractErrorMessage(res));
           return;
         }
-        // Состав уже сохранён на сервере (см. запрос выше) — обновляем
-        // список drill-list, чтобы актуальные данные подтянулись при
-        // следующем открытии этого комплекта. Возврат СРАЗУ на список
-        // комплектов, БЕЗ промежуточного показа модалки просмотра
-        // состава — та же логика, что и в pickerCancel() выше (см.
-        // HANDOFF: модалка на этом шаге не нужна вообще).
         this.pickerOpen = false;
         this.pickerDraft = [];
+        if (this.pickerTarget === 'calculation') {
+          // Возврат на форму калькуляции, вкладка "Материалы" —
+          // подгружаем свежий состав (свежие цены-снэпшоты, только что
+          // проставленные replace_items на бэке).
+          this.modalOpen = true;
+          await this.loadMaterialsItems();
+          return;
+        }
+        // Состав kit уже сохранён на сервере (см. запрос выше) —
+        // обновляем список drill-list, чтобы актуальные данные
+        // подтянулись при следующем открытии этого комплекта. Возврат
+        // СРАЗУ на список комплектов, БЕЗ промежуточного показа модалки
+        // просмотра состава (см. HANDOFF: модалка на этом шаге не нужна).
         this.modalOpen = false;
         this.editing = {};
         this.kitItems = [];
@@ -1601,72 +1672,6 @@ function enginePage() {
         this.materialsSelectedIds = [];
         await this.loadMaterialsItems();
       } catch (err) { showJsError(err); }
-    },
-
-    // --- MaterialPicker в "режиме добавления" для вкладки "Материалы"
-    // (pickerAddMode=true) — переиспользует ТОТ ЖЕ picker-overlay/CSS/
-    // поиск/фильтры по бренду, что и MaterialPicker кита, но с другой
-    // семантикой: тап по материалу сразу СОЗДАЁТ новую позицию на
-    // сервере (POST), не копит черновик для последующего replace-all —
-    // потому что каждая позиция calculation_item существует независимо
-    // (свой снэпшот цены), а не как часть одного "состава", целиком
-    // переписываемого разом. ---
-    pickerAddMode: false,
-
-    async openMaterialAdder() {
-      try {
-        hideJsError();
-        this.pickerAddMode = true;
-        this.pickerDraft = [];
-        this.pickerQuery = '';
-        this.pickerSearchFields = { short_name: true, full_name: false, sku_article: false };
-        this.pickerBrandFilter = null;
-        this.pickerResults = [];
-        this.pickerSplit = 40;
-        this.modalOpen = false;
-        this.pickerOpen = true;
-        if (this.pickerBrands.length === 0) {
-          const res = await fetch('/api/brand?page_size=1000');
-          const data = await res.json();
-          this.pickerBrands = data.items;
-        }
-        this.pickerSearch();
-      } catch (err) { showJsError(err); }
-    },
-
-    async pickerAddMaterialToCalculation(material) {
-      // Добавляет ОДНУ позицию сразу на сервер (POST) — снэпшот цены
-      // берётся из material.price_excl_vat В МОМЕНТ добавления (см.
-      // HANDOFF: "фиксируем цену на данный момент"), quantity=1 по
-      // умолчанию, правится потом инлайн в списке.
-      try {
-        hideJsError();
-        const res = await fetch('/api/' + CONFIG.materialsItemTableKey, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            calculation_id: this.editing.id,
-            material_id: material.id,
-            quantity: 1,
-            price_excl_vat: material.price_excl_vat,
-          }),
-        });
-        if (!res.ok) { showJsError(await extractErrorMessage(res)); return; }
-        const opts = this.materialsMaterialOptions;
-        if (!opts.some(o => o.id === material.id)) { this.materialsMaterialOptions = [...opts, material]; }
-      } catch (err) { showJsError(err); }
-    },
-
-    materialAdderDone() {
-      // "Готово" в шапке picker'а — в отличие от pickerCancel()/
-      // pickerSave() (kit), здесь нечего откатывать или сохранять
-      // разом: каждая позиция уже создана на сервере отдельным
-      // запросом при тапе (см. pickerAddMaterialToCalculation). Просто
-      // закрывает picker и обновляет список на вкладке "Материалы".
-      this.pickerAddMode = false;
-      this.pickerOpen = false;
-      this.modalOpen = true;
-      this.loadMaterialsItems();
     },
 
     toggleSelect(id) {

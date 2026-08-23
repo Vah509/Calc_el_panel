@@ -581,11 +581,12 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
 
     @router.put("/{item_id}/items")
     def replace_items(item_id: int, payload: dict[str, Any], session: Session = Depends(get_engine_session)):
-        """Полная замена состава (items_source_table_key) одной
-        транзакцией — используется MaterialPicker (кнопка "Редактировать"
-        в модалке kit): человек правит черновик состава на отдельном
-        полноэкранном шаге, а по финальному сохранению весь прежний
-        состав удаляется и создаётся заново из присланного списка.
+        """Полная замена состава одной транзакцией — используется
+        MaterialPicker (кнопка "Редактировать" в модалке kit, кнопка
+        "Добавить" на вкладке "Материалы" calculation): человек правит
+        черновик состава на отдельном полноэкранном шаге, а по
+        финальному сохранению весь прежний состав удаляется и создаётся
+        заново из присланного списка.
 
         Осознанно НЕ delta-сравнение ("что изменилось") — по прямому
         решению Вахтанга можно "смело переписывать всё", это заметно
@@ -595,8 +596,23 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
         payload = {"items": [{"material_id": 1, "quantity": 2.5}, ...]}
         Дубликаты material_id в списке допустимы и сохраняются как
         отдельные строки — намеренно, по прямому решению (см.
-        HANDOFF_kits_and_calculation.md, раздел 2.9)."""
-        if config.edit_mode != "items_modal" or not config.items_source_table_key:
+        HANDOFF_kits_and_calculation.md, раздел 2.9).
+
+        Работает для ДВУХ разных механизмов состава:
+        1. edit_mode="items_modal" (kit) — items_source_table_key,
+           состав без цены (material_id + quantity).
+        2. materials_item_table_key (calculation, 2026-08-23) — та же
+           механика полной замены, НО каждая созданная строка
+           дополнительно получает price_excl_vat = ТЕКУЩАЯ цена из
+           справочника material.price_excl_vat на момент сохранения
+           (решение Вахтанга: "цена берётся из material.price_excl_vat
+           в момент каждого сохранения состава" — снэпшот сознательно
+           обновляется при каждом "Сохранить состав", не только у новых
+           строк, а у ВСЕХ, включая те что были и раньше: они всё равно
+           удаляются и создаются заново, так что "старой" цены после
+           replace физически не существует)."""
+        items_source_key = config.items_source_table_key or config.materials_item_table_key
+        if config.edit_mode != "items_modal" and not config.materials_item_table_key:
             raise HTTPException(
                 status_code=422,
                 detail=f"«{config.title}» не поддерживает замену состава.",
@@ -606,7 +622,7 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
             raise HTTPException(status_code=404, detail=f"{config.title_singular} не найден(а)")
 
         from app.engine.tables import ALL_TABLES  # локальный импорт — см. паттерн выше в файле
-        items_config = next((t for t in ALL_TABLES if t.key == config.items_source_table_key), None)
+        items_config = next((t for t in ALL_TABLES if t.key == items_source_key), None)
         if not items_config or not items_config.hierarchy or not items_config.hierarchy.parent_field:
             raise HTTPException(
                 status_code=422,
@@ -615,6 +631,11 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
 
         items_parent_field = items_config.hierarchy.parent_field
         new_items = payload.get("items") or []
+        # Есть ли у дочерней модели поле цены-снэпшота — определяет,
+        # нужно ли при создании строки проставлять price_excl_vat
+        # (calculation_item) или нет (kit_item, у которого такого поля
+        # просто не существует в модели).
+        has_price_snapshot = "price_excl_vat" in items_config.field_names()
 
         # Валидация каждой строки: material_id обязателен и должен
         # существовать, quantity — положительное число. Проверяем ДО
@@ -622,12 +643,15 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
         # (вся функция — одна транзакция, но лучше не начинать удаление,
         # если черновик заведомо некорректен).
         from app.models.material import Material
+        materials_by_id: dict[int, Material] = {}
         for row in new_items:
             material_id = row.get("material_id")
             if not material_id:
                 raise HTTPException(status_code=422, detail="Не указан материал в одной из строк состава.")
-            if not session.get(Material, material_id):
+            material = session.get(Material, material_id)
+            if not material:
                 raise HTTPException(status_code=422, detail=f"Материал id={material_id} не найден.")
+            materials_by_id[material_id] = material
             quantity = row.get("quantity")
             if quantity is None or float(quantity) <= 0:
                 raise HTTPException(status_code=422, detail="Количество должно быть больше нуля.")
@@ -641,10 +665,14 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
             session.delete(old)
 
         for row in new_items:
+            extra_fields: dict[str, Any] = {}
+            if has_price_snapshot:
+                extra_fields["price_excl_vat"] = materials_by_id[row["material_id"]].price_excl_vat
             session.add(items_config.model(
                 **{items_parent_field: item_id},
                 material_id=row["material_id"],
                 quantity=round(float(row["quantity"]), 2),
+                **extra_fields,
             ))
 
         session.commit()

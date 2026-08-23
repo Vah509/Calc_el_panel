@@ -30,6 +30,13 @@ class Material(SQLModel, table=True):
     brand_id: Optional[int] = Field(default=None, foreign_key="brand.id")
     sku_article: Optional[str] = Field(default=None, index=True)
 
+    # unit_id — единица измерения (шт/м/кг/услуга...), см. app/models/unit.py.
+    # Nullable на уровне БД сознательно (2026-08-23) — чтобы не ломать
+    # миграцию на уже существующих в проде материалах без единицы
+    # измерения. В UI/API для новых/редактируемых записей поле обязательно
+    # (валидация на уровне FieldConfig.required, не на уровне схемы).
+    unit_id: Optional[int] = Field(default=None, foreign_key="unit.id")
+
     price_excl_vat: float = Field(default=0.0)
     price_incl_vat: float = Field(default=0.0)
 

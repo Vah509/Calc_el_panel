@@ -82,6 +82,12 @@ def _ensure_is_deleted_columns() -> None:
         # request уже существует на Postgres (та же ловушка, см. выше) —
         # DEFAULT '' безопасен для уже существующих строк.
         ("request", "note", "VARCHAR NOT NULL DEFAULT ''"),
+        # v63: material.unit_id добавлено в модель ПОСЛЕ того, как таблица
+        # material уже существует на Postgres (та же ловушка, см. выше).
+        # NULL допустим и по умолчанию (nullable на уровне БД сознательно —
+        # см. app/models/material.py) — существующие материалы получат
+        # unit_id=NULL, поправить руками через UI по желанию.
+        ("material", "unit_id", "INTEGER NULL"),
     ]
     with engine.connect() as conn:
         for table, column, ddl_type in tables_columns:

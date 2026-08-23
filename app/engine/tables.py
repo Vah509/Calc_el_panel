@@ -11,6 +11,7 @@
 from app.engine.config import TableConfig, FieldConfig, ComputedPair, Relation, FormRow, Hierarchy, ActionButton
 from app.models.material import Material
 from app.models.brand import Brand
+from app.models.unit import Unit
 from app.models.constant import Constant
 from app.models.kit_group import KitGroup
 from app.models.kit_section import KitSection
@@ -37,6 +38,29 @@ brand_table = TableConfig(
         FieldConfig(name="name", label="Название", required=True, searchable=True),
         FieldConfig(name="rate_vb", label="Курс ВБ", widget="number",
                     is_numeric=True, list_width="100px"),
+    ],
+)
+
+
+# Единица измерения (шт/м/кг/услуга...) — плоский справочник, тот же
+# паттерн, что kit_group/kit_section (delete_mode="simple": физическое
+# удаление, только через модалку ✎, без чекбоксов/групповых операций).
+# БЕЗ hierarchy — это не узел дерева, самостоятельная плоская таблица,
+# delete_mode="simple" здесь просто означает "нет soft-delete, удаление
+# сразу физическое" (без hierarchy проверка на дочерние записи не
+# применяется, см. delete_item в api.py).
+unit_table = TableConfig(
+    key="unit",
+    model=Unit,
+    title="Единицы измерения",
+    title_singular="единица измерения",
+    search_placeholder="Поиск по названию…",
+    delete_mode="simple",
+    fields=[
+        FieldConfig(name="name", label="Название", required=True, searchable=True,
+                    placeholder="шт"),
+        FieldConfig(name="sort_order", label="Порядок", widget="number",
+                    is_numeric=True, list_width="100px", default=0, in_list=False),
     ],
 )
 
@@ -300,6 +324,8 @@ material_table = TableConfig(
         FieldConfig(name="full_name", label="Full name", required=True,
                     placeholder="Автоматический выключатель 3P C16 6kA", searchable=True, search_default=False, list_width="22%"),
         FieldConfig(name="brand_id", label="Бренд", widget="select"),
+        FieldConfig(name="unit_id", label="Ед. измерения", widget="select",
+                    required=True, list_width="90px"),
         FieldConfig(name="sku_article", label="Артикул производителя",
                     placeholder="2CDS253001R0164", searchable=True, search_default=False, list_width="110px"),
         FieldConfig(name="price_excl_vat", label="Цена без НДС", widget="number",
@@ -331,9 +357,10 @@ material_table = TableConfig(
     ],
     relations=[
         Relation(field="brand_id", target_table="brand", display_field="name", label="Бренд"),
+        Relation(field="unit_id", target_table="unit", display_field="name", label="Ед. измерения"),
     ],
     form_rows=[
-        FormRow(field_names=["brand_id", "sku_article"]),
+        FormRow(field_names=["brand_id", "unit_id", "sku_article"]),
         FormRow(field_names=["price_excl_vat", "price_incl_vat", "price_vb_incl_vat"]),
     ],
 )
@@ -470,7 +497,7 @@ constant_table = TableConfig(
 
 
 ALL_TABLES = [
-    brand_table, material_table, kit_group_table, kit_section_table,
+    brand_table, unit_table, material_table, kit_group_table, kit_section_table,
     kit_table, kit_item_table, constant_table, client_table, request_table,
     calculation_table,
 ]

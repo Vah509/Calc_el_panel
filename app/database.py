@@ -88,6 +88,13 @@ def _ensure_is_deleted_columns() -> None:
         # см. app/models/material.py) — существующие материалы получат
         # unit_id=NULL, поправить руками через UI по желанию.
         ("material", "unit_id", "INTEGER NULL"),
+        # v67: kit_id добавлено в модель CalculationItem ПОСЛЕ того, как
+        # таблица calculationitem уже существует на Postgres (создана в
+        # v64 вместе с вкладкой "Материалы" калькуляции) — та же ловушка,
+        # см. комментарии выше. NULL по умолчанию: старые позиции — это
+        # материалы (kit_id не относится к ним), новые позиции комплектов
+        # получат kit_id явно при создании (см. вкладка "Комплекты").
+        ("calculationitem", "kit_id", "INTEGER NULL"),
     ]
     with engine.connect() as conn:
         for table, column, ddl_type in tables_columns:

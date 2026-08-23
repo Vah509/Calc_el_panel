@@ -27,6 +27,24 @@
 # осознанно (Вахтанг: важно зафиксировать именно количество и цену,
 # название/единица показываются актуальные).
 #
+# kit_id (добавлено 2026-08-23, вкладка "Комплекты" калькуляции) —
+# ВТОРОЙ, отдельный от material_id, nullable FK. Строка либо про
+# материал (material_id заполнен, kit_id пуст), либо про комплект
+# (kit_id заполнен, material_id пуст) — тип определяется тем, какое
+# из двух полей заполнено, это ЧИСТО фронтенд-разделение на вкладки
+# "Материалы"/"Комплекты", в БД остаётся ОДНА таблица (решение
+# Вахтанга: "пусть будет так же, как и с материалами, вкладка
+# комплекты просто отдельным фильтром").
+#
+# У позиции-комплекта price_excl_vat — ТОЖЕ снэпшот, но это снэпшот
+# СУММЫ СОСТАВА комплекта на момент добавления/пересчёта (Σ по
+# KitItem: material.price_excl_vat × KitItem.quantity), а не цена
+# самого комплекта (Kit ценового поля не имеет — состав кита живой,
+# см. app/models/kit.py). Обновляется той же кнопкой "Пересчитать",
+# что и материалы, — по прямому решению Вахтанга ЛЮБАЯ кнопка
+# пересчёта внутри калькуляции пересчитывает калькуляцию целиком
+# (материалы И комплекты), отдельной кнопки для комплектов нет.
+#
 # calculation_id — FK на Calculation. Нет soft-delete (is_deleted) —
 # та же логика, что и у KitItem: ничто не ссылается на конкретный
 # CalculationItem напрямую (будущая спецификация будет строиться по
@@ -46,6 +64,7 @@ class CalculationItem(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     calculation_id: Optional[int] = Field(default=None, foreign_key="calculation.id")
     material_id: Optional[int] = Field(default=None, foreign_key="material.id")
+    kit_id: Optional[int] = Field(default=None, foreign_key="kit.id")
     quantity: float = Field(default=1.0)
 
     # Снэпшот Material.price_excl_vat на момент добавления/последнего

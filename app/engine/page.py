@@ -438,6 +438,75 @@ _PAGE_TEMPLATE_SOURCE = r"""
               <div class="materials-row materials-row-empty" x-show="materialsItems.length === 0">Пока пусто — материалы не добавлены</div>
             </div>
           </div>
+          {% elif config.kits_tab == tab %}
+          <!-- Вкладка "Комплекты" (TableConfig.kits_tab, calculation,
+               2026-08-23) — параллельный аналог вкладки "Материалы", та
+               же физическая таблица calculation_item, отфильтрованная по
+               kit_id вместо material_id (см. loadKitsItems()). Цена
+               строки — снэпшот СУММЫ СОСТАВА комплекта (не цена самого
+               Kit — у него ценового поля нет, состав живой), проставляется
+               на сервере при добавлении (POST .../kit-items) и обновляется
+               общей кнопкой "Пересчитать" (тот же action, что и у
+               материалов — по прямому решению Вахтанга одна кнопка
+               пересчитывает калькуляцию целиком). Добавление — БЕЗ пикера
+               пока (простой select комплекта + количество, подбор —
+               отдельный следующий шаг, как и у материалов раньше). Клик по
+               строке открывает read-only модалку состава комплекта (см.
+               openKitDetail() / kitDetailOpen ниже) — ничего внутри не
+               редактируется. -->
+          <div x-show="!editing.id" class="materials-tab-hint">Сначала сохраните калькуляцию — комплекты можно добавить после.</div>
+          <div x-show="editing.id" x-cloak>
+            <div class="materials-summary">
+              <span>Сумма без НДС:</span>
+              <span x-text="kitsTotal.toFixed(2)"></span>
+            </div>
+            <div class="materials-toolbar">
+              <button type="button" class="btn btn-primary" @click="openKitAdder()">+ Добавить</button>
+              {% if config.materials_recalc_action %}
+              <button type="button" class="btn btn-ghost" @click="runAction('{{ config.materials_recalc_action }}').then(() => loadKitsItems())">Пересчитать</button>
+              {% endif %}
+            </div>
+            <div class="selection-bar" x-show="kitsSelectedIds.length > 0" x-cloak>
+              <span x-text="kitsSelectedIds.length + ' выделено'"></span>
+              <button type="button" class="btn" :disabled="kitsSelectedIds.length !== 1" @click="copyKitItem()">Копировать</button>
+              <button type="button" class="btn btn-danger-ghost" @click="deleteSelectedKitItems()">Удалить</button>
+              <button type="button" class="selection-clear" @click="kitsSelectedIds = []">Снять выделение</button>
+            </div>
+            <!-- Форма добавления комплекта — простой select + количество,
+                 показывается вместо picker'а (см. openKitAdder/kitAdderOpen).
+                 Отдельный маленький блок, не полноэкранный экран, т.к.
+                 подбора с поиском/фильтрами пока нет. -->
+            <div class="kit-adder" x-show="kitAdderOpen" x-cloak>
+              <select x-model.number="kitAdderDraft.kit_id" class="kit-adder-select">
+                <option value="" disabled>Выберите комплект…</option>
+                <template x-for="kit in kitsKitOptions" :key="kit.id">
+                  <option :value="kit.id" x-text="kit.name"></option>
+                </template>
+              </select>
+              <div class="picker-qty-control">
+                <button type="button" class="picker-qty-btn" @click="kitAdderDraft.quantity = Math.max(1, Number(kitAdderDraft.quantity ?? 1) - 1)">−</button>
+                <span class="picker-qty-value" x-text="kitAdderDraft.quantity"></span>
+                <button type="button" class="picker-qty-btn" @click="kitAdderDraft.quantity = Number(kitAdderDraft.quantity ?? 1) + 1">+</button>
+              </div>
+              <button type="button" class="btn btn-ghost" @click="kitAdderOpen = false">Отмена</button>
+              <button type="button" class="btn btn-primary" :disabled="!kitAdderDraft.kit_id" @click="saveKitAdder()">Сохранить</button>
+            </div>
+            <div class="materials-list">
+              <template x-for="row in kitsItems" :key="row.id">
+                <div class="materials-row">
+                  <input type="checkbox" class="drill-row-checkbox" :value="row.id"
+                         :checked="kitsSelectedIds.includes(row.id)" @click="toggleKitSelect(row.id, $event)">
+                  <div class="materials-row-info kit-row-clickable" @click="openKitDetail(row)">
+                    <span class="materials-row-name" x-text="kitItemLabel(row.kit_id)"></span>
+                  </div>
+                  <span class="picker-qty-value kit-row-clickable" x-text="row.quantity" @click="openKitDetail(row)"></span>
+                  <span class="materials-row-price kit-row-clickable" x-text="Number(row.price_excl_vat ?? 0).toFixed(2)" @click="openKitDetail(row)"></span>
+                  <span class="materials-row-sum kit-row-clickable" x-text="(Number(row.price_excl_vat ?? 0) * Number(row.quantity ?? 0)).toFixed(2)" @click="openKitDetail(row)"></span>
+                </div>
+              </template>
+              <div class="materials-row materials-row-empty" x-show="kitsItems.length === 0">Пока пусто — комплекты не добавлены</div>
+            </div>
+          </div>
           {% else %}
           {{ render_form_rows(form_layout_by_tab[tab]) }}
           {% if loop.first and config.computed_pairs %}
@@ -664,6 +733,52 @@ _PAGE_TEMPLATE_SOURCE = r"""
     </div>
   </div>
 
+  <!-- Модалка просмотра состава комплекта (вкладка "Комплекты"
+       калькуляции, 2026-08-23) — открывается кликом по строке
+       kitsItems (см. openKitDetail() в JS). ЧИСТО read-only: перечень
+       материалов комплекта (кол-во, цена без НДС, сумма без НДС),
+       итоговая сумма комплекта сверху — ничего внутри не
+       редактируется (по прямому решению Вахтанга), состав комплекта
+       правится отдельно на карточке самого kit. Не переиспользует
+       общий .modal (та модалка привязана к editing/save() универсальной
+       формы движка) — отдельный лёгкий оверлей поверх формы
+       калькуляции. -->
+  <div class="modal-backdrop" x-show="kitDetailOpen" x-cloak>
+    <div class="modal">
+      <div class="modal-header">
+        <div>
+          <h2 x-text="kitDetailName"></h2>
+        </div>
+      </div>
+
+      <div class="materials-summary">
+        <span>Сумма комплекта без НДС:</span>
+        <span x-text="kitDetailTotal.toFixed(2)"></span>
+      </div>
+      <div class="materials-list">
+        <template x-for="row in kitDetailItems" :key="row.id">
+          <div class="materials-row">
+            <div class="materials-row-info">
+              <span class="materials-row-name" x-text="materialItemLabel(row.material_id)"></span>
+              <span class="materials-row-unit" x-text="materialItemUnit(row.material_id)"></span>
+            </div>
+            <span class="picker-qty-value" x-text="row.quantity"></span>
+            <span class="materials-row-price" x-text="Number(row.price_excl_vat ?? 0).toFixed(2)"></span>
+            <span class="materials-row-sum" x-text="(Number(row.price_excl_vat ?? 0) * Number(row.quantity ?? 0)).toFixed(2)"></span>
+          </div>
+        </template>
+        <div class="materials-row materials-row-empty" x-show="kitDetailItems.length === 0">Состав комплекта пуст</div>
+      </div>
+
+      <div class="modal-footer">
+        <span></span>
+        <div class="modal-footer-right">
+          <button type="button" class="btn btn-ghost" @click="kitDetailOpen = false">Закрыть</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <script>
@@ -808,6 +923,33 @@ function enginePage() {
       // цена берётся из СНЭПШОТА позиции (row.price_excl_vat), не live
       // из справочника material (см. HANDOFF: "именно так").
       return this.materialsItems.reduce(
+        (sum, row) => sum + Number(row.price_excl_vat ?? 0) * Number(row.quantity ?? 0), 0
+      );
+    },
+    // --- Вкладка "Комплекты" калькуляции (CONFIG.kitsTab, 2026-08-23) —
+    // параллельный аналог вкладки "Материалы" выше: та же физическая
+    // таблица calculation_item (см. CONFIG.kitsItemTableKey), позиции с
+    // заполненным kit_id вместо material_id. price_excl_vat здесь —
+    // снэпшот СУММЫ СОСТАВА комплекта, не цена самого Kit. ---
+    kitsItems: [],
+    kitsSelectedIds: [],
+    kitsKitOptions: [],
+    kitAdderOpen: false,
+    kitAdderDraft: { kit_id: '', quantity: 1 },
+    kitDetailOpen: false,
+    kitDetailName: '',
+    kitDetailItems: [],
+    get kitsTotal() {
+      // Сумма без НДС по всем отобранным комплектам — Σ(price_excl_vat ×
+      // quantity), price_excl_vat — снэпшот суммы состава каждого
+      // комплекта (не пересчитывается на лету из kit_item, см.
+      // обоснование в app/models/calculation_item.py).
+      return this.kitsItems.reduce(
+        (sum, row) => sum + Number(row.price_excl_vat ?? 0) * Number(row.quantity ?? 0), 0
+      );
+    },
+    get kitDetailTotal() {
+      return this.kitDetailItems.reduce(
         (sum, row) => sum + Number(row.price_excl_vat ?? 0) * Number(row.quantity ?? 0), 0
       );
     },
@@ -1180,6 +1322,9 @@ function enginePage() {
         }
         if (CONFIG.materialsTab && this.editing.id) {
           this.loadMaterialsItems();
+        }
+        if (CONFIG.kitsTab && this.editing.id) {
+          this.loadKitsItems();
         }
         // Автозагрузка динамических подписей для radio-полей (см.
         // FieldConfig.radio_labels_field/radio_labels_action в
@@ -1674,6 +1819,154 @@ function enginePage() {
       } catch (err) { showJsError(err); }
     },
 
+    // --- Вкладка "Комплекты" калькуляции (2026-08-23) — те же принципы,
+    // что и у вкладки "Материалы" выше (каждая операция сразу на сервер,
+    // нет черновика), но добавление — БЕЗ picker'а (простой select
+    // комплекта + количество), т.к. подбор комплектов с поиском —
+    // отдельный будущий шаг (как раньше было и у материалов). ---
+
+    async loadKitsItems() {
+      try {
+        hideJsError();
+        const key = CONFIG.kitsItemTableKey;
+        const params = new URLSearchParams();
+        params.set('parent_id', this.editing.id);
+        params.set('page_size', 1000);
+        const res = await fetch('/api/' + key + '?' + params.toString());
+        const data = await res.json();
+        // Один и тот же родительский список calculation_item содержит и
+        // материалы, и комплекты вперемешку (см. CalculationItem.kit_id) —
+        // фильтр по kit_id IS NOT NULL делается на фронте, это чисто
+        // разделение по вкладкам, не отдельный API-запрос.
+        this.kitsItems = data.items.filter(row => !!row.kit_id);
+        this.kitsSelectedIds = [];
+        this.kitAdderOpen = false;
+        if (this.kitsKitOptions.length === 0) {
+          const kitRes = await fetch('/api/kit?page_size=1000');
+          const kitData = await kitRes.json();
+          this.kitsKitOptions = kitData.items;
+        }
+        // Подписи материалов в модалке просмотра состава (openKitDetail)
+        // используют materialItemLabel/materialItemUnit — те же кэши,
+        // что и у вкладки "Материалы" (materialsMaterialOptions/
+        // materialsUnitOptions). Комплекты можно открыть, даже не заходя
+        // на вкладку "Материалы" в этой сессии, поэтому подгружаем те же
+        // справочники здесь тоже, если их ещё нет.
+        if (this.materialsMaterialOptions.length === 0) {
+          const matRes = await fetch('/api/material?page_size=1000');
+          const matData = await matRes.json();
+          this.materialsMaterialOptions = matData.items;
+        }
+        if (this.materialsUnitOptions.length === 0) {
+          const unitRes = await fetch('/api/unit?page_size=1000');
+          const unitData = await unitRes.json();
+          this.materialsUnitOptions = unitData.items;
+        }
+      } catch (err) { showJsError(err); }
+    },
+
+    kitItemLabel(kitId) {
+      const found = this.kitsKitOptions.find(k => k.id === kitId);
+      return found ? found.name : '';
+    },
+
+    openKitAdder() {
+      this.kitAdderDraft = { kit_id: '', quantity: 1 };
+      this.kitAdderOpen = true;
+    },
+
+    async saveKitAdder() {
+      if (!this.kitAdderDraft.kit_id) return;
+      try {
+        hideJsError();
+        const res = await fetch('/api/calculation/' + this.editing.id + '/kit-items', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            kit_id: this.kitAdderDraft.kit_id,
+            quantity: this.kitAdderDraft.quantity,
+          }),
+        });
+        if (!res.ok) { showJsError(await extractErrorMessage(res)); return; }
+        this.kitAdderOpen = false;
+        await this.loadKitsItems();
+      } catch (err) { showJsError(err); }
+    },
+
+    toggleKitSelect(id, event) {
+      // event.stopPropagation не нужен отдельно — чекбокс не всплывает на
+      // клик по строке (клик по строке открывает openKitDetail(), см.
+      // разметку), но сам клик по чекбоксу не должен запускать
+      // openKitDetail через родительский div.
+      if (event) event.stopPropagation();
+      const idx = this.kitsSelectedIds.indexOf(id);
+      if (idx === -1) { this.kitsSelectedIds.push(id); } else { this.kitsSelectedIds.splice(idx, 1); }
+    },
+
+    async copyKitItem() {
+      if (this.kitsSelectedIds.length !== 1) return;
+      const row = this.kitsItems.find(r => r.id === this.kitsSelectedIds[0]);
+      if (!row) return;
+      try {
+        hideJsError();
+        const res = await fetch('/api/' + CONFIG.kitsItemTableKey, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            calculation_id: this.editing.id,
+            kit_id: row.kit_id,
+            quantity: row.quantity,
+            price_excl_vat: row.price_excl_vat,
+          }),
+        });
+        if (!res.ok) { showJsError(await extractErrorMessage(res)); return; }
+        this.kitsSelectedIds = [];
+        await this.loadKitsItems();
+      } catch (err) { showJsError(err); }
+    },
+
+    async deleteSelectedKitItems() {
+      if (this.kitsSelectedIds.length === 0) return;
+      try {
+        hideJsError();
+        await Promise.all(this.kitsSelectedIds.map(id =>
+          fetch('/api/' + CONFIG.kitsItemTableKey + '/' + id, { method: 'DELETE' })
+        ));
+        this.kitsSelectedIds = [];
+        await this.loadKitsItems();
+      } catch (err) { showJsError(err); }
+    },
+
+    async openKitDetail(row) {
+      // Read-only просмотр состава комплекта — заходит в справочник
+      // kit_item ЖИВЫМ запросом (не снэпшот, в отличие от строки списка
+      // на вкладке "Комплекты"): человек должен видеть АКТУАЛЬНЫЙ состав
+      // комплекта прямо сейчас, чтобы понимать из чего складывалась
+      // сумма при последнем добавлении/пересчёте — если состав кита
+      // поменялся ПОСЛЕ этого, сумма в строке (снэпшот) и то, что видно
+      // в модалке (текущий состав), могут разойтись, это ожидаемо (см.
+      // обоснование "живая ссылка vs снэпшот" в HANDOFF_kits_and_
+      // calculation.md).
+      try {
+        hideJsError();
+        this.kitDetailName = this.kitItemLabel(row.kit_id);
+        const res = await fetch('/api/kit_item?parent_id=' + row.kit_id + '&page_size=1000');
+        const data = await res.json();
+        this.kitDetailItems = data.items.map(item => ({
+          id: item.id,
+          material_id: item.material_id,
+          quantity: item.quantity,
+          price_excl_vat: this.materialItemPrice(item.material_id),
+        }));
+        this.kitDetailOpen = true;
+      } catch (err) { showJsError(err); }
+    },
+
+    materialItemPrice(materialId) {
+      const found = this.materialsMaterialOptions.find(m => m.id === materialId);
+      return found ? Number(found.price_excl_vat ?? 0) : 0;
+    },
+
     toggleSelect(id) {
       const idx = this.selectedIds.indexOf(id);
       if (idx === -1) { this.selectedIds.push(id); } else { this.selectedIds.splice(idx, 1); }
@@ -2054,6 +2347,8 @@ def _serialize_level_config(config: TableConfig) -> dict:
         "materialsTab": config.materials_tab,
         "materialsItemTableKey": config.materials_item_table_key,
         "materialsRecalcAction": config.materials_recalc_action,
+        "kitsTab": config.kits_tab,
+        "kitsItemTableKey": config.kits_item_table_key,
         "fields": [
             {
                 "name": f.name,

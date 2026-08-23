@@ -190,28 +190,57 @@ def _recalc_full_name_handler(instance: Calculation, session) -> dict:
 
 
 def _recalc_material_prices_handler(instance: Calculation, session) -> dict:
-    """Кнопка "Пересчитать" на вкладке "Материалы" (2026-08-23) — по
-    прямой просьбе Вахтанга: проходит по ВСЕМ позициям calculation_item
-    текущей калькуляции, заходит в справочник material и переписывает
-    price_excl_vat каждой позиции текущим Material.price_excl_vat.
-    Между двумя нажатиями цена в позиции — "замороженный" снэпшот
-    (см. обоснование в app/models/calculation_item.py), даже если
-    материал в справочнике подорожал/подешевел за это время.
+    """Кнопка "Пересчитать", показанная И на вкладке "Материалы", И на
+    вкладке "Комплекты" (2026-08-23) — по прямой просьбе Вахтанга
+    ЛЮБАЯ кнопка пересчёта внутри калькуляции пересчитывает калькуляцию
+    ЦЕЛИКОМ, материалы и комплекты разом, не только позиции своей
+    вкладки. Поэтому один обработчик, а не два отдельных под каждую
+    вкладку.
+
+    Для позиции-материала (material_id заполнен): переписывает
+    price_excl_vat текущим Material.price_excl_vat из справочника.
     Материал, удалённый из справочника после того как попал в
     калькуляцию, — пропускается (позиция сохраняет прежнюю цену),
-    не роняет весь пересчёт."""
+    не роняет весь пересчёт.
+
+    Для позиции-комплекта (kit_id заполнен): price_excl_vat — это
+    снэпшот СУММЫ СОСТАВА комплекта (Σ KitItem.quantity ×
+    Material.price_excl_vat по живому составу kit_item на текущий
+    момент), не цена самого комплекта (Kit ценового поля не имеет,
+    см. app/models/kit.py). Комплект, у которого состав пуст или
+    удалён из справочника, — сумма пересчитывается в 0, позиция не
+    падает и не пропускается.
+
+    Между двумя нажатиями цена в обеих категориях — "замороженный"
+    снэпшот (см. обоснование в app/models/calculation_item.py), даже
+    если материал/состав комплекта изменился за это время."""
     from app.models.material import Material
+    from app.models.kit_item import KitItem
     items = session.exec(
         select(CalculationItem).where(CalculationItem.calculation_id == instance.id)
     ).all()
     updated = 0
     for item in items:
-        material = session.get(Material, item.material_id)
-        if not material:
-            continue
-        item.price_excl_vat = material.price_excl_vat
-        session.add(item)
-        updated += 1
+        if item.material_id:
+            material = session.get(Material, item.material_id)
+            if not material:
+                continue
+            item.price_excl_vat = material.price_excl_vat
+            session.add(item)
+            updated += 1
+        elif item.kit_id:
+            kit_items = session.exec(
+                select(KitItem).where(KitItem.kit_id == item.kit_id)
+            ).all()
+            kit_total = 0.0
+            for kit_item in kit_items:
+                material = session.get(Material, kit_item.material_id)
+                if not material:
+                    continue
+                kit_total += material.price_excl_vat * kit_item.quantity
+            item.price_excl_vat = round(kit_total, 2)
+            session.add(item)
+            updated += 1
     session.commit()
     return {"recalculated": updated}
 
@@ -274,12 +303,14 @@ calculation_table = TableConfig(
     document_number_field="document_number",
     document_prefix="K",
     default_sort_fields=[("document_date", "desc"), ("document_time", "desc")],
-    form_tabs=["Основное", "Настройки", "Материалы"],
+    form_tabs=["Основное", "Настройки", "Материалы", "Комплекты"],
     needs_constants=True,
     extra_lookups=["brand"],
     materials_tab="Материалы",
     materials_item_table_key="calculation_item",
     materials_recalc_action="recalc_material_prices",
+    kits_tab="Комплекты",
+    kits_item_table_key="calculation_item",
     action_buttons=[
         ActionButton(action="recalc_full_name", label="Сформировать название", tab="Основное",
                      client_side=True),
@@ -544,7 +575,14 @@ calculation_item_table = TableConfig(
     fields=[
         FieldConfig(name="calculation_id", label="Калькуляция", widget="select", required=True,
                     in_list=False, in_form=False),
-        FieldConfig(name="material_id", label="Материал", widget="select", required=True),
+        FieldConfig(name="material_id", label="Материал", widget="select"),
+        # kit_id (2026-08-23, вкладка "Комплекты") — НЕ required=True, в
+        # отличие от material_id: строка заполняет РОВНО одно из двух
+        # полей (см. обоснование в app/models/calculation_item.py), делать
+        # оба обязательными на уровне движка сломало бы создание строк
+        # другого типа. Разделение material_id vs kit_id IS NOT NULL —
+        # только на фронте (см. materialsTab/kitsTab виджеты в page.py).
+        FieldConfig(name="kit_id", label="Комплект", widget="select"),
         FieldConfig(name="quantity", label="Количество", widget="number",
                     is_numeric=True, list_width="100px", default=1, form_width="110px"),
         FieldConfig(name="price_excl_vat", label="Цена без НДС", widget="number",
@@ -553,6 +591,7 @@ calculation_item_table = TableConfig(
     relations=[
         Relation(field="calculation_id", target_table="calculation", display_field="full_name", label="Калькуляция"),
         Relation(field="material_id", target_table="material", display_field="short_name", label="Материал"),
+        Relation(field="kit_id", target_table="kit", display_field="name", label="Комплект"),
     ],
 )
 

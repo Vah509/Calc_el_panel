@@ -678,6 +678,80 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
         session.commit()
         return {"replaced": len(new_items)}
 
+    @router.post("/{item_id}/kit-items")
+    def add_kit_item(item_id: int, payload: dict[str, Any], session: Session = Depends(get_engine_session)):
+        """Добавляет ОДНУ позицию-комплект на вкладку "Комплекты"
+        калькуляции (2026-08-23) — простой CRUD без пикера (подбор
+        комплектов, как и подбор материалов кнопкой "Добавить" на
+        вкладке "Материалы", — отдельный следующий шаг, см. HANDOFF).
+        Человек выбирает kit_id из списка + вводит quantity, без
+        промежуточного черновика/полноэкранного экрана.
+
+        payload = {"kit_id": 1, "quantity": 2}
+
+        price_excl_vat здесь — снэпшот СУММЫ СОСТАВА комплекта на
+        момент добавления (Σ KitItem.quantity × Material.price_excl_vat
+        по живому составу kit_item), не цена самого Kit (у Kit нет
+        ценового поля — состав живой, см. app/models/kit.py). Тот же
+        расчёт, что и при "Пересчитать" (см.
+        _recalc_material_prices_handler в tables.py) — единственная
+        разница: здесь считается один раз при добавлении, там — для
+        всех позиций калькуляции разом."""
+        if not config.kits_item_table_key:
+            raise HTTPException(
+                status_code=422,
+                detail=f"«{config.title}» не поддерживает добавление комплектов.",
+            )
+        instance = session.get(model, item_id)
+        if not instance:
+            raise HTTPException(status_code=404, detail=f"{config.title_singular} не найден(а)")
+
+        from app.engine.tables import ALL_TABLES  # локальный импорт — см. паттерн выше в файле
+        items_config = next((t for t in ALL_TABLES if t.key == config.kits_item_table_key), None)
+        if not items_config or not items_config.hierarchy or not items_config.hierarchy.parent_field:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Некорректная конфигурация состава комплектов для «{config.title}».",
+            )
+        items_parent_field = items_config.hierarchy.parent_field
+
+        kit_id = payload.get("kit_id")
+        if not kit_id:
+            raise HTTPException(status_code=422, detail="Не указан комплект.")
+        from app.models.kit import Kit
+        kit = session.get(Kit, kit_id)
+        if not kit:
+            raise HTTPException(status_code=422, detail=f"Комплект id={kit_id} не найден.")
+
+        quantity = payload.get("quantity")
+        if quantity is None or float(quantity) <= 0:
+            raise HTTPException(status_code=422, detail="Количество должно быть больше нуля.")
+
+        from app.models.material import Material
+        from app.models.kit_item import KitItem
+        kit_items = session.exec(select(KitItem).where(KitItem.kit_id == kit_id)).all()
+        kit_total = 0.0
+        for kit_item in kit_items:
+            material = session.get(Material, kit_item.material_id)
+            if not material:
+                continue
+            kit_total += material.price_excl_vat * kit_item.quantity
+
+        new_item = items_config.model(
+            **{items_parent_field: item_id},
+            kit_id=kit_id,
+            quantity=round(float(quantity), 2),
+            price_excl_vat=round(kit_total, 2),
+        )
+        session.add(new_item)
+        session.commit()
+        session.refresh(new_item)
+        # _serialize() выше закрыт над field_names ЭТОГО роутера
+        # (calculation), а new_item — CalculationItem: сериализуем вручную
+        # по полям items_config, а не через _serialize().
+        items_field_names = items_config.field_names()
+        return {name: getattr(new_item, name) for name in items_field_names} | {"id": new_item.id}
+
     @router.post("/bulk-mark-delete")
     def bulk_mark_delete(payload: dict[str, Any], session: Session = Depends(get_engine_session)):
         """Групповая пометка/снятие пометки на удаление. В отличие

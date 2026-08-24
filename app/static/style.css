@@ -28,6 +28,24 @@ body {
 }
 [x-cloak] { display: none !important; }
 
+/* Блокировка скролла body, пока открыт picker-overlay или обычная
+   модалка (см. init()/$watch в page.py, 2026-08-24) — предотвращает
+   "провал" touch-жеста сквозь position:fixed оверлей на скролл
+   страницы под ним, из-за которого на мобильном Chrome при
+   перетаскивании .picker-handle выезжала адресная строка и ломался
+   layout оверлея. position:fixed на body — самый надёжный способ
+   заблокировать скролл именно на iOS/Android Chrome (просто
+   overflow:hidden на body там не всегда полностью останавливает
+   touch-скролл). top выставляется из JS (см. lockBodyScroll в page.py)
+   на отрицательный текущий scrollY, чтобы страница визуально не
+   "прыгала" наверх в момент блокировки — сама CSS-переменная top здесь
+   не нужна, значение приходит через inline style. */
+.body-scroll-locked {
+  position: fixed;
+  width: 100%;
+  overflow: hidden;
+}
+
 /* ── Top bar ───────────────────────── */
 .topbar {
   display: flex;

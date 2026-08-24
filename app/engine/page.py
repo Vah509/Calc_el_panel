@@ -1083,6 +1083,7 @@ function enginePage() {
     pickerDragging: false,
     pickerDragStartY: 0,
     pickerDragStartSplit: 40,
+    pickerOverlayHeight: 0,
     // --- drill-down (только для CONFIG.hierarchyRoot) ---
     // drillPath: стек открытых узлов дерева НИЖЕ корневого уровня,
     // каждый элемент {parentId, label} — id открытой записи и её
@@ -1171,7 +1172,42 @@ function enginePage() {
         }
         await this.load();
         await this.maybeOpenFromRequest();
+        // Блокировка скролла <body> пока открыт picker-overlay или
+        // обычная модалка (2026-08-24) — без этого перетаскивание
+        // хэндла picker'а (.picker-handle, pickerDragStart) может
+        // "провалиться" сквозь position:fixed оверлей и проскроллить
+        // страницу ПОД ним: на мобильном Chrome это заставляет адресную
+        // строку выехать обратно на экран (native-поведение браузера,
+        // не наше), что на живом устройстве Вахтанг наблюдал как
+        // "дерево комплектов пропадает при перетаскивании ползунка" —
+        // после скролла тела страницы под фиксированным оверлеем layout
+        // окна меняется (100dvh пересчитывается по новому видимому
+        // viewport'у). lockBodyScroll()/unlockBodyScroll() — не просто
+        // toggle класса, а сохранение/восстановление scrollY, иначе
+        // position:fixed на body визуально "подбрасывает" страницу
+        // наверх в момент блокировки и роняет её при снятии.
+        this.$watch('pickerOpen', open => this.updateBodyScrollLock(open || this.modalOpen));
+        this.$watch('modalOpen', open => this.updateBodyScrollLock(open || this.pickerOpen));
       } catch (err) { showJsError(err); }
+    },
+
+    // scrollLockY: запомненная позиция скролла страницы НА МОМЕНТ
+    // блокировки — нужна, чтобы снять блокировку ровно в ту же точку
+    // (position:fixed на body сам по себе не помнит, откуда его
+    // "зафиксировали").
+    scrollLockY: 0,
+
+    updateBodyScrollLock(shouldLock) {
+      const alreadyLocked = document.body.classList.contains('body-scroll-locked');
+      if (shouldLock && !alreadyLocked) {
+        this.scrollLockY = window.scrollY || window.pageYOffset || 0;
+        document.body.style.top = '-' + this.scrollLockY + 'px';
+        document.body.classList.add('body-scroll-locked');
+      } else if (!shouldLock && alreadyLocked) {
+        document.body.classList.remove('body-scroll-locked');
+        document.body.style.top = '';
+        window.scrollTo(0, this.scrollLockY);
+      }
     },
 
     async maybeOpenFromRequest() {
@@ -1783,6 +1819,22 @@ function enginePage() {
       this.pickerDragging = true;
       this.pickerDragStartY = evt.clientY;
       this.pickerDragStartSplit = this.pickerSplit;
+      // Высота ИМЕННО .picker-overlay (а не window.innerHeight) —
+      // 2026-08-24, по мотивам бага "дерево комплектов пропадает при
+      // перетаскивании ползунка" (см. HANDOFF): на мобильном Chrome
+      // touch-жест на хэндле мог "провалиться" сквозь position:fixed
+      // оверлей на скролл страницы под ним, из-за чего адресная строка
+      // выезжала обратно на экран и window.innerHeight МЕНЯЛСЯ прямо
+      // посреди одного и того же жеста — deltaPercent считался против
+      // движущейся цели, split мог улететь далеко за пределы
+      // ожидаемого. Высота самого оверлея — величина, которая не должна
+      // прыгать даже если viewport вокруг него меняется, плюс
+      // updateBodyScrollLock() (см. init()) теперь в принципе не
+      // позволяет странице позади оверлея скроллиться, пока он открыт —
+      // это тоже часть исправления, дополняющая, а не заменяющая,
+      // измерение через сам оверлей.
+      const overlay = evt.currentTarget.closest('.picker-overlay');
+      this.pickerOverlayHeight = overlay ? overlay.getBoundingClientRect().height : (window.innerHeight || document.documentElement.clientHeight);
       evt.preventDefault();
       const onMove = (moveEvt) => this.pickerDragMove(moveEvt);
       const onUp = () => {
@@ -1796,8 +1848,8 @@ function enginePage() {
 
     pickerDragMove(evt) {
       if (!this.pickerDragging) return;
-      const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
-      const deltaPercent = ((evt.clientY - this.pickerDragStartY) / viewportHeight) * 100;
+      const overlayHeight = this.pickerOverlayHeight || window.innerHeight || document.documentElement.clientHeight;
+      const deltaPercent = ((evt.clientY - this.pickerDragStartY) / overlayHeight) * 100;
       let next = this.pickerDragStartSplit + deltaPercent;
       // Диапазон 15-85% — ни одна из двух зон никогда не схлопывается
       // полностью (см. HANDOFF, 2.8).

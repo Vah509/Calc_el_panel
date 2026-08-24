@@ -710,7 +710,32 @@ _PAGE_TEMPLATE_SOURCE = r"""
 
     <div class="picker-handle" @pointerdown="pickerDragStart($event)"><div class="picker-handle-bar"></div></div>
 
-    <div class="picker-pane picker-pane-bottom" :style="'flex: 0 0 ' + (100 - pickerSplit) + '%;'" x-show="pickerTarget !== 'kits'">
+    <div class="picker-pane picker-pane-bottom"
+         :style="(pickerTarget !== 'kits' ? '' : 'display: none;') + 'flex: 0 0 ' + (100 - pickerSplit) + '%;'">
+      <!-- ВАЖНО: display управляется ВНУТРИ :style, а не отдельным x-show
+           (2026-08-24, найденный и исправленный баг "дерево комплектов
+           пропадает при перетаскивании ползунка"). Разбирались с этим
+           дважды: сначала ошибочно подозревали body-scroll/viewport dvh
+           (v70), но проблема оказалась глубже — реальный баг Alpine.js в
+           связке x-show + :style на одном элементе. Когда pickerSplit
+           меняется (то есть человек тянет ползунок), Alpine пересчитывает
+           :style ДАЖЕ у СКРЫТОГО x-show'ом элемента и полностью
+           перезаписывает его атрибут style, СТИРАЯ "display: none",
+           который до этого поставил x-show — а заново скрыть элемент
+           x-show не может, потому что его выражение (pickerTarget !==
+           'kits') не зависит от pickerSplit и поэтому не перезапускается.
+           Итог: при первом же движении ползунка скрытая панель становится
+           видимой и остаётся видимой поверх/рядом с нужной. Подтверждено
+           изолированным воспроизведением на голом Alpine.js (10 строк, без
+           остального кода приложения) — это не наша логика pickerTarget
+           (она всё это время была верна), а особенность Alpine: :style
+           полностью перезаписывает style-атрибут и не "помнит" про
+           display, выставленный другим директивом. Фикс: display теперь
+           часть ТОГО ЖЕ :style-выражения, что и flex — оба выставляются
+           ОДНИМ и тем же вычислением, поэтому ничего не может друг друга
+           затереть. Если добавляется третий такой parный блок где-то ещё
+           в этом файле — та же ловушка, тот же фикс: display внутрь
+           :style, отдельный x-show на такой элемент не вешать. -->
       <div class="picker-search-toggles">
         <label class="search-toggle-chip">
           <input type="checkbox" x-model="pickerSearchFields.short_name" @change="pickerSearch()">
@@ -765,7 +790,14 @@ _PAGE_TEMPLATE_SOURCE = r"""
          без дальнейшего drill) сразу добавляет его в черновик
          (pickerAddKit) — по прямой просьбе "при нажатии на комплект он
          выбирается и переносится в отобранные". -->
-    <div class="picker-pane picker-pane-bottom" :style="'flex: 0 0 ' + (100 - pickerSplit) + '%;'" x-show="pickerTarget === 'kits'" x-cloak>
+    <div class="picker-pane picker-pane-bottom" x-cloak
+         :style="(pickerTarget === 'kits' ? '' : 'display: none;') + 'flex: 0 0 ' + (100 - pickerSplit) + '%;'">
+      <!-- display внутри :style, а не отдельным x-show — см. подробное
+           обоснование в комментарии у первого .picker-pane-bottom выше
+           (материалы), это ровно тот же баг и тот же фикс, зеркально для
+           комплектов. x-cloak оставлен как есть — он работает независимо
+           (управляет ТОЛЬКО начальным !important до первого прохода
+           Alpine, к раннее найденному багу отношения не имеет). -->
       <div class="picker-search-toggles">
         <button type="button" class="btn drill-back" x-show="kitTreePath.length > 0" @click="kitTreeBack()">‹</button>
         <span class="picker-kit-tree-crumb" x-text="kitTreeCrumb()"></span>

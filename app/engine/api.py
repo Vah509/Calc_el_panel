@@ -678,29 +678,35 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
         session.commit()
         return {"replaced": len(new_items)}
 
-    @router.post("/{item_id}/kit-items")
-    def add_kit_item(item_id: int, payload: dict[str, Any], session: Session = Depends(get_engine_session)):
-        """Добавляет ОДНУ позицию-комплект на вкладку "Комплекты"
-        калькуляции (2026-08-23) — простой CRUD без пикера (подбор
-        комплектов, как и подбор материалов кнопкой "Добавить" на
-        вкладке "Материалы", — отдельный следующий шаг, см. HANDOFF).
-        Человек выбирает kit_id из списка + вводит quantity, без
-        промежуточного черновика/полноэкранного экрана.
+    @router.put("/{item_id}/kit-items-replace")
+    def replace_kit_items(item_id: int, payload: dict[str, Any], session: Session = Depends(get_engine_session)):
+        """Полная замена состава ОТОБРАННЫХ КОМПЛЕКТОВ калькуляции одной
+        транзакцией (2026-08-23, вкладка "Комплекты" — по прямой просьбе
+        Вахтанга "экран подбора комплектов, а сохранение — как у
+        материалов"). Параллельна replace_items() выше (тот же паттерн
+        "черновик в памяти picker'а -> при 'Сохранить состав' старые
+        строки удаляются, новые создаются заново"), но НЕ переиспользует
+        replace_items() напрямую — там строки идентифицируются
+        material_id и цена берётся из справочника material напрямую,
+        здесь строки идентифицируются kit_id и цена — это СУММА СОСТАВА
+        комплекта (Σ KitItem.quantity × Material.price_excl_vat по живому
+        составу kit_item), у Kit нет собственного ценового поля (см.
+        app/models/kit.py). Отдельный маленький эндпоинт вместо ветвления
+        внутри replace_items() — читаемее, чем один метод, обрабатывающий
+        два принципиально разных источника цены по флагу.
 
-        payload = {"kit_id": 1, "quantity": 2}
+        payload = {"items": [{"kit_id": 1, "quantity": 2}, ...]}
+        Дубликаты kit_id в списке допустимы и сохраняются как отдельные
+        строки — та же логика, что и у replace_items() для material_id.
 
-        price_excl_vat здесь — снэпшот СУММЫ СОСТАВА комплекта на
-        момент добавления (Σ KitItem.quantity × Material.price_excl_vat
-        по живому составу kit_item), не цена самого Kit (у Kit нет
-        ценового поля — состав живой, см. app/models/kit.py). Тот же
-        расчёт, что и при "Пересчитать" (см.
-        _recalc_material_prices_handler в tables.py) — единственная
-        разница: здесь считается один раз при добавлении, там — для
-        всех позиций калькуляции разом."""
+        ВАЖНО: заменяет ТОЛЬКО строки с kit_id IS NOT NULL — строки-
+        материалы (material_id) той же калькуляции не трогает, они живут
+        на отдельной вкладке "Материалы" со своей заменой через
+        replace_items()."""
         if not config.kits_item_table_key:
             raise HTTPException(
                 status_code=422,
-                detail=f"«{config.title}» не поддерживает добавление комплектов.",
+                detail=f"«{config.title}» не поддерживает замену состава комплектов.",
             )
         instance = session.get(model, item_id)
         if not instance:
@@ -715,42 +721,68 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
             )
         items_parent_field = items_config.hierarchy.parent_field
 
-        kit_id = payload.get("kit_id")
-        if not kit_id:
-            raise HTTPException(status_code=422, detail="Не указан комплект.")
+        new_items = payload.get("items") or []
         from app.models.kit import Kit
-        kit = session.get(Kit, kit_id)
-        if not kit:
-            raise HTTPException(status_code=422, detail=f"Комплект id={kit_id} не найден.")
-
-        quantity = payload.get("quantity")
-        if quantity is None or float(quantity) <= 0:
-            raise HTTPException(status_code=422, detail="Количество должно быть больше нуля.")
-
         from app.models.material import Material
         from app.models.kit_item import KitItem
-        kit_items = session.exec(select(KitItem).where(KitItem.kit_id == kit_id)).all()
-        kit_total = 0.0
-        for kit_item in kit_items:
-            material = session.get(Material, kit_item.material_id)
-            if not material:
-                continue
-            kit_total += material.price_excl_vat * kit_item.quantity
 
-        new_item = items_config.model(
-            **{items_parent_field: item_id},
-            kit_id=kit_id,
-            quantity=round(float(quantity), 2),
-            price_excl_vat=round(kit_total, 2),
-        )
-        session.add(new_item)
+        # Валидация ДО удаления старого состава — та же осторожность,
+        # что и в replace_items(): если черновик некорректен, ничего не
+        # трогаем.
+        kits_by_id: dict[int, Kit] = {}
+        for row in new_items:
+            kit_id = row.get("kit_id")
+            if not kit_id:
+                raise HTTPException(status_code=422, detail="Не указан комплект в одной из строк состава.")
+            kit = session.get(Kit, kit_id)
+            if not kit:
+                raise HTTPException(status_code=422, detail=f"Комплект id={kit_id} не найден.")
+            kits_by_id[kit_id] = kit
+            quantity = row.get("quantity")
+            if quantity is None or float(quantity) <= 0:
+                raise HTTPException(status_code=422, detail="Количество должно быть больше нуля.")
+
+        # Старые строки-КОМПЛЕКТЫ этой калькуляции удаляются целиком
+        # (kit_id IS NOT NULL) — строки-материалы (material_id) НЕ
+        # трогаем, у них отдельная замена через replace_items().
+        old_kit_items = session.exec(
+            select(items_config.model).where(
+                getattr(items_config.model, items_parent_field) == item_id,
+                items_config.model.kit_id.is_not(None),
+            )
+        ).all()
+        for old in old_kit_items:
+            session.delete(old)
+
+        # Кэш сумм состава по kit_id — если один и тот же комплект выбран
+        # несколько раз (дубликаты разрешены), считаем его состав один
+        # раз, не на каждую строку заново.
+        kit_sum_cache: dict[int, float] = {}
+
+        def kit_composition_sum(kit_id: int) -> float:
+            if kit_id in kit_sum_cache:
+                return kit_sum_cache[kit_id]
+            kit_items = session.exec(select(KitItem).where(KitItem.kit_id == kit_id)).all()
+            total = 0.0
+            for kit_item in kit_items:
+                material = session.get(Material, kit_item.material_id)
+                if not material:
+                    continue
+                total += material.price_excl_vat * kit_item.quantity
+            kit_sum_cache[kit_id] = total
+            return total
+
+        for row in new_items:
+            kit_id = row["kit_id"]
+            session.add(items_config.model(
+                **{items_parent_field: item_id},
+                kit_id=kit_id,
+                quantity=round(float(row["quantity"]), 2),
+                price_excl_vat=round(kit_composition_sum(kit_id), 2),
+            ))
+
         session.commit()
-        session.refresh(new_item)
-        # _serialize() выше закрыт над field_names ЭТОГО роутера
-        # (calculation), а new_item — CalculationItem: сериализуем вручную
-        # по полям items_config, а не через _serialize().
-        items_field_names = items_config.field_names()
-        return {name: getattr(new_item, name) for name in items_field_names} | {"id": new_item.id}
+        return {"replaced": len(new_items)}
 
     @router.post("/bulk-mark-delete")
     def bulk_mark_delete(payload: dict[str, Any], session: Session = Depends(get_engine_session)):

@@ -440,20 +440,26 @@ _PAGE_TEMPLATE_SOURCE = r"""
           </div>
           {% elif config.kits_tab == tab %}
           <!-- Вкладка "Комплекты" (TableConfig.kits_tab, calculation,
-               2026-08-23) — параллельный аналог вкладки "Материалы", та
-               же физическая таблица calculation_item, отфильтрованная по
-               kit_id вместо material_id (см. loadKitsItems()). Цена
-               строки — снэпшот СУММЫ СОСТАВА комплекта (не цена самого
-               Kit — у него ценового поля нет, состав живой), проставляется
-               на сервере при добавлении (POST .../kit-items) и обновляется
+               2026-08-23, пикер добавлен 2026-08-23 вторым заходом по
+               прямой просьбе Вахтанга) — параллельный аналог вкладки
+               "Материалы", та же физическая таблица calculation_item,
+               отфильтрованная по kit_id вместо material_id (см.
+               loadKitsItems()). Цена строки — снэпшот СУММЫ СОСТАВА
+               комплекта (не цена самого Kit — у него ценового поля нет,
+               состав живой), проставляется на сервере при "Сохранить
+               состав" (PUT .../items, has_kit_snapshot) и обновляется
                общей кнопкой "Пересчитать" (тот же action, что и у
-               материалов — по прямому решению Вахтанга одна кнопка
-               пересчитывает калькуляцию целиком). Добавление — БЕЗ пикера
-               пока (простой select комплекта + количество, подбор —
-               отдельный следующий шаг, как и у материалов раньше). Клик по
-               строке открывает read-only модалку состава комплекта (см.
-               openKitDetail() / kitDetailOpen ниже) — ничего внутри не
-               редактируется. -->
+               материалов). Добавление — ТЕПЕРЬ через ТОТ ЖЕ picker-
+               интерфейс, что и у материалов (openKitAdder() открывает
+               picker с pickerTarget='kits'), но нижняя зона подбора —
+               ДЕРЕВО группа→раздел→комплект вместо плоского поиска (см.
+               picker-overlay ниже: pickerTarget==='kits' переключает
+               разметку нижней панели). Инлайн +/− количества в списке —
+               тот же паттерн, что и у материалов (kitItemIncrement/
+               kitItemDecrement). Клик по НАЗВАНИЮ строки открывает
+               read-only модалку состава комплекта (openKitDetail()) —
+               остальные зоны строки (степпер, цена, сумма) не триггерят
+               модалку, чтобы не конфликтовать с +/-. -->
           <div x-show="!editing.id" class="materials-tab-hint">Сначала сохраните калькуляцию — комплекты можно добавить после.</div>
           <div x-show="editing.id" x-cloak>
             <div class="materials-summary">
@@ -472,25 +478,6 @@ _PAGE_TEMPLATE_SOURCE = r"""
               <button type="button" class="btn btn-danger-ghost" @click="deleteSelectedKitItems()">Удалить</button>
               <button type="button" class="selection-clear" @click="kitsSelectedIds = []">Снять выделение</button>
             </div>
-            <!-- Форма добавления комплекта — простой select + количество,
-                 показывается вместо picker'а (см. openKitAdder/kitAdderOpen).
-                 Отдельный маленький блок, не полноэкранный экран, т.к.
-                 подбора с поиском/фильтрами пока нет. -->
-            <div class="kit-adder" x-show="kitAdderOpen" x-cloak>
-              <select x-model.number="kitAdderDraft.kit_id" class="kit-adder-select">
-                <option value="" disabled>Выберите комплект…</option>
-                <template x-for="kit in kitsKitOptions" :key="kit.id">
-                  <option :value="kit.id" x-text="kit.name"></option>
-                </template>
-              </select>
-              <div class="picker-qty-control">
-                <button type="button" class="picker-qty-btn" @click="kitAdderDraft.quantity = Math.max(1, Number(kitAdderDraft.quantity ?? 1) - 1)">−</button>
-                <span class="picker-qty-value" x-text="kitAdderDraft.quantity"></span>
-                <button type="button" class="picker-qty-btn" @click="kitAdderDraft.quantity = Number(kitAdderDraft.quantity ?? 1) + 1">+</button>
-              </div>
-              <button type="button" class="btn btn-ghost" @click="kitAdderOpen = false">Отмена</button>
-              <button type="button" class="btn btn-primary" :disabled="!kitAdderDraft.kit_id" @click="saveKitAdder()">Сохранить</button>
-            </div>
             <div class="materials-list">
               <template x-for="row in kitsItems" :key="row.id">
                 <div class="materials-row">
@@ -499,9 +486,13 @@ _PAGE_TEMPLATE_SOURCE = r"""
                   <div class="materials-row-info kit-row-clickable" @click="openKitDetail(row)">
                     <span class="materials-row-name" x-text="kitItemLabel(row.kit_id)"></span>
                   </div>
-                  <span class="picker-qty-value kit-row-clickable" x-text="row.quantity" @click="openKitDetail(row)"></span>
-                  <span class="materials-row-price kit-row-clickable" x-text="Number(row.price_excl_vat ?? 0).toFixed(2)" @click="openKitDetail(row)"></span>
-                  <span class="materials-row-sum kit-row-clickable" x-text="(Number(row.price_excl_vat ?? 0) * Number(row.quantity ?? 0)).toFixed(2)" @click="openKitDetail(row)"></span>
+                  <div class="picker-qty-control">
+                    <button type="button" class="picker-qty-btn" @click="kitItemDecrement(row)">−</button>
+                    <span class="picker-qty-value" x-text="row.quantity"></span>
+                    <button type="button" class="picker-qty-btn" @click="kitItemIncrement(row)">+</button>
+                  </div>
+                  <span class="materials-row-price" x-text="Number(row.price_excl_vat ?? 0).toFixed(2)"></span>
+                  <span class="materials-row-sum" x-text="(Number(row.price_excl_vat ?? 0) * Number(row.quantity ?? 0)).toFixed(2)"></span>
                 </div>
               </template>
               <div class="materials-row materials-row-empty" x-show="kitsItems.length === 0">Пока пусто — комплекты не добавлены</div>
@@ -654,13 +645,18 @@ _PAGE_TEMPLATE_SOURCE = r"""
        остаётся на экране независимо от объёма контента ниже (она
        flex-shrink:0 и стоит ПЕРВОЙ, а не последней). -->
   <div class="picker-overlay" x-show="pickerOpen" x-cloak>
-    <!-- Единый интерфейс подбора для kit И calculation (2026-08-23,
-         по прямой просьбе: "тот же интерфейс, что и в подборе для
-         комплектов") — верхняя зона черновика (pickerDraft) + хэндл +
-         нижняя зона поиска, с шапкой "Отмена"/"Сохранить состав".
-         pickerTarget ('kit' | 'calculation') различает только КУДА
-         сохраняется состав при pickerSave() — сама разметка одинакова
-         для обоих случаев. -->
+    <!-- Единый интерфейс подбора для kit, calculation-материалов И
+         calculation-комплектов (pickerTarget: 'kit' | 'calculation' |
+         'kits') — верхняя зона черновика (pickerDraft) + хэндл + нижняя
+         зона подбора, с шапкой "Отмена"/"Сохранить состав". Нижняя зона
+         РАЗНАЯ по содержимому в зависимости от pickerTarget: 'kit' и
+         'calculation' — плоский поиск по материалам (см. ниже), 'kits' —
+         дерево группа→раздел→комплект БЕЗ поиска (см. picker-kit-tree,
+         2026-08-23, по прямой просьбе Вахтанга "экран подбора комплектов
+         организован через иерархию так же, как экран комплектов").
+         Верхняя зона черновика — ОБЩАЯ разметка для всех трёх целей:
+         pickerRowLabel(row) возвращает название материала или комплекта
+         в зависимости от того, что лежит в строке черновика. -->
     <div class="picker-top-actions">
       <button type="button" class="btn btn-ghost" @click="pickerCancel()">Отмена</button>
       <button type="button" class="btn btn-primary" @click="pickerSave()">Сохранить состав</button>
@@ -673,7 +669,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
       <div class="picker-list">
         <template x-for="(row, idx) in pickerDraft" :key="row._key">
           <div class="picker-row">
-            <span class="picker-row-name" x-text="materialLabel(row.material_id)"></span>
+            <span class="picker-row-name" x-text="pickerRowLabel(row)"></span>
             <div class="picker-qty-control">
               <button type="button" class="picker-qty-btn" @click="pickerDecrement(idx)">−</button>
               <span class="picker-qty-value" x-text="row.quantity"></span>
@@ -688,7 +684,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
 
     <div class="picker-handle" @pointerdown="pickerDragStart($event)"><div class="picker-handle-bar"></div></div>
 
-    <div class="picker-pane picker-pane-bottom" :style="'flex: 0 0 ' + (100 - pickerSplit) + '%;'">
+    <div class="picker-pane picker-pane-bottom" :style="'flex: 0 0 ' + (100 - pickerSplit) + '%;'" x-show="pickerTarget !== 'kits'">
       <div class="picker-search-toggles">
         <label class="search-toggle-chip">
           <input type="checkbox" x-model="pickerSearchFields.short_name" @change="pickerSearch()">
@@ -729,6 +725,36 @@ _PAGE_TEMPLATE_SOURCE = r"""
           </div>
         </template>
         <div class="picker-search-row-item picker-row-empty" x-show="pickerResults.length === 0">Ничего не найдено</div>
+      </div>
+    </div>
+
+    <!-- Нижняя зона подбора для pickerTarget==='kits' — ДЕРЕВО
+         группа→раздел→комплект, БЕЗ поиска (прямое решение Вахтанга).
+         Собственный маленький drill-стек (kitTreePath), НЕЗАВИСИМЫЙ от
+         drillPath страницы (тот привязан к CONFIG.levels текущей
+         hierarchy-страницы — здесь мы всегда листаем kit_group/
+         kit_section/kit независимо от того, какая страница открыта).
+         Тап по строке на уровне "группа"/"раздел" уходит вглубь дерева
+         (kitTreeOpen), тап по строке на уровне "комплект" (последний,
+         без дальнейшего drill) сразу добавляет его в черновик
+         (pickerAddKit) — по прямой просьбе "при нажатии на комплект он
+         выбирается и переносится в отобранные". -->
+    <div class="picker-pane picker-pane-bottom" :style="'flex: 0 0 ' + (100 - pickerSplit) + '%;'" x-show="pickerTarget === 'kits'" x-cloak>
+      <div class="picker-search-toggles">
+        <button type="button" class="btn drill-back" x-show="kitTreePath.length > 0" @click="kitTreeBack()">‹</button>
+        <span class="picker-kit-tree-crumb" x-text="kitTreeCrumb()"></span>
+      </div>
+      <div class="picker-search-results">
+        <template x-for="node in kitTreeNodes" :key="node.id">
+          <div class="picker-search-row-item" @click="kitTreeNodeClick(node)">
+            <div class="picker-search-row-info">
+              <span class="picker-search-row-name" x-text="node.name"></span>
+            </div>
+            <span class="picker-kit-tree-arrow" x-show="kitTreePath.length < 2">›</span>
+            <button type="button" class="btn btn-primary picker-add-btn" x-show="kitTreePath.length === 2" @click.stop="pickerAddKit(node)">+ Добавить</button>
+          </div>
+        </template>
+        <div class="picker-search-row-item picker-row-empty" x-show="kitTreeNodes.length === 0">Пока пусто</div>
       </div>
     </div>
   </div>
@@ -934,11 +960,21 @@ function enginePage() {
     kitsItems: [],
     kitsSelectedIds: [],
     kitsKitOptions: [],
-    kitAdderOpen: false,
-    kitAdderDraft: { kit_id: '', quantity: 1 },
     kitDetailOpen: false,
     kitDetailName: '',
     kitDetailItems: [],
+    // --- Дерево подбора комплектов внутри picker'а (pickerTarget==='kits',
+    // 2026-08-23) — собственный маленький drill-стек, НЕ переиспользует
+    // drillPath/LEVELS страницы (те привязаны к CONFIG.levels ТЕКУЩЕЙ
+    // hierarchy-страницы, а здесь мы всегда листаем kit_group/kit_section/
+    // kit НЕЗАВИСИМО от того, какая страница сейчас открыта — форма
+    // calculation сама по себе не hierarchy-страница). kitTreePath —
+    // стек {id, name} узлов, длина 0 = список групп, 1 = список разделов
+    // внутри группы, 2 = список комплектов внутри раздела (последний
+    // уровень — тап по строке добавляет в черновик, а не углубляется
+    // дальше). -->
+    kitTreePath: [],
+    kitTreeNodes: [],
     get kitsTotal() {
       // Сумма без НДС по всем отобранным комплектам — Σ(price_excl_vat ×
       // quantity), price_excl_vat — снэпшот суммы состава каждого
@@ -1450,6 +1486,17 @@ function enginePage() {
       return found ? found.short_name : '';
     },
 
+    pickerRowLabel(row) {
+      // Общая подпись строки черновика для ЛЮБОГО pickerTarget —
+      // ветвится по тому, что заполнено в строке (2026-08-23, вместе с
+      // добавлением pickerTarget==='kits'): kit_id -> название комплекта
+      // (kitItemLabel, тот же кэш kitsKitOptions, что и у списка на
+      // вкладке "Комплекты"), иначе -> материал (materialLabel, как
+      // раньше).
+      if (row.kit_id) return this.kitItemLabel(row.kit_id);
+      return this.materialLabel(row.material_id);
+    },
+
     async openMaterialPicker() {
       try {
         hideJsError();
@@ -1609,11 +1656,11 @@ function enginePage() {
       // (см. HANDOFF, 2.9: кнопка "Отмена" обязательна).
       this.pickerOpen = false;
       this.pickerDraft = [];
-      if (this.pickerTarget === 'calculation') {
-        // Возврат на форму калькуляции (вкладка "Материалы"), НЕ на
-        // список калькуляций целиком — в отличие от kit, здесь есть
-        // полноценная форма с другими вкладками, которую не нужно
-        // закрывать только потому что отменили подбор материалов.
+      if (this.pickerTarget === 'calculation' || this.pickerTarget === 'kits') {
+        // Возврат на форму калькуляции (вкладка "Материалы" или
+        // "Комплекты"), НЕ на список калькуляций целиком — в отличие от
+        // kit, здесь есть полноценная форма с другими вкладками, которую
+        // не нужно закрывать только потому что отменили подбор.
         this.modalOpen = true;
         return;
       }
@@ -1632,6 +1679,29 @@ function enginePage() {
     async pickerSave() {
       try {
         hideJsError();
+        if (this.pickerTarget === 'kits') {
+          // Полная замена всех отобранных комплектов калькуляции разом
+          // (2026-08-23, по прямой просьбе Вахтанга — "как у материалов")
+          // — отдельный эндпоинт PUT .../kit-items-replace, параллельный
+          // replace_items, но для kit_id-строк: каждая созданная строка
+          // получает price_excl_vat = ТЕКУЩАЯ сумма состава комплекта
+          // (Σ kit_item.quantity × material.price_excl_vat) на момент
+          // сохранения, та же формула, что и при "Пересчитать".
+          const payload = {
+            items: this.pickerDraft.map(row => ({ kit_id: row.kit_id, quantity: row.quantity })),
+          };
+          const res = await fetch('/api/calculation/' + this.editing.id + '/kit-items-replace', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (!res.ok) { showJsError(await extractErrorMessage(res)); return; }
+          this.pickerOpen = false;
+          this.pickerDraft = [];
+          this.modalOpen = true;
+          await this.loadKitsItems();
+          return;
+        }
         const payload = {
           items: this.pickerDraft.map(row => ({ material_id: row.material_id, quantity: row.quantity })),
         };
@@ -1819,11 +1889,14 @@ function enginePage() {
       } catch (err) { showJsError(err); }
     },
 
-    // --- Вкладка "Комплекты" калькуляции (2026-08-23) — те же принципы,
-    // что и у вкладки "Материалы" выше (каждая операция сразу на сервер,
-    // нет черновика), но добавление — БЕЗ picker'а (простой select
-    // комплекта + количество), т.к. подбор комплектов с поиском —
-    // отдельный будущий шаг (как раньше было и у материалов). ---
+    // --- Вкладка "Комплекты" калькуляции (2026-08-23, пикер добавлен
+    // 2026-08-23 вторым заходом) — количество/выделение/копирование/
+    // удаление правятся сразу на сервер отдельными запросами (тот же
+    // принцип, что и у вкладки "Материалы"), а ДОБАВЛЕНИЕ/ЗАМЕНА состава
+    // идёт через тот же picker-overlay, что и у материалов, только с
+    // деревом группа→раздел→комплект в нижней зоне подбора вместо
+    // плоского поиска (см. openKitAdder/kitTreeLoad/pickerAddKit ниже,
+    // pickerSave — общий метод, ветвится по pickerTarget==='kits'). ---
 
     async loadKitsItems() {
       try {
@@ -1840,7 +1913,6 @@ function enginePage() {
         // разделение по вкладкам, не отдельный API-запрос.
         this.kitsItems = data.items.filter(row => !!row.kit_id);
         this.kitsSelectedIds = [];
-        this.kitAdderOpen = false;
         if (this.kitsKitOptions.length === 0) {
           const kitRes = await fetch('/api/kit?page_size=1000');
           const kitData = await kitRes.json();
@@ -1870,26 +1942,117 @@ function enginePage() {
       return found ? found.name : '';
     },
 
-    openKitAdder() {
-      this.kitAdderDraft = { kit_id: '', quantity: 1 };
-      this.kitAdderOpen = true;
-    },
+    // --- Пикер комплектов (pickerTarget==='kits', 2026-08-23) — тот же
+    // picker-overlay, что и у материалов, но нижняя зона подбора — дерево
+    // группа→раздел→комплект вместо плоского поиска (по прямой просьбе
+    // Вахтанга: "экран подбора должен быть организован через иерархию
+    // так же, как экран комплектов"). ---
 
-    async saveKitAdder() {
-      if (!this.kitAdderDraft.kit_id) return;
+    async openKitAdder() {
       try {
         hideJsError();
-        const res = await fetch('/api/calculation/' + this.editing.id + '/kit-items', {
-          method: 'POST',
+        // Предзаполнение из ТЕКУЩИХ отобранных комплектов (kitsItems уже
+        // загружены при openEdit/loadKitsItems) — та же логика
+        // предзаполнения, что и у openMaterialAdder().
+        this.pickerDraft = this.kitsItems.map(item => ({
+          _key: 'existing-' + item.id,
+          kit_id: item.kit_id,
+          quantity: Number(item.quantity ?? 1),
+        }));
+        this.pickerDraftSeq = this.pickerDraft.length;
+        this.pickerTarget = 'kits';
+        this.pickerSplit = 40;
+        this.modalOpen = false;
+        this.pickerOpen = true;
+        this.kitTreePath = [];
+        await this.kitTreeLoad();
+      } catch (err) { showJsError(err); }
+    },
+
+    async kitTreeLoad() {
+      // Загружает узлы ТЕКУЩЕГО уровня дерева (kitTreePath.length: 0 —
+      // группы, 1 — разделы внутри группы, 2 не бывает — на уровне
+      // "комплект" тап сразу добавляет в черновик, не открывает
+      // следующий уровень, см. kitTreeNodeClick). Использует те же три
+      // эндпоинта, что и полноценные страницы /kit_group-v2 и т.п., но
+      // НЕ переиспользует их drillPath/LEVELS — свой независимый стек
+      // (см. обоснование у kitTreePath в объявлении state выше).
+      try {
+        hideJsError();
+        const depth = this.kitTreePath.length;
+        let url;
+        if (depth === 0) {
+          url = '/api/kit_group?page_size=1000';
+        } else if (depth === 1) {
+          url = '/api/kit_section?parent_id=' + this.kitTreePath[0].id + '&page_size=1000';
+        } else {
+          url = '/api/kit?parent_id=' + this.kitTreePath[1].id + '&page_size=1000';
+        }
+        const res = await fetch(url);
+        const data = await res.json();
+        this.kitTreeNodes = data.items;
+      } catch (err) { showJsError(err); }
+    },
+
+    kitTreeNodeClick(node) {
+      // На уровнях "группа"/"раздел" (kitTreePath.length < 2) — уходим
+      // вглубь дерева. На уровне "комплект" (length === 2) — кнопка
+      // "+ Добавить" уже добавляет через pickerAddKit (см. разметку,
+      // @click.stop) — клик по остальной части строки НЕ должен
+      // повторно добавлять, чтобы не дублировать при случайном двойном
+      // тапе рядом с кнопкой, поэтому здесь просто уходим вглубь только
+      // если это НЕ последний уровень.
+      if (this.kitTreePath.length >= 2) return;
+      this.kitTreePath.push({ id: node.id, name: node.name });
+      this.kitTreeLoad();
+    },
+
+    kitTreeBack() {
+      this.kitTreePath.pop();
+      this.kitTreeLoad();
+    },
+
+    kitTreeCrumb() {
+      if (this.kitTreePath.length === 0) return 'Группы комплектов';
+      return this.kitTreePath.map(p => p.name).join(' › ');
+    },
+
+    pickerAddKit(kit) {
+      // Дубликаты kit_id разрешены — та же логика, что и pickerAddMaterial
+      // (не суммируются с уже существующей строкой черновика).
+      this.pickerDraftSeq += 1;
+      this.pickerDraft.push({ _key: 'new-' + this.pickerDraftSeq, kit_id: kit.id, quantity: 1 });
+      const opts = this.kitsKitOptions;
+      if (!opts.some(o => o.id === kit.id)) {
+        this.kitsKitOptions = [...opts, kit];
+      }
+    },
+
+    kitItemIncrement(row) { this.kitItemSetQuantity(row, Number(row.quantity ?? 0) + 1); },
+    kitItemDecrement(row) { this.kitItemSetQuantity(row, Number(row.quantity ?? 0) - 1); },
+
+    async kitItemSetQuantity(row, quantity) {
+      // Инлайн-редактирование количества прямо в строке списка отобранных
+      // комплектов — тот же паттерн, что и materialItemSetQuantity()
+      // (сохраняет сразу на сервер, не трогает price_excl_vat — снэпшот
+      // суммы состава пересчитывается только явной кнопкой "Пересчитать"
+      // или полной заменой через picker, не при простом изменении
+      // количества).
+      const clean = quantity > 0 ? Math.round(quantity * 100) / 100 : 1;
+      row.quantity = clean;
+      try {
+        hideJsError();
+        const res = await fetch('/api/' + CONFIG.kitsItemTableKey + '/' + row.id, {
+          method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            kit_id: this.kitAdderDraft.kit_id,
-            quantity: this.kitAdderDraft.quantity,
+            calculation_id: this.editing.id,
+            kit_id: row.kit_id,
+            quantity: clean,
+            price_excl_vat: row.price_excl_vat,
           }),
         });
         if (!res.ok) { showJsError(await extractErrorMessage(res)); return; }
-        this.kitAdderOpen = false;
-        await this.loadKitsItems();
       } catch (err) { showJsError(err); }
     },
 

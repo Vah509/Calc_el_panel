@@ -665,27 +665,24 @@ footer.hint { padding: 10px 20px 30px; font-size: 12px; color: var(--ink-soft); 
 /* --- Вкладка "Комплекты" калькуляции (calculation, 2026-08-23) ---
    Переиспользует .materials-summary/.materials-toolbar/.materials-list/
    .materials-row/.selection-bar/.picker-qty-* целиком (тот же визуальный
-   язык, что и вкладка "Материалы") — только .kit-adder ниже добавлен
-   новым, под простую форму "выбор комплекта + количество" (замену
-   picker'а, пока подбора комплектов с поиском нет). */
-.kit-adder {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  margin-bottom: 12px;
-  background: #fafaf8;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  flex-wrap: wrap;
-}
-.kit-adder-select {
-  flex: 1;
-  min-width: 160px;
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  font-size: 14px;
-  background: #fff;
-}
+   язык, что и вкладка "Материалы"). Инлайн-форма выбора+количества
+   (.kit-adder) убрана вторым заходом (2026-08-23) — добавление теперь
+   идёт через тот же picker-overlay, что и у материалов (см.
+   .picker-kit-tree-* ниже, для дерева группа→раздел→комплект внутри
+   picker'а). */
 .kit-row-clickable { cursor: pointer; }
+
+/* Дерево подбора комплектов внутри picker-overlay (pickerTarget==='kits',
+   2026-08-23) — переиспользует .picker-search-toggles/.picker-search-
+   results/.picker-search-row-item целиком, добавляет только хлебную
+   крошку и стрелку "вглубь". */
+.picker-kit-tree-crumb {
+  font-size: 13px;
+  color: var(--ink-soft);
+  align-self: center;
+}
+.picker-kit-tree-arrow {
+  color: var(--ink-soft);
+  flex-shrink: 0;
+  padding: 0 4px;
+}

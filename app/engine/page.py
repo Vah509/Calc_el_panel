@@ -665,16 +665,42 @@ _PAGE_TEMPLATE_SOURCE = r"""
     <div class="picker-pane picker-pane-top" :style="'flex: 0 0 ' + pickerSplit + '%;'">
       <div class="picker-pane-header">
         <span x-text="pickerDraft.length + ' позиций'"></span>
+        <!-- Сумма без НДС по всем отобранным комплектам — ТОЛЬКО для
+             pickerTarget==='kits' (2026-08-24, по прямой просьбе
+             Вахтанга: "сверху в окне отобранных комплектов должна
+             указываться сумма всего без НДС"). У материалов в этом же
+             черновике цена/сумма не показывается — там цена всегда
+             берётся заново из справочника при сохранении (replace_items
+             сам проставляет актуальную material.price_excl_vat), а не
+             считается заранее на клиенте. -->
+        <span x-show="pickerTarget === 'kits'" x-text="'Итого без НДС: ' + pickerKitsTotal.toFixed(2)"></span>
       </div>
       <div class="picker-list">
         <template x-for="(row, idx) in pickerDraft" :key="row._key">
           <div class="picker-row">
-            <span class="picker-row-name" x-text="pickerRowLabel(row)"></span>
+            <!-- Клик по названию строки-комплекта открывает read-only
+                 модалку состава (openKitDetail принимает любой объект с
+                 .kit_id, тот же метод что и у сохранённого списка на
+                 вкладке "Комплекты", 2026-08-24, по прямой просьбе:
+                 "тапаю на отобранный комплект — должно открываться окно
+                 с составом"). Для материалов (pickerTarget !== 'kits')
+                 клика по названию нет — там своей детальной модалки не
+                 предусмотрено. -->
+            <span class="picker-row-name" :class="{'kit-row-clickable': pickerTarget === 'kits'}"
+                  @click="pickerTarget === 'kits' && openKitDetail(row)" x-text="pickerRowLabel(row)"></span>
             <div class="picker-qty-control">
               <button type="button" class="picker-qty-btn" @click="pickerDecrement(idx)">−</button>
               <span class="picker-qty-value" x-text="row.quantity"></span>
               <button type="button" class="picker-qty-btn" @click="pickerIncrement(idx)">+</button>
             </div>
+            <!-- Цена за единицу и сумма по строке — ТОЛЬКО для
+                 pickerTarget==='kits' (2026-08-24). kitUnitPrice()
+                 читает клиентский кэш (см. kitPriceCache в state) —
+                 считается на лету по живому составу комплекта, т.к.
+                 черновик ещё не сохранён на сервере и серверного
+                 снэпшота для этих строк ещё не существует. -->
+            <span class="picker-row-price" x-show="pickerTarget === 'kits'" x-text="kitUnitPrice(row.kit_id).toFixed(2)"></span>
+            <span class="picker-row-sum" x-show="pickerTarget === 'kits'" x-text="(kitUnitPrice(row.kit_id) * Number(row.quantity ?? 0)).toFixed(2)"></span>
             <button type="button" class="picker-row-remove" @click="pickerRemoveRow(idx)">🗑</button>
           </div>
         </template>
@@ -975,6 +1001,17 @@ function enginePage() {
     // дальше). -->
     kitTreePath: [],
     kitTreeNodes: [],
+    // kitPriceCache: kit_id -> цена за единицу (Σ kit_item.quantity ×
+    // material.price_excl_vat), считается на лету на фронте для ЕЩЁ НЕ
+    // сохранённого черновика picker'а (pickerTarget==='kits') — сервер
+    // о черновике ничего не знает, пока не нажато "Сохранить состав", а
+    // показать актуальную цену за единицу и сумму по строке в черновике
+    // нужно сразу, без ожидания сохранения (2026-08-24, по прямой
+    // просьбе Вахтанга: "цена за единицу и сумма должны быть видны в
+    // самом отобранном списке комплектов"). Кэш по kit_id, не по строке
+    // черновика — один и тот же комплект, добавленный дважды, не
+    // запрашивает состав повторно.
+    kitPriceCache: {},
     get kitsTotal() {
       // Сумма без НДС по всем отобранным комплектам — Σ(price_excl_vat ×
       // quantity), price_excl_vat — снэпшот суммы состава каждого
@@ -1965,6 +2002,14 @@ function enginePage() {
         this.modalOpen = false;
         this.pickerOpen = true;
         this.kitTreePath = [];
+        // Сбрасываем кэш цен за единицу — на случай если состав каких-то
+        // комплектов поменялся с прошлого открытия picker'а в этой же
+        // сессии (кэш иначе жил бы бессрочно, показывая устаревшую
+        // цену).
+        this.kitPriceCache = {};
+        for (const row of this.pickerDraft) {
+          this.ensureKitPrice(row.kit_id);
+        }
         await this.kitTreeLoad();
       } catch (err) { showJsError(err); }
     },
@@ -2026,6 +2071,7 @@ function enginePage() {
       if (!opts.some(o => o.id === kit.id)) {
         this.kitsKitOptions = [...opts, kit];
       }
+      this.ensureKitPrice(kit.id);
     },
 
     kitItemIncrement(row) { this.kitItemSetQuantity(row, Number(row.quantity ?? 0) + 1); },
@@ -2128,6 +2174,49 @@ function enginePage() {
     materialItemPrice(materialId) {
       const found = this.materialsMaterialOptions.find(m => m.id === materialId);
       return found ? Number(found.price_excl_vat ?? 0) : 0;
+    },
+
+    // --- Цена за единицу комплекта внутри ЧЕРНОВИКА picker'а
+    // (pickerTarget==='kits', 2026-08-24) — см. обоснование у
+    // kitPriceCache в объявлении state выше. kitUnitPrice() читает кэш
+    // синхронно (для x-text в разметке), ensureKitPrice() догружает
+    // состав в фоне при первом обращении к ещё некэшированному kit_id и
+    // сама вызывает себя из pickerAddKit()/openKitAdder(), чтобы цена
+    // была готова к моменту первого рендера строки, а не появлялась с
+    // задержкой после клика. ---
+
+    kitUnitPrice(kitId) {
+      if (this.kitPriceCache[kitId] === undefined) {
+        this.ensureKitPrice(kitId);
+        return 0;
+      }
+      return this.kitPriceCache[kitId];
+    },
+
+    async ensureKitPrice(kitId) {
+      if (this.kitPriceCache[kitId] !== undefined) return;
+      // Placeholder сразу (0), чтобы параллельные обращения к одному и
+      // тому же kitId из нескольких строк черновика не запускали
+      // повторные fetch, пока первый ещё не завершился.
+      this.kitPriceCache[kitId] = 0;
+      try {
+        const res = await fetch('/api/kit_item?parent_id=' + kitId + '&page_size=1000');
+        const data = await res.json();
+        let total = 0;
+        for (const item of data.items) {
+          total += this.materialItemPrice(item.material_id) * Number(item.quantity ?? 0);
+        }
+        this.kitPriceCache = { ...this.kitPriceCache, [kitId]: Math.round(total * 100) / 100 };
+      } catch (err) { showJsError(err); }
+    },
+
+    get pickerKitsTotal() {
+      // Сумма без НДС по ВСЕМ строкам черновика picker'а — используется
+      // ТОЛЬКО когда pickerTarget==='kits' (для материалов в черновике
+      // цена не показывается вовсе, см. разметку picker-pane-top).
+      return this.pickerDraft.reduce(
+        (sum, row) => sum + this.kitUnitPrice(row.kit_id) * Number(row.quantity ?? 0), 0
+      );
     },
 
     toggleSelect(id) {

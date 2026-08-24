@@ -484,6 +484,10 @@ footer.hint { padding: 10px 20px 30px; font-size: 12px; color: var(--ink-soft); 
   border-bottom: 1px solid var(--line);
   background: #fafaf8;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 .picker-list { overflow-y: auto; flex: 1; }
 .picker-row {
@@ -495,6 +499,15 @@ footer.hint { padding: 10px 20px 30px; font-size: 12px; color: var(--ink-soft); 
   font-size: 16px;
 }
 .picker-row-name { flex: 1; }
+.picker-row-price, .picker-row-sum {
+  flex-shrink: 0;
+  min-width: 70px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+.picker-row-sum { font-weight: 600; color: var(--ink); }
 .picker-row-empty { color: var(--ink-soft); font-size: 15px; justify-content: center; padding: 24px 20px; }
 .picker-qty-control { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .picker-qty-btn {

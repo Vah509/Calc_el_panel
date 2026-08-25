@@ -16,6 +16,7 @@ from sqlmodel import Session, text
 from app.database import init_db, engine, seed_constants
 from app.engine.register import register_engine_tables
 from app.processors.router import register_processors
+from app.documents_chain.router import register_documents_chain
 from app.version import APP_VERSION
 
 app = FastAPI(title="ЭлектроЩит — Учёт калькуляций")
@@ -33,6 +34,11 @@ _templates = register_engine_tables(app)
 # Раздел "Обработки" (меню NAV_MENU) — переиспользует то же Jinja2
 # окружение, что и движок таблиц (тот же base.html, тот же APP_VERSION).
 register_processors(app, _templates)
+
+# Страница "Цепочка документов" (/documents-chain) — доступна только
+# по кнопке "Показать подчинённые документы" в журнале заявок, своей
+# ссылки в NAV_MENU сознательно нет (см. app/documents_chain/router.py).
+register_documents_chain(app, _templates)
 
 
 @app.on_event("startup")

@@ -59,15 +59,19 @@ _PAGE_TEMPLATE_SOURCE = r"""
   <div class="selection-bar" x-show="selectedIds.length > 0" x-cloak>
     <span x-text="selectedIds.length + ' выделено'"></span>
     <button type="button" class="btn" :disabled="selectedIds.length !== 1" @click="copySelected()">Копировать</button>
+    {% if config.child_document_actions|length > 0 %}
     {% if config.create_child_document_url %}
     <button type="button" class="btn" :disabled="selectedIds.length !== 1" @click="createChildDocument()">{{ config.child_document_actions[0] }}</button>
-    {% for action_label in config.child_document_actions[1:] %}
-    <button type="button" class="btn" disabled title="Пока недоступно">{{ action_label }}</button>
-    {% endfor %}
     {% else %}
-    {% for action_label in config.child_document_actions %}
-    <button type="button" class="btn" disabled title="Пока недоступно">{{ action_label }}</button>
-    {% endfor %}
+    <button type="button" class="btn" disabled title="Пока недоступно">{{ config.child_document_actions[0] }}</button>
+    {% endif %}
+    {% endif %}
+    {% if config.child_document_actions|length > 1 %}
+    {% if config.documents_chain_url %}
+    <button type="button" class="btn" :disabled="selectedIds.length !== 1" @click="showDocumentsChain()">{{ config.child_document_actions[1] }}</button>
+    {% else %}
+    <button type="button" class="btn" disabled title="Пока недоступно">{{ config.child_document_actions[1] }}</button>
+    {% endif %}
     {% endif %}
     {% if config.delete_mode == "soft" %}
     <button type="button" class="btn" @click="bulkMarkDelete(true)">Пометить на удаление</button>
@@ -2455,6 +2459,19 @@ function enginePage() {
       window.location.href = CONFIG.createChildDocumentUrl + '?from_request=' + encodeURIComponent(id);
     },
 
+    showDocumentsChain() {
+      // "Показать подчинённые документы" (v73): активна только при
+      // РОВНО одном выделенном элементе. Переход на полноэкранную
+      // страницу /documents-chain с query-параметром ?request_id={id}
+      // — та страница сама подгружает GET /api/documents-chain/{id}
+      // и строит журнал заявка + все дочерние документы (calculation,
+      // дальше specification/invoice, когда появятся). Полная
+      // перезагрузка, тот же принцип, что и createChildDocument().
+      if (this.selectedIds.length !== 1 || !CONFIG.documentsChainUrl) return;
+      const id = this.selectedIds[0];
+      window.location.href = CONFIG.documentsChainUrl + '?request_id=' + encodeURIComponent(id);
+    },
+
     async bulkMarkDelete(value) {
       // Групповая пометка/снятие пометки на удаление — БЕЗУСЛОВНО
       // проставляет is_deleted=value всем выделенным записям (не
@@ -2725,6 +2742,7 @@ def _serialize_level_config(config: TableConfig) -> dict:
         "extraLookups": config.extra_lookups,
         "formTabs": config.form_tabs,
         "createChildDocumentUrl": config.create_child_document_url,
+        "documentsChainUrl": config.documents_chain_url,
         "materialsTab": config.materials_tab,
         "materialsItemTableKey": config.materials_item_table_key,
         "materialsRecalcAction": config.materials_recalc_action,

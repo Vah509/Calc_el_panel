@@ -126,6 +126,7 @@ request_table = TableConfig(
     document_prefix="R",
     child_document_actions=["Создать документ на основании", "Показать подчинённые документы"],
     create_child_document_url="/calculation-v2",
+    documents_chain_url="/documents-chain",
     default_sort_field="document_date",
     default_sort_dir="desc",
     fields=[

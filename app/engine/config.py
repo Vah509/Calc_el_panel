@@ -520,6 +520,16 @@ class TableConfig:
                                     # кнопки списка остаются disabled-заглушками до
                                     # своей реализации. None — все кнопки списка
                                     # disabled, как было (обратная совместимость).
+    documents_chain_url: Optional[str] = None
+                                    # URL страницы "цепочки документов" для ВТОРОЙ
+                                    # кнопки из child_document_actions (сейчас
+                                    # "/documents-chain" у request, v73) — если
+                                    # задан, вторая кнопка списка перестаёт быть
+                                    # заглушкой: редирект на этот URL с query-
+                                    # параметром ?request_id={id} выделенной строки
+                                    # (см. showDocumentsChain() в page.py и
+                                    # app/documents_chain/). None — вторая кнопка
+                                    # остаётся disabled-заглушкой, как раньше.
     default_sort_field: Optional[str] = None
                                     # Имя поля для сортировки списка ПО УМОЛЧАНИЮ при
                                     # первой загрузке страницы (человек может сменить

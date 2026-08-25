@@ -414,6 +414,19 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
         session.refresh(instance)
         return _serialize(instance)
 
+    @router.get("/{item_id}")
+    def get_item(item_id: int, session: Session = Depends(get_engine_session)):
+        # Одиночная запись по id — понадобилось для ?open_id= (v74,
+        # см. maybeOpenById() в page.py и app/documents_chain/):
+        # запись, по которой кликнули на другой странице, может не
+        # попасть в уже загруженную первую страницу списка
+        # (сортировка/фильтры/пагинация), поэтому нужен точечный
+        # запрос, а не поиск среди уже загруженных this.items.
+        instance = session.get(model, item_id)
+        if not instance:
+            raise HTTPException(status_code=404, detail=f"{config.title_singular} не найдена")
+        return _serialize(instance)
+
     @router.put("/{item_id}")
     def update_item(item_id: int, payload: dict[str, Any], session: Session = Depends(get_engine_session)):
         instance = session.get(model, item_id)

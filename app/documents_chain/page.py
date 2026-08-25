@@ -82,7 +82,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
           </thead>
           <tbody>
             <template x-for="item in group.items" :key="group.key + ':' + item.id">
-              <tr @click="toggleSelect(group.key, item.id)">
+              <tr @click="openDocument(group, item)">
                 <td @click.stop>
                   <input type="checkbox" :checked="isSelected(group.key, item.id)" @change="toggleSelect(group.key, item.id)">
                 </td>
@@ -208,6 +208,25 @@ function documentsChainPage() {
       const idx = this.selectedKeys.indexOf(key);
       if (idx === -1) this.selectedKeys.push(key);
       else this.selectedKeys.splice(idx, 1);
+    },
+
+    openDocument(group, item) {
+      // Клик по СТРОКЕ (не по чекбоксу — там @click.stop, см. разметку)
+      // открывает документ на его родной странице движка (v74) —
+      // полная перезагрузка, тот же принцип, что и createChildDocument()/
+      // showDocumentsChain() в обычном журнале движка (engine/page.py).
+      // ?open_id={id} — какую запись открыть (см. maybeOpenById() на
+      // целевой странице). ?chain_request_id={requestId} — чтобы
+      // целевая страница знала, куда вести кнопку "← К цепочке" в
+      // своём topbar (см. chainReturnUrl в enginePage()).
+      if (!group.own_page_url) {
+        this.showError('Для «' + group.title + '» пока не задана собственная страница — открыть документ нельзя.');
+        return;
+      }
+      const url = group.own_page_url
+        + '?open_id=' + encodeURIComponent(item.id)
+        + '&chain_request_id=' + encodeURIComponent(this.requestId);
+      window.location.href = url;
     },
 
     groupedSelection() {

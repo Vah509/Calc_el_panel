@@ -49,6 +49,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
       <span class="count" x-text="items.length + ' позиций'"></span>
     </div>
     <div style="display:flex; gap:8px;">
+      <button class="btn" x-show="chainReturnUrl" x-cloak @click="window.location.href = chainReturnUrl">← К цепочке</button>
       {% if config.allow_create %}
       <button class="btn btn-primary" @click="openCreate()">+ {{ config.title_singular|capitalize }}</button>
       {% endif %}
@@ -1005,6 +1006,11 @@ function enginePage() {
     searchFields: {},
     q: '',
     exactPrefix: false,
+    chainReturnUrl: null,   // задаётся в maybeOpenById() из ?chain_request_id=
+                             // (v74) — если страница открыта переходом со
+                             // страницы "Цепочка документов", здесь URL для
+                             // возврата туда; иначе остаётся null и кнопка
+                             // "← К цепочке" в topbar не отображается.
     modalOpen: false,
     editing: {},
     // activeFormTab: индекс активной вкладки формы (0-based), только
@@ -1223,6 +1229,7 @@ function enginePage() {
         }
         await this.load();
         await this.maybeOpenFromRequest();
+        await this.maybeOpenById();
         // Блокировка скролла <body> пока открыт picker-overlay или
         // обычная модалка (2026-08-24) — без этого перетаскивание
         // хэндла picker'а (.picker-handle, pickerDragStart) может
@@ -1283,6 +1290,45 @@ function enginePage() {
       await this.openCreate();
       this.editing.request_id = Number(requestId);
       await this.runAction('brand_slot_labels');
+    },
+
+    async maybeOpenById() {
+      // Подхватывает ?open_id={id} в адресе страницы (v74) — переход
+      // сюда делает страница "Цепочка документов"
+      // (app/documents_chain/), когда там кликают по СТРОКЕ документа
+      // (не по чекбоксу): полная перезагрузка на родную страницу этого
+      // типа документа с этим параметром (см. openDocument() в
+      // app/documents_chain/page.py) — карточка открывается тем же
+      // кодом, что и обычный клик по строке в родном журнале
+      // (openEdit), поэтому form_tabs/materialsTab/kitsTab и все
+      // остальные особенности конкретной таблицы работают без
+      // дублирования логики где-либо ещё.
+      const params = new URLSearchParams(window.location.search);
+      const openId = params.get('open_id');
+      if (!openId) return;
+      const id = Number(openId);
+      const chainRequestId = params.get('chain_request_id');
+      if (chainRequestId) {
+        this.chainReturnUrl = '/documents-chain?request_id=' + encodeURIComponent(chainRequestId);
+      }
+      window.history.replaceState({}, '', window.location.pathname);
+      // Запись могла не попасть в уже загруженную первую страницу
+      // списка (сортировка/фильтры/пагинация) — сначала пробуем найти
+      // среди того, что уже загружено (частый случай — только что
+      // созданный документ, "свежие сверху"), иначе точечно
+      // догружаем именно эту запись отдельным запросом по id.
+      let item = this.items.find(i => i.id === id);
+      if (!item) {
+        try {
+          const res = await fetch('/api/' + this.currentLevel().key + '/' + id);
+          if (res.ok) item = await res.json();
+        } catch (e) { /* см. ниже — покажем ошибку, если так и не нашли */ }
+      }
+      if (!item) {
+        showJsError('Документ #' + id + ' не найден.');
+        return;
+      }
+      await this.openEdit(item);
     },
 
     relationName(fieldName, id) {

@@ -530,6 +530,18 @@ class TableConfig:
                                     # (см. showDocumentsChain() в page.py и
                                     # app/documents_chain/). None — вторая кнопка
                                     # остаётся disabled-заглушкой, как раньше.
+    own_page_url: Optional[str] = None
+                                    # URL СОБСТВЕННОЙ страницы этого типа документа
+                                    # (например "/request-v2" у request, "/calculation-v2"
+                                    # у calculation, v74) — используется страницей
+                                    # "Цепочка документов" (app/documents_chain/), чтобы
+                                    # открыть карточку конкретного документа кликом по
+                                    # строке: переход на own_page_url с параметрами
+                                    # ?open_id={id}&chain_request_id={id заявки}
+                                    # (см. maybeOpenById() в page.py). Заполняется у
+                                    # каждой таблицы, документы которой должны
+                                    # открываться по клику из цепочки — справочники
+                                    # (material, brand и т.п.) этого поля не имеют.
     default_sort_field: Optional[str] = None
                                     # Имя поля для сортировки списка ПО УМОЛЧАНИЮ при
                                     # первой загрузке страницы (человек может сменить

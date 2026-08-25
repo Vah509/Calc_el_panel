@@ -52,6 +52,7 @@ def _group_meta(table_config) -> dict:
         "title_singular": table_config.title_singular,
         "document_number_field": table_config.document_number_field,
         "delete_mode": table_config.delete_mode,
+        "own_page_url": table_config.own_page_url,
         "relations": [
             {"field": r.field, "target_table": r.target_table, "display_field": r.display_field}
             for r in table_config.relations

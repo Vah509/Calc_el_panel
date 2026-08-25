@@ -800,7 +800,22 @@ _PAGE_TEMPLATE_SOURCE = r"""
            Alpine, к раннее найденному багу отношения не имеет). -->
       <div class="picker-search-toggles">
         <button type="button" class="btn drill-back" x-show="kitTreePath.length > 0" @click="kitTreeBack()">‹</button>
-        <span class="picker-kit-tree-crumb" x-text="kitTreeCrumb()"></span>
+        <!-- Хлебная крошка — кликабельные сегменты (2026-08-24, по
+             прямой просьбе Вахтанга: "клик на хлебные крошки — переход
+             на соответствующий раздел"). Последний сегмент (текущий
+             экран) рендерится обычным текстом без клика — переходить
+             никуда не нужно, он уже открыт. Разделитель "›" между
+             сегментами не кликабелен, только сами названия. -->
+        <span class="picker-kit-tree-crumb">
+          <template x-for="(seg, idx) in kitTreeCrumbSegments()" :key="idx">
+            <span>
+              <span x-show="idx > 0" class="picker-kit-tree-crumb-sep">›</span>
+              <span x-text="seg.label"
+                    :class="{'picker-kit-tree-crumb-link': !seg.isCurrent}"
+                    @click="!seg.isCurrent && kitTreeGoTo(seg.depth)"></span>
+            </span>
+          </template>
+        </span>
       </div>
       <div class="picker-search-results">
         <template x-for="node in kitTreeNodes" :key="node.id">
@@ -2125,13 +2140,19 @@ function enginePage() {
 
     kitTreeNodeClick(node) {
       // На уровнях "группа"/"раздел" (kitTreePath.length < 2) — уходим
-      // вглубь дерева. На уровне "комплект" (length === 2) — кнопка
-      // "+ Добавить" уже добавляет через pickerAddKit (см. разметку,
-      // @click.stop) — клик по остальной части строки НЕ должен
-      // повторно добавлять, чтобы не дублировать при случайном двойном
-      // тапе рядом с кнопкой, поэтому здесь просто уходим вглубь только
-      // если это НЕ последний уровень.
-      if (this.kitTreePath.length >= 2) return;
+      // вглубь дерева. На уровне "комплект" (length === 2) — клик по
+      // ЛЮБОЙ части строки добавляет комплект в черновик (2026-08-24, по
+      // прямой просьбе Вахтанга — "вся строка должна добавлять, как в
+      // поиске материалов"): кнопка "+ Добавить" остаётся визуальным
+      // акцентом справа (совпадающим по стилю с поиском материалов), но
+      // клик по ней вызывает pickerAddKit() через @click.stop в разметке
+      // — не всплывает до этого обработчика, поэтому дублирования нет
+      // (клик по кнопке добавляет один раз через свой путь, клик по
+      // остальной строке — один раз через этот).
+      if (this.kitTreePath.length >= 2) {
+        this.pickerAddKit(node);
+        return;
+      }
       this.kitTreePath.push({ id: node.id, name: node.name });
       this.kitTreeLoad();
     },
@@ -2141,9 +2162,33 @@ function enginePage() {
       this.kitTreeLoad();
     },
 
-    kitTreeCrumb() {
-      if (this.kitTreePath.length === 0) return 'Группы комплектов';
-      return this.kitTreePath.map(p => p.name).join(' › ');
+    kitTreeGoTo(depth) {
+      // Переход по хлебной крошке на произвольный уровень дерева
+      // (2026-08-24, по прямой просьбе Вахтанга: "клик на хлебные крошки
+      // — переход на соответствующий раздел/подраздел"). depth — целевая
+      // длина kitTreePath: 0 = корень ("Группы комплектов"), 1 = список
+      // разделов внутри выбранной группы, 2 (текущий последний уровень —
+      // сюда крошка никогда не ведёт, см. kitTreeCrumb: последний сегмент
+      // рендерится НЕ ссылкой, раз он уже совпадает с текущим экраном).
+      this.kitTreePath = this.kitTreePath.slice(0, depth);
+      this.kitTreeLoad();
+    },
+
+    kitTreeCrumbSegments() {
+      // Хлебная крошка как массив кликабельных сегментов (2026-08-24) —
+      // каждый сегмент — {label, depth, isCurrent}, где depth — то, что
+      // нужно передать в kitTreeGoTo() при клике на ЭТОТ сегмент.
+      // Корень ("Группы комплектов") всегда первый элемент с depth=0.
+      // ПОСЛЕДНИЙ сегмент (текущий экран) — тоже включён в массив для
+      // единообразного рендера через x-for, но помечается isCurrent,
+      // чтобы разметка могла показать его как обычный текст, а не
+      // ссылку (клик на "текущий экран" не имеет смысла — он и так уже
+      // открыт).
+      const segments = [{ label: 'Группы комплектов', depth: 0, isCurrent: this.kitTreePath.length === 0 }];
+      this.kitTreePath.forEach((node, idx) => {
+        segments.push({ label: node.name, depth: idx + 1, isCurrent: idx === this.kitTreePath.length - 1 });
+      });
+      return segments;
     },
 
     pickerAddKit(kit) {

@@ -712,6 +712,19 @@ footer.hint { padding: 10px 20px 30px; font-size: 12px; color: var(--ink-soft); 
   color: var(--ink-soft);
   align-self: center;
 }
+/* Кликабельные сегменты хлебной крошки (2026-08-24) — по умолчанию
+   унаследуют цвет .picker-kit-tree-crumb (некликабельный последний
+   сегмент = текущий экран); .picker-kit-tree-crumb-link выделяет
+   остальные сегменты цветом акцента, чтобы было видно что по ним можно
+   тапнуть. */
+.picker-kit-tree-crumb-link {
+  color: var(--accent);
+  cursor: pointer;
+}
+.picker-kit-tree-crumb-sep {
+  padding: 0 4px;
+  color: var(--ink-soft);
+}
 .picker-kit-tree-arrow {
   color: var(--ink-soft);
   flex-shrink: 0;

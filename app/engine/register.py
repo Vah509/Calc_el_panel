@@ -32,8 +32,21 @@ def register_engine_tables(app: FastAPI) -> Jinja2Templates:
     templates.env.globals["NAV_MENU"] = NAV_MENU
 
     for config in ALL_TABLES:
+        url_path = f"/{config.key}-v2"
+        # own_page_url (v75) — отдельный от url_path атрибут в
+        # TableConfig, используемый JS-логикой движка (openDocumentRow/
+        # copySelected/цепочка документов) для построения ссылок на
+        # форму этой таблицы. Обязан совпадать с реальным url_path —
+        # иначе переходы будут вести на несуществующий маршрут. Раз он
+        # задаётся отдельно (а не выводится автоматически из key), эта
+        # проверка страхует от рассинхрона при правке tables.py.
+        if config.own_page_url and config.own_page_url != url_path:
+            raise ValueError(
+                f"TableConfig({config.key!r}).own_page_url={config.own_page_url!r} "
+                f"не совпадает с фактическим url_path={url_path!r} — поправь tables.py."
+            )
         app.include_router(build_api_router(config))
-        app.include_router(build_page_router(config, templates, url_path=f"/{config.key}-v2"))
+        app.include_router(build_page_router(config, templates, url_path=url_path))
 
     # Возвращаем templates наружу — main.py переиспользует то же
     # Jinja2Templates окружение (с уже настроенными globals) для

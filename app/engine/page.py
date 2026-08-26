@@ -42,6 +42,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
 {% block content %}
 <div x-data="enginePage()" x-init="init()">
 
+  {% if render_mode != 'form' %}
   {% if not config.hierarchy %}
   <div class="topbar">
     <div class="topbar-title">
@@ -51,7 +52,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
     <div style="display:flex; gap:8px;">
       <button class="btn" x-show="chainReturnUrl" x-cloak @click="window.location.href = chainReturnUrl">← К цепочке</button>
       {% if config.allow_create %}
-      <button class="btn btn-primary" @click="openCreate()">+ {{ config.title_singular|capitalize }}</button>
+      <button class="btn btn-primary" @click="openCreateRow()">+ {{ config.title_singular|capitalize }}</button>
       {% endif %}
     </div>
   </div>
@@ -150,7 +151,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
       </thead>
       <tbody>
         <template x-for="item in items" :key="item.id">
-          <tr @click="openEdit(item)">
+          <tr @click="openDocumentRow(item)">
             {% if config.allow_create %}
             <td @click.stop>
               <input type="checkbox" :value="item.id" :checked="selectedIds.includes(item.id)" @change="toggleSelect(item.id)">
@@ -260,9 +261,22 @@ _PAGE_TEMPLATE_SOURCE = r"""
     </div>
   </div>
   {% endif %}
+  {% endif %}
 
-  <div class="modal-backdrop" x-show="modalOpen" x-cloak>
-    <div class="modal">
+  {% if render_mode == 'form' and not config.hierarchy %}
+  <div class="topbar">
+    <div class="topbar-title">
+      <h1>{{ config.title_singular|capitalize }}</h1>
+    </div>
+    <div style="display:flex; gap:8px;">
+      <button class="btn" x-show="chainReturnUrl" x-cloak @click="window.location.href = chainReturnUrl">← К цепочке</button>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if render_mode != 'list' %}
+  <div class="modal-backdrop"{% if render_mode == 'form' and not config.hierarchy %} style="position:static; padding:0; background:none; display:block;"{% endif %} x-show="{{ 'true' if (render_mode == 'form' and not config.hierarchy) else 'modalOpen' }}" x-cloak>
+    <div class="modal"{% if render_mode == 'form' and not config.hierarchy %} style="width:100%; max-width:none; margin:0; min-height:100dvh; border-radius:0;"{% endif %}>
       <div class="modal-header">
         <div>
           <h2 x-show="!isItemsModal() || !editing.id" x-text="editing.id ? 'Редактирование' : 'Новая запись'"></h2>
@@ -882,6 +896,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
       </div>
     </div>
   </div>
+  {% endif %}
 
 </div>
 
@@ -1227,9 +1242,19 @@ function enginePage() {
           const data = await res.json();
           for (const row of data.items) { this.constants[row.key] = row.value; }
         }
-        await this.load();
-        await this.maybeOpenFromRequest();
-        await this.maybeOpenById();
+        if (CONFIG.renderMode === 'form') {
+          // Форма-страница (v75, только для документов с ownPageUrl) —
+          // список этой таблицы здесь не нужен вообще (в разметке его
+          // нет), поэтому this.load() не вызываем — экономим один
+          // запрос и не тратим время на пагинацию/сортировку, которые
+          // здесь никак не используются. Открытие конкретной записи —
+          // отдельным путём (maybeOpenOwnPage читает id из URL и сама
+          // при необходимости догружает запись через GET /api/{key}/{id}).
+          await this.maybeOpenOwnPage();
+        } else {
+          await this.load();
+          await this.maybeOpenFromRequest();
+        }
         // Блокировка скролла <body> пока открыт picker-overlay или
         // обычная модалка (2026-08-24) — без этого перетаскивание
         // хэндла picker'а (.picker-handle, pickerDragStart) может
@@ -1292,31 +1317,59 @@ function enginePage() {
       await this.runAction('brand_slot_labels');
     },
 
-    async maybeOpenById() {
-      // Подхватывает ?open_id={id} в адресе страницы (v74) — переход
-      // сюда делает страница "Цепочка документов"
-      // (app/documents_chain/), когда там кликают по СТРОКЕ документа
-      // (не по чекбоксу): полная перезагрузка на родную страницу этого
-      // типа документа с этим параметром (см. openDocument() в
-      // app/documents_chain/page.py) — карточка открывается тем же
-      // кодом, что и обычный клик по строке в родном журнале
-      // (openEdit), поэтому form_tabs/materialsTab/kitsTab и все
-      // остальные особенности конкретной таблицы работают без
-      // дублирования логики где-либо ещё.
+    async maybeOpenOwnPage() {
+      // Открывает форму на СВОЕЙ отдельной странице (v75) — вызывается
+      // из init() ТОЛЬКО когда CONFIG.renderMode === 'form' (список в
+      // разметке этой страницы вообще отсутствует, см. render_mode в
+      // page.py). Последний сегмент пути — "new" (создание) или
+      // числовой id (редактирование). ?chain_request_id= в query —
+      // опциональный, только чтобы показать кнопку "← К цепочке" в
+      // topbar формы, если сюда пришли со страницы "Цепочка документов"
+      // (app/documents_chain/) — не путать с самим путём, который
+      // всегда указывает конкретный документ.
       const params = new URLSearchParams(window.location.search);
-      const openId = params.get('open_id');
-      if (!openId) return;
-      const id = Number(openId);
       const chainRequestId = params.get('chain_request_id');
       if (chainRequestId) {
         this.chainReturnUrl = '/documents-chain?request_id=' + encodeURIComponent(chainRequestId);
       }
-      window.history.replaceState({}, '', window.location.pathname);
+      const segments = window.location.pathname.split('/').filter(Boolean);
+      const last = segments[segments.length - 1];
+      if (last === 'new') {
+        // Приоритет источников предзаполнения при создании (v75):
+        // 1) ?from_request= — переход по кнопке "Создать документ на
+        //    основании" с другого документа (см. createChildDocument()),
+        //    2) sessionStorage-префилл от copySelected() на списке,
+        //    3) обычное пустое создание.
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('from_request')) {
+          await this.maybeOpenFromRequest();
+          return;
+        }
+        const prefillKey = 'engineCopyPrefill:' + this.currentLevel().key;
+        const prefillRaw = sessionStorage.getItem(prefillKey);
+        if (prefillRaw) {
+          sessionStorage.removeItem(prefillKey);
+          try {
+            const prefill = JSON.parse(prefillRaw);
+            await this.openCreate();
+            this.editing = { ...this.editing, ...prefill };
+            return;
+          } catch (e) { /* испорченные данные — откатываемся на обычное создание ниже */ }
+        }
+        await this.openCreate();
+        return;
+      }
+      const id = Number(last);
+      if (!Number.isFinite(id)) {
+        showJsError('Некорректный адрес документа.');
+        return;
+      }
       // Запись могла не попасть в уже загруженную первую страницу
       // списка (сортировка/фильтры/пагинация) — сначала пробуем найти
       // среди того, что уже загружено (частый случай — только что
       // созданный документ, "свежие сверху"), иначе точечно
-      // догружаем именно эту запись отдельным запросом по id.
+      // догружаем именно эту запись отдельным запросом по id (см.
+      // GET /api/{key}/{id}, добавлен для этого в v74).
       let item = this.items.find(i => i.id === id);
       if (!item) {
         try {
@@ -1329,6 +1382,48 @@ function enginePage() {
         return;
       }
       await this.openEdit(item);
+    },
+
+    openDocumentRow(item) {
+      // Клик по строке в СПИСКЕ (v75) — на плоских таблицах с
+      // собственной формой (CONFIG.ownPageUrl задан, см. TableConfig.
+      // own_page_url) переходит на её страницу вместо открытия модалки
+      // на месте; полная перезагрузка, тот же принцип, что и остальная
+      // навигация между страницами движка. Если own_page_url не задан
+      // (тип документа ещё не переведён на отдельные страницы) —
+      // старое поведение, модалка на этой же странице, для обратной
+      // совместимости.
+      if (CONFIG.ownPageUrl) {
+        window.location.href = CONFIG.ownPageUrl + '/' + item.id;
+        return;
+      }
+      this.openEdit(item);
+    },
+
+    openCreateRow() {
+      // Кнопка "+ Запись" в СПИСКЕ (v75) — аналогично openDocumentRow(),
+      // но для создания новой записи (own_page_url + "/new").
+      if (CONFIG.ownPageUrl) {
+        window.location.href = CONFIG.ownPageUrl + '/new';
+        return;
+      }
+      this.openCreate();
+    },
+
+    closeToList() {
+      // "Закрыть"/после "Сохранить"/после "Удалить" — на ФОРМЕ-странице
+      // (CONFIG.renderMode === 'form') уходит НАЗАД на список, а не
+      // просто скрывает модалку (которой на этой странице в разметке
+      // нет вообще, см. render_mode в page.py). history.back() —
+      // человек мог попасть на форму из своего родного списка ИЛИ из
+      // страницы "Цепочка документов" (app/documents_chain/): в обоих
+      // случаях "назад" ведёт туда, откуда реально пришли, без
+      // жёсткого хардкода одного конкретного URL возврата.
+      if (window.history.length > 1) {
+        window.history.back();
+      } else {
+        window.location.href = CONFIG.ownPageUrl || '/';
+      }
     },
 
     relationName(fieldName, id) {
@@ -2442,9 +2537,43 @@ function enginePage() {
           this.selectedIds = [];
           await this.load();
           this.openEdit(newKit);
+        } else if (CONFIG.ownPageUrl) {
+          // Плоские таблицы С собственной формой-страницей (v75: request/
+          // calculation) — копия не может просто выставить this.editing
+          // на этой странице (здесь, на списке, формы в разметке больше
+          // нет вообще). Вместо этого готовим предзаполненные данные
+          // (та же логика, что и раньше: без id, is_deleted сброшен,
+          // дата/время — сегодняшние) и кладём во ВРЕМЕННОЕ хранилище
+          // sessionStorage под фиксированным ключом — читается один раз
+          // на форме-странице в maybeOpenOwnPage() и сразу удаляется
+          // (см. там же), чтобы повторная загрузка той же формы (F5)
+          // не подхватила старые данные копии повторно. sessionStorage,
+          // а не query-параметр — данные записи (особенно с текстовыми
+          // полями типа "Заметка") не гарантированно умещаются и
+          // корректно проходят через длину/экранирование URL.
+          const lvl = this.currentLevel();
+          const copy = { ...item };
+          delete copy.id;
+          copy.is_deleted = false;
+          for (const f of lvl.fields) {
+            if (f.widget === 'date') {
+              const today = new Date();
+              const pad = (n) => String(n).padStart(2, '0');
+              copy[f.name] = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+            } else if (f.widget === 'time') {
+              const now = new Date();
+              const pad = (n) => String(n).padStart(2, '0');
+              copy[f.name] = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+            }
+          }
+          sessionStorage.setItem('engineCopyPrefill:' + lvl.key, JSON.stringify(copy));
+          this.selectedIds = [];
+          window.location.href = CONFIG.ownPageUrl + '/new';
         } else {
-          // Плоские таблицы (material/brand/request): открывает форму,
-          // предзаполненную данными существующей записи, но БЕЗ id —
+          // Плоские таблицы БЕЗ собственной формы-страницы (material/
+          // brand и т.п., own_page_url не задан) — старое поведение:
+          // открывает форму, предзаполненную данными существующей
+          // записи, но БЕЗ id —
           // save() увидит отсутствие id и отправит POST (создание новой
           // независимой записи), а не PUT. is_deleted копии всегда
           // сброшен в false. Остальные поля копируются как есть —
@@ -2502,7 +2631,7 @@ function enginePage() {
       // роутинга между ними не нужен.
       if (this.selectedIds.length !== 1 || !CONFIG.createChildDocumentUrl) return;
       const id = this.selectedIds[0];
-      window.location.href = CONFIG.createChildDocumentUrl + '?from_request=' + encodeURIComponent(id);
+      window.location.href = CONFIG.createChildDocumentUrl + '/new?from_request=' + encodeURIComponent(id);
     },
 
     showDocumentsChain() {
@@ -2611,8 +2740,12 @@ function enginePage() {
           showJsError(await extractErrorMessage(res));
           return;
         }
-        this.modalOpen = false;
-        await this.load();
+        if (CONFIG.renderMode === 'form') {
+          this.closeToList();
+        } else {
+          this.modalOpen = false;
+          await this.load();
+        }
       } catch (err) { showJsError(err); }
     },
 
@@ -2623,8 +2756,12 @@ function enginePage() {
           showJsError('Не удалось удалить. ' + await extractErrorMessage(res));
           return;
         }
-        this.modalOpen = false;
-        await this.load();
+        if (CONFIG.renderMode === 'form') {
+          this.closeToList();
+        } else {
+          this.modalOpen = false;
+          await this.load();
+        }
       } catch (err) { showJsError(err); }
     },
 
@@ -2690,6 +2827,10 @@ function enginePage() {
     close() {
       try {
         hideJsError();
+        if (CONFIG.renderMode === 'form') {
+          this.closeToList();
+          return;
+        }
         this.modalOpen = false;
         this.kitItems = [];
       } catch (err) { showJsError(err); }
@@ -2789,6 +2930,7 @@ def _serialize_level_config(config: TableConfig) -> dict:
         "formTabs": config.form_tabs,
         "createChildDocumentUrl": config.create_child_document_url,
         "documentsChainUrl": config.documents_chain_url,
+        "ownPageUrl": config.own_page_url,
         "materialsTab": config.materials_tab,
         "materialsItemTableKey": config.materials_item_table_key,
         "materialsRecalcAction": config.materials_recalc_action,
@@ -2921,12 +3063,34 @@ def _build_hierarchy_levels(root_config: TableConfig) -> list[dict]:
     return levels
 
 
-def render_table_page(config: TableConfig, jinja_env) -> str:
-    """Рендерит HTML-страницу списка+модалки для таблицы. jinja_env
-    должен быть окружением Jinja2Templates.env приложения (то же,
-    что использует base.html) — это позволяет {% extends "base.html" %}
-    сработать корректно, так как шаблон ищется через тот же loader,
-    что и остальные файловые шаблоны приложения.
+def render_table_page(config: TableConfig, jinja_env, render_mode: str = "both") -> str:
+    """Рендерит HTML-страницу для таблицы. jinja_env должен быть
+    окружением Jinja2Templates.env приложения (то же, что использует
+    base.html) — это позволяет {% extends "base.html" %} сработать
+    корректно, так как шаблон ищется через тот же loader, что и
+    остальные файловые шаблоны приложения.
+
+    render_mode (v75, только для ПЛОСКИХ таблиц — см. ниже):
+      "both" — список + модалка на одной странице (старое поведение,
+        единственный режим ДО v75, всё ещё единственный для
+        hierarchy-таблиц — drill-down в эту переделку не входил, см.
+        обсуждение с Вахтангом: форма редактирования kit_group/
+        kit_section — маленькая модалка, отдельная страница на неё
+        не нужна и не запрашивалась).
+      "list" — только список, БЕЗ модалки в разметке вообще; клик по
+        строке/кнопка "+ Запись" переходят на "form"-страницу этого
+        же документа (см. openDocumentRow()/openCreateRow() в JS).
+      "form" — только форма редактирования/создания, отрендеренная НЕ
+        оверлеем, а на весь экран (см. inline style в шаблоне),
+        открывающая нужную запись сама при загрузке (см.
+        maybeOpenOwnPage() в JS) и уходящая НАЗАД (history.back(),
+        см. closeToList()) вместо скрытия модалки.
+
+    Для hierarchy-таблиц render_mode игнорируется — они всегда
+    рендерятся в старом режиме "both" независимо от переданного
+    значения, т.к. вся эта фича относится только к документам с
+    собственным own_page_url (request/calculation), не к деревьям
+    справочников.
 
     Для hierarchy-таблиц (config.hierarchy задан) рендерится ТОЛЬКО
     для корневого уровня дерева (config.hierarchy.parent_key is None,
@@ -2942,6 +3106,8 @@ def render_table_page(config: TableConfig, jinja_env) -> str:
         template = jinja_env.from_string(_NON_ROOT_HIERARCHY_TEMPLATE_SOURCE)
         return template.render(config=config)
 
+    effective_render_mode = "both" if config.hierarchy else render_mode
+
     computed_field_names = {p.field_a for p in config.computed_pairs} | {
         p.field_b for p in config.computed_pairs
     }
@@ -2953,7 +3119,10 @@ def render_table_page(config: TableConfig, jinja_env) -> str:
             "levels": _build_hierarchy_levels(config),
         }, ensure_ascii=False)
     else:
-        config_json = json.dumps(_serialize_level_config(config) | {"hierarchyRoot": False}, ensure_ascii=False)
+        config_json = json.dumps(
+            _serialize_level_config(config) | {"hierarchyRoot": False, "renderMode": effective_render_mode},
+            ensure_ascii=False,
+        )
 
     # form_layout_by_tab: если у таблицы заданы вкладки формы
     # (config.form_tabs), строим отдельную раскладку рядов НА КАЖДУЮ
@@ -2977,6 +3146,7 @@ def render_table_page(config: TableConfig, jinja_env) -> str:
     return template.render(
         config=config,
         config_json=config_json,
+        render_mode=effective_render_mode,
         form_layout_by_tab=form_layout_by_tab,
         action_buttons_by_tab=action_buttons_by_tab,
         computed_field_names=computed_field_names,

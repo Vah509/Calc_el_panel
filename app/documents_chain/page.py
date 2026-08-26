@@ -212,20 +212,20 @@ function documentsChainPage() {
 
     openDocument(group, item) {
       // Клик по СТРОКЕ (не по чекбоксу — там @click.stop, см. разметку)
-      // открывает документ на его родной странице движка (v74) —
+      // открывает документ на его родной форме-странице (v75) —
       // полная перезагрузка, тот же принцип, что и createChildDocument()/
       // showDocumentsChain() в обычном журнале движка (engine/page.py).
-      // ?open_id={id} — какую запись открыть (см. maybeOpenById() на
-      // целевой странице). ?chain_request_id={requestId} — чтобы
+      // Путь own_page_url + "/" + id — та же схема роутинга, что и у
+      // обычного клика по строке в родном журнале (см. openDocumentRow()
+      // в engine/page.py). ?chain_request_id={requestId} — чтобы
       // целевая страница знала, куда вести кнопку "← К цепочке" в
       // своём topbar (см. chainReturnUrl в enginePage()).
       if (!group.own_page_url) {
         this.showError('Для «' + group.title + '» пока не задана собственная страница — открыть документ нельзя.');
         return;
       }
-      const url = group.own_page_url
-        + '?open_id=' + encodeURIComponent(item.id)
-        + '&chain_request_id=' + encodeURIComponent(this.requestId);
+      const url = group.own_page_url + '/' + encodeURIComponent(item.id)
+        + '?chain_request_id=' + encodeURIComponent(this.requestId);
       window.location.href = url;
     },
 

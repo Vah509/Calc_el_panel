@@ -45,7 +45,17 @@ def _group_meta(table_config) -> dict:
     """Общая часть описания группы (заголовок, relations, список
     колонок in_list) — одинаковая что для корня (заявка), что для
     любого дочернего уровня, вынесена, чтобы не дублировать словарь
-    в двух местах ниже."""
+    в двух местах ниже.
+
+    create_child_document_url прокидывается как есть из TableConfig
+    (у request сейчас "/calculation-v2", у остальных — None) — фронт
+    цепочки использует его, чтобы показать кнопку "Создать документ
+    на основании" в selection-bar, когда выделен ровно один документ
+    из САМОЙ ПЕРВОЙ группы ответа (группы идут по уровням от корня,
+    см. get_documents_chain ниже — первая группа это всегда root_key).
+    Тот же принцип, что и кнопка в обычном журнале движка
+    (engine/page.py::createChildDocument()), просто здесь источник
+    URL — не текущая страница таблицы, а метаданные группы."""
     return {
         "key": table_config.key,
         "title": table_config.title,
@@ -53,6 +63,7 @@ def _group_meta(table_config) -> dict:
         "document_number_field": table_config.document_number_field,
         "delete_mode": table_config.delete_mode,
         "own_page_url": table_config.own_page_url,
+        "create_child_document_url": table_config.create_child_document_url,
         "relations": [
             {"field": r.field, "target_table": r.target_table, "display_field": r.display_field}
             for r in table_config.relations

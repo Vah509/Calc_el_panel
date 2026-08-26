@@ -47,6 +47,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
 
   <div class="selection-bar" x-show="selectedKeys.length > 0" x-cloak>
     <span x-text="selectedKeys.length + ' выделено'"></span>
+    <button type="button" class="btn" x-show="canCreateChildDocument" @click="createChildDocument()">Создать документ на основании</button>
     <button type="button" class="btn" :disabled="selectedKeys.length !== 1" @click="copySelected()">Копировать</button>
     <button type="button" class="btn" :disabled="!canBulkDelete" @click="bulkMarkDelete(true)">Пометить на удаление</button>
     <button type="button" class="btn" :disabled="!canBulkDelete" @click="bulkMarkDelete(false)">Снять пометку</button>
@@ -110,6 +111,24 @@ function documentsChainPage() {
 
     get totalCount() {
       return this.groups.reduce((sum, g) => sum + g.items.length, 0);
+    },
+
+    get canCreateChildDocument() {
+      // Кнопка "Создать документ на основании" видна только когда
+      // выделен РОВНО ОДИН документ, и этот документ принадлежит
+      // КОРНЕВОЙ группе цепочки (this.groups[0] — группы всегда идут
+      // по уровням от корня, см. build BFS в api.py). Универсально по
+      // конструкции: сработает для любого родительского уровня, у
+      // которого group.create_child_document_url задан в TableConfig
+      // (сейчас это только request -> calculation; когда появится
+      // calculation -> specification, для не-корневых уровней кнопка
+      // по-прежнему НЕ покажется — так решено сознательно, см.
+      // memory/HANDOFF: механизм для specification ещё не продуман).
+      if (this.selectedKeys.length !== 1) return false;
+      const rootGroup = this.groups[0];
+      if (!rootGroup || !rootGroup.create_child_document_url) return false;
+      const [tableKey] = this.selectedKeys[0].split(':');
+      return tableKey === rootGroup.key;
     },
 
     get canBulkDelete() {
@@ -227,6 +246,22 @@ function documentsChainPage() {
       const url = group.own_page_url + '/' + encodeURIComponent(item.id)
         + '?chain_request_id=' + encodeURIComponent(this.requestId);
       window.location.href = url;
+    },
+
+    createChildDocument() {
+      // "Создать документ на основании" из цепочки — тот же принцип,
+      // что и одноимённая кнопка в обычном журнале движка
+      // (engine/page.py::createChildDocument()): переход на форму
+      // создания дочернего документа с ?from_request={id}, дальше всё
+      // подхватывает maybeOpenOwnPage() на целевой странице. Условие
+      // видимости уже проверено в canCreateChildDocument — здесь
+      // просто на всякий случай перепроверяем, чтобы не отправить
+      // некорректный переход при ручном вызове.
+      if (!this.canCreateChildDocument) return;
+      const rootGroup = this.groups[0];
+      const [, idStr] = this.selectedKeys[0].split(':');
+      window.location.href = rootGroup.create_child_document_url
+        + '/new?from_request=' + encodeURIComponent(idStr);
     },
 
     groupedSelection() {

@@ -49,9 +49,14 @@
 # app/models/specification.py.
 #
 # status — свободные переходы, без принудительного порядка (решение
-# из HANDOFF_kits_and_calculation.md, раздел 2): draft/active/
-# archived_pending/delete_pending. Пересчёт стоимости разрешён в
-# любом статусе.
+# из HANDOFF_kits_and_calculation.md, раздел 2). С 2026-08-27
+# допустимые значения — только active/delete_pending (см. options в
+# calculation_table, app/engine/tables.py — единый источник истины по
+# набору статусов, здесь дублировать не стал). "draft" и
+# "archived_pending" убраны из вариантов формы (черновик как
+# промежуточное состояние оказался не нужен на практике — сохранил
+# запись, значит она сразу активна; архив будет сделан отдельно
+# позже). Пересчёт стоимости разрешён в любом статусе.
 #
 # document_number/document_date/document_time — тот же принцип
 # нумерации, что и у request (см. app/engine/document_numbering.py),
@@ -154,7 +159,14 @@ class Calculation(SQLModel, table=True):
     name_template: str = Field(default=DEFAULT_NAME_TEMPLATE)
     brand_slot: Optional[int] = Field(default=None)
     quantity: float = Field(default=1.0)
-    status: str = Field(default="draft")
+    # status (2026-08-27: default сменён с "draft" на "active" —
+    # статус "draft" убран из вариантов формы, см. calculation_table в
+    # app/engine/tables.py; сохранил калькуляцию — значит она сразу
+    # активна, по прямому решению Вахтанга) — какие значения
+    # допустимы сейчас см. там же (options), а не здесь: единый
+    # источник истины по набору статусов — конфиг поля формы, здесь
+    # только дефолт для новой записи.
+    status: str = Field(default="active")
 
     # --- Стоимость (см. комментарий блока выше) ---
     cost_method: str = Field(default="markup")

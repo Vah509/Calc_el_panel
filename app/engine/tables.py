@@ -649,17 +649,25 @@ calculation_table = TableConfig(
                     radio_labels_field="brand_slot_labels", radio_labels_action="brand_slot_labels",
                     options=[("1", "Вариант 1"), ("2", "Вариант 2"), ("3", "Вариант 3")]),
         FieldConfig(name="status", label="Статус", widget="select", list_width="46px", tab="Основное",
-                    in_form=False, list_as_dot=True,
+                    list_as_dot=True,
+                    # 2026-08-27: статус "draft" (черновик) и
+                    # "archived_pending" (к архивации) УБРАНЫ из
+                    # вариантов по решению Вахтанга — черновик как
+                    # промежуточное состояние оказался не нужен
+                    # (сохранил — значит сразу активна), а архив будет
+                    # сделан отдельно позже, когда до него дойдёт
+                    # очередь по дорожной карте. in_form теперь True
+                    # (было False) — статус стал видимым и РУЧНЫМ полем
+                    # выбора на форме, а не только точкой-индикатором в
+                    # списке: раньше сменить статус можно было только
+                    # через код/дефолт, теперь Вахтанг сам ставит
+                    # "Активна"/"К удалению" вручную.
                     options=[
-                        ("draft", "Черновик"),
                         ("active", "Активна"),
-                        ("archived_pending", "К архивации"),
                         ("delete_pending", "К удалению"),
                     ],
                     dot_colors={
-                        "draft": "#9c9c94",
                         "active": "#3f7d4f",
-                        "archived_pending": "#b8862f",
                         "delete_pending": "#9c3b2e",
                     }),
         FieldConfig(name="name_template", label="Шаблон полного названия", widget="textarea",
@@ -721,7 +729,7 @@ calculation_table = TableConfig(
     ],
     form_rows=[
         FormRow(field_names=["document_number", "document_date", "document_time"]),
-        FormRow(field_names=["client_name", "quantity"]),
+        FormRow(field_names=["client_name", "quantity", "status"]),
         FormRow(field_names=["materials_total", "kits_total", "base_total"]),
         FormRow(field_names=["insurance_markup", "insured_total"]),
         FormRow(field_names=["markup_percent", "markup_total"]),

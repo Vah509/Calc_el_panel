@@ -2,85 +2,132 @@
 
 ## Состояние
 
-**v80 — исправлена недоработка v79, обнаруженная Вахтангом: переключение
-radio "Способ расчёта стоимости" (Наценка/По часам) не меняло "Итоговую
-стоимость" на экране.**
+**v81 — реализован документ «Спецификация» (specification/specification_item),
+третий документ цепочки zayavka -> calculation -> specification -> invoice.**
 
-Причина: `final_total` — обычное readonly-поле формы, значение которого
-менялось ТОЛЬКО на сервере, внутри `_recalc_cost_totals` (то есть только
-по клику "Пересчитать" или при открытии формы через
-`refresh_cost_totals`, см. v79). Переключение radio `cost_method`
-меняло `editing.cost_method` в браузере, но никак не трогало
-`editing.final_total` — старое значение просто оставалось висеть на
-экране до следующего похода на сервер.
+Формируется кнопкой «Спецификация» у нужного брендового слота заявки
+(row_action на `brand_slot_N_id`, было disabled-заглушкой с v50/v56) —
+собирает все АКТИВНЫЕ (`status="active"`) калькуляции этой заявки с
+данным `brand_slot`, создаёт документ-снимок (шапка `Specification` +
+строки `SpecificationItem`, по одной на калькуляцию, БЕЗ схлопывания
+повторяющихся названий) и переводит на карточку созданной спецификации.
+Повторное нажатие полностью пересобирает спецификацию (удаляет старую
+запись + её строки, создаёт заново) — не пересчитывает сами калькуляции
+перед сборкой, берёт `final_total` как есть на момент нажатия.
 
-Исправлено в два слоя:
-1. **Мгновенный клиентский пересчёт при переключении radio** — новый
-   `CLIENT_ACTIONS.pick_final_total` (page.py): выбирает уже известное
-   `editing.markup_total` либо `editing.hours_total` под текущий
-   `cost_method`, без похода на сервер. Подключается через
-   `FieldConfig.on_change_action` — этот примитив уже существовал, но
-   раньше применялся только к `<select>`-полям (например
-   `brand_slot_labels` у `request_id`); теперь Jinja-разметка
-   radio-виджета тоже поддерживает `on_change_action`.
-2. **Синхронизация при сохранении** — `final_total` помечен
-   `readonly=True`, поэтому даже мгновенно обновлённое клиентом значение
-   отбрасывалось обычным PUT (readonly-поля игнорируются в
-   `update_item`, engine/api.py) — из базы после "Сохранить" снова
-   читалось бы устаревшее значение. Новый универсальный примитив
-   движка `TableConfig.before_update_hook` — функция `fn(instance,
-   session)`, вызываемая ВНУТРИ `update_item` сразу после применения
-   полей PUT-payload, до commit. У `calculation` зарегистрирован
-   `_sync_final_total_before_save` — пересчитывает `final_total` из уже
-   применённого (из этого же payload) `cost_method`, не трогая
-   остальные суммы.
+Строка спецификации: `product_name` (снэпшот `Calculation.full_name`),
+`unit_price` (снэпшот `Calculation.final_total` — цена ОДНОГО изделия),
+`quantity` (снэпшот НОВОГО поля `Calculation.quantity`), `line_total =
+unit_price * quantity`. Шапка: `client_id` — снэпшот `Request.client_id`,
+`brand_slot`, `total_amount = Σ line_total`.
+
+**Новое поле `Calculation.quantity`** (вкладка «Основное», в одном ряду
+с «Рабочее название») — количество ИЗДЕЛИЙ этого типа. НЕ участвует в
+расчёте вкладки «Стоимость» (`final_total` по-прежнему цена одного
+изделия) — используется только спецификацией.
 
 ## Сделано в этой сессии
 
+- `app/models/calculation.py` — новое поле `quantity` (float, default 1.0)
+- `app/database.py` — `_ensure_is_deleted_columns()`: миграция
+  `calculation.quantity` (существующая на Postgres таблица)
+- `app/models/specification.py` (новый файл) — модель `Specification`
+- `app/models/specification_item.py` (новый файл) — модель
+  `SpecificationItem`
+- `app/engine/config.py` — новое поле `FieldConfig.row_action_names`:
+  параллельный `row_actions` список имён action (None — кнопка остаётся
+  disabled-заглушкой, строка — кнопка активна и вызывает `runAction`).
+  Первый row_action, получивший реальный обработчик, не отдельным
+  `ActionButton`-блоком, а прямо рядом с полем.
 - `app/engine/page.py`:
-  - `CLIENT_ACTIONS.pick_final_total` — клиентский пересчёт
-    `final_total` из `markup_total`/`hours_total` под текущий
-    `cost_method`
-  - Radio-виджет (Jinja) — добавлена поддержка `f.on_change_action`
-    (по образцу `<select>`)
+  - Шаблон row_actions теперь рендерит активную кнопку, если для
+    позиции задано имя в `row_action_names` (иначе — как раньше,
+    disabled)
+  - `runAction()` — новый универсальный контракт: если ответ сервера
+    содержит `redirect_url`, делает `window.location.href` вместо
+    обычного подмешивания результата в `editing` (нужно для действий,
+    создающих ДРУГОЙ документ, а не правящих текущую запись)
 - `app/engine/tables.py`:
-  - `cost_method` — добавлен `on_change_action="pick_final_total"`
-  - Новая функция `_sync_final_total_before_save` — зарегистрирована
-    как `before_update_hook` у `calculation_table`
-- `app/engine/config.py` — новое поле `TableConfig.before_update_hook`
-  (универсальный примитив: `fn(instance, session)`, вызывается внутри
-  `update_item`, engine/api.py, сразу после применения полей payload,
-  до commit — не хардкод под calculation)
-- `app/engine/api.py` — `update_item` вызывает
-  `config.before_update_hook(instance, session)` после применения
-  полей, до commit, если хук задан
-- `app/version.py` — `APP_VERSION = "v80"`
-- Тестирование:
-  - Node: `CLIENT_ACTIONS.pick_final_total` изолированно — markup/hours/
-    ещё-не-посчитанные-значения (undefined -> 0), все три случая верны
-  - `TestClient`: полный сценарий PUT с переключённым `cost_method` —
-    `final_total` в БД после сохранения синхронен с выбранным способом
-    (без хука тест падал, воспроизведя ровно баг Вахтанга)
-  - Повторный клик "Пересчитать" после переключения способа — сервер
-    тоже корректно выставляет `final_total` под новый `cost_method`
-  - Частичный PUT без поля `cost_method` в payload — хук не падает,
-    `cost_method`/`final_total` остаются дефолтными
-  - Регрессия: `/calculation-v2`, `/request-v2`, `/documents-chain` —
-    200
-  - `node --check` — синтаксис извлечённого JS корректен
+  - `_build_specification_handler(brand_slot)` — фабрика обработчика
+    кнопки «Спецификация» слота 1/2/3 (один обработчик на слот —
+    action_handlers плоский словарь по имени, номер слота зашит в
+    самом имени `build_specification_1/2/3`)
+  - `request_table` — `action_handlers` с этими тремя обработчиками,
+    `row_action_names=["build_specification_N", None]` у каждого
+    `brand_slot_N_id`
+  - `calculation_table` — новое поле `quantity` в `fields`/`form_rows`
+  - `specification_table` (новый) — `allow_create=False`,
+    `allow_delete=False` (создание/удаление ТОЛЬКО через кнопку
+    «Спецификация» у заявки), `own_page_url="/specification-v2"`,
+    `document_prefix="S"`
+  - `specification_item_table` (новый) — `allow_create=False`,
+    `allow_delete=False`, `hierarchy(parent_field="specification_id")`
+    только ради `?parent_id=` фильтра API (не пункт меню, не
+    drill-down)
+  - Обе добавлены в `ALL_TABLES`
+- `app/engine/document_chain.py` — `CHAIN_LINKS`: добавлена
+  `ChainLink(child_key="specification", parent_key="request", ...)`
+  (родитель — request, НЕ calculation: одна спецификация агрегирует
+  НЕСКОЛЬКО калькуляций, N:1 не вписывается в один FK)
+- `app/documents_chain/api.py` — исправлен BFS-обход `get_documents_chain`:
+  раньше `parent_key` с НЕСКОЛЬКИМИ дочерними связями сразу (теперь
+  именно так — calculation И specification оба дети request) терял
+  часть найденных id на следующей итерации (одна общая
+  `next_level_key`/`next_level_ids` на все связи уровня). Переписано на
+  очередь `pending_levels: list[tuple[child_key, ids]]` — каждая ветка
+  обходится дальше вниз независимо. На практике сейчас ни у calculation,
+  ни у specification нет дальнейших потомков, поэтому старый баг не
+  проявлялся бы прямо сейчас, но всплыл бы при первом же добавлении
+  третьего уровня цепочки — исправлено сразу, пока добавляю первый
+  реальный multi-child случай.
+- `app/version.py` — `APP_VERSION = "v81"`, пункт меню «Спецификации»
+  (`/specification-v2`)
+- Тестирование (`TestClient`, контекстный менеджер, SQLite):
+  - Полный сценарий: заявка + 4 калькуляции (2 активные слот 1, 1
+    активная слот 2, 1 draft слот 1) → кнопка слота 1 → спецификация
+    содержит РОВНО 2 строки (draft и чужой слот исключены), суммы
+    построчно и итого верны, `client_id` — снэпшот заявки
+  - Повторное нажатие той же кнопки после изменения `final_total`
+    калькуляции — старая спецификация и её строки физически удалены,
+    новая пересчитана верно (проверено количество строк в БД до/после,
+    без утечки старых)
+  - Слоты 2 и 3 собираются независимо, не трогая уже созданную
+    спецификацию слота 1; пустой слот (нет калькуляций) — спецификация
+    с `total_amount=0`, без ошибки
+  - `allow_create=False`/`allow_delete=False` — ручной POST/DELETE на
+    `specification`/`specification_item` отклоняется 422 с понятным
+    текстом
+  - `GET /api/documents-chain/{id}` — три группы (request, calculation,
+    specification) с верным количеством строк в каждой
+  - Регрессия: `/calculation-v2`, `/request-v2`, `/documents-chain`,
+    `/specification-v2` — 200; `PUT /api/calculation/{id}` с `quantity`
+    сохраняется корректно, остальные поля вкладки «Стоимость» не
+    затронуты
 
 ## Открыто
 
-- Не проверено на реальном устройстве — переключение radio и
-  визуальное обновление "Итоговой стоимости" в браузере, а также
-  реальное нажатие "Сохранить" после переключения, проверялись только
-  через TestClient/Node, не вживую
+- Не проверено на реальном устройстве — только TestClient/бэкенд;
+  внешний вид кнопки «Спецификация» на форме заявки, переход на
+  созданную карточку, отображение строк спецификации (через отдельный
+  список `/specification_item-v2?parent_id=`, встроенного виджета в
+  форму specification в этом шаге нет — см. ниже) нужно проверить
+  вживую на телефоне
+- Просмотр строк спецификации внутри самой карточки specification НЕ
+  встроен (в отличие от вкладки «Материалы» калькуляции) — строки
+  видны только отдельным списком `specification_item` (без своего
+  пункта меню, доступен по прямому URL с `?parent_id=`). Возможное
+  улучшение следующим шагом: простой readonly-виджет на форме
+  specification по образцу `materials_tab`, но без add/picker
+  (полноценный `materials_tab` слишком тесно завязан на редактируемый
+  состав калькуляции, специально не стал туда лезть в этом шаге)
+- Кнопка «Пересчитать» рядом с «Спецификация» у каждого брендового
+  слота заявки — по-прежнему disabled-заглушка (`row_action_names`
+  на этой позиции = None), своей логики ещё нет
 - Рефакторинг `enginePage()` (app/engine/page.py, ~1850+ строк / ~60+
-  методов) — по-прежнему сознательно отложен до начала кодирования
-  specification
-- Следующий шаг дорожной карты (после того как v80 будет подтверждена
-  рабочей): specification — открытый вопрос, от чего наследуется
-  (request или calculation) и как участвует бренд, см.
-  docs/HANDOFF_kits_and_calculation.md
-- `invoice`, ценообразование, "перепроведение" остальных документов,
-  Excel/PDF — не начаты
+  методов) — по-прежнему сознательно отложен
+- `invoice`, ценообразование, «перепроведение» остальных документов,
+  Excel/PDF — не начаты. Открытый вопрос из
+  docs/HANDOFF_kits_and_calculation.md: счёт-фактура при создании из
+  спецификации копирует себе данные (снимок снимка) или может
+  сослаться на specification_item напрямую — уточнить в начале работы
+  над invoice

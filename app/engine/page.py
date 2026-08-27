@@ -310,7 +310,12 @@ _PAGE_TEMPLATE_SOURCE = r"""
               {% if f.row_actions %}
               <div class="row-actions" x-show="editing.id">
                 {% for action_label in f.row_actions %}
+                {% set action_name = f.row_action_names[loop.index0] if f.row_action_names|length > loop.index0 else None %}
+                {% if action_name %}
+                <button type="button" class="btn btn-ghost btn-small" @click="runAction('{{ action_name }}')">{{ action_label }}</button>
+                {% else %}
                 <button type="button" class="btn btn-ghost btn-small" disabled title="Пока недоступно">{{ action_label }}</button>
+                {% endif %}
                 {% endfor %}
               </div>
               {% endif %}
@@ -1726,6 +1731,18 @@ function enginePage() {
         const res = await fetch(`/api/${this.currentLevel().key}/${this.editing.id}/actions/${action}`, { method: 'POST' });
         if (!res.ok) { showJsError(await res.text()); return; }
         const data = await res.json();
+        // redirect_url (2026-08-27, введено для "Спецификация" у
+        // request) — действие СОЗДАЁТ ДРУГОЙ документ (не правит
+        // текущую запись), поэтому вместо обычного подмешивания
+        // результата в editing текущей формы уходим на страницу
+        // созданного документа. Универсальный контракт — любой
+        // action_handler может вернуть {"redirect_url": "..."} вместо
+        // обычного патча полей, ничего не хардкодится под конкретную
+        // таблицу/действие.
+        if (data && data.redirect_url) {
+          window.location.href = data.redirect_url;
+          return;
+        }
         this.editing = { ...this.editing, ...data };
       } catch (err) { showJsError(err); }
     },

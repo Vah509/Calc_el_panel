@@ -115,6 +115,13 @@ def _ensure_is_deleted_columns() -> None:
         ("calculation", "markup_total", "DOUBLE PRECISION NOT NULL DEFAULT 0"),
         ("calculation", "hours_total", "DOUBLE PRECISION NOT NULL DEFAULT 0"),
         ("calculation", "final_total", "DOUBLE PRECISION NOT NULL DEFAULT 0"),
+        # 2026-08-27: quantity добавлено в модель Calculation ПОСЛЕ того,
+        # как таблица calculation уже существует на Postgres — та же
+        # ловушка, см. комментарии выше. DEFAULT 1 совпадает с default=
+        # в модели Python (см. app/models/calculation.py) — существующие
+        # калькуляции трактуются как "одно изделие", пока человек не
+        # поправит вручную.
+        ("calculation", "quantity", "DOUBLE PRECISION NOT NULL DEFAULT 1"),
     ]
     with engine.connect() as conn:
         for table, column, ddl_type in tables_columns:

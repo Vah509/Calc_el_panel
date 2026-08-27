@@ -23,6 +23,8 @@ from app.models.request import Request
 from app.models.calculation import Calculation, DEFAULT_NAME_TEMPLATE
 from app.models.calculation_item import CalculationItem
 from app.models.product_type_rate import ProductTypeRate
+from app.models.specification import Specification
+from app.models.specification_item import SpecificationItem
 from app.models.document_counter import DocumentCounter  # noqa: F401 — не таблица
 # движка (нет своего TableConfig/страницы), но должна быть импортирована
 # здесь, чтобы SQLModel.metadata.create_all() увидела её при старте
@@ -123,8 +125,12 @@ client_table = TableConfig(
 # см. app/engine/document_numbering.py. Три слота бренда — три
 # независимых варианта расчёта, всегда видны в форме, каждый может
 # быть пустым. У каждого слота — своя пара кнопок «Спецификация»/
-# «Пересчитать» рядом с выбором бренда (FieldConfig.row_actions), пока
-# неактивные заглушки — реализуются вместе с calculation. Общей кнопки
+# «Пересчитать» рядом с выбором бренда (FieldConfig.row_actions).
+# «Спецификация» (2026-08-27) — реальный обработчик, см.
+# _build_specification_handler ниже, по одному на слот
+# (build_specification_1/2/3 в action_handlers, номер слота зашит в
+# имени action). «Пересчитать» — по-прежнему заглушка (row_action_names
+# на этой позиции = None), своей логики ещё нет. Общей кнопки
 # "Пересчитать всё" сознательно нет — по прямому решению Вахтанга
 # (2026-08-19): пересчёт всегда по одному варианту, так проще уследить,
 # что где пересчиталось.
@@ -138,6 +144,99 @@ client_table = TableConfig(
 # ЧЕРЕЗ join/подзапрос на client (Relation.searchable_fields), с
 # переключаемыми чекбоксами "заказчик"/"для счёта" (enable_search_toggles,
 # тот же паттерн, что и у client_table для собственных текстовых полей).
+def _build_specification_handler(brand_slot: int):
+    """Фабрика обработчика кнопки «Спецификация» слота brand_slot
+    (1/2/3) — один обработчик на слот, а НЕ один параметризованный
+    action на все три: action_handlers — плоский словарь по имени
+    action (см. TableConfig.action_handlers), и текущий движок
+    (runAction()/POST /api/{key}/{id}/actions/{action}) не передаёт
+    никаких доп. параметров кроме имени действия — значит номер слота
+    должен быть зашит в САМО имя action ("build_specification_1" и
+    т.д.), а не передаваться отдельно. Фабрика просто убирает
+    дублирование тела функции между тремя слотами.
+
+    Механика (согласовано с Вахтангом 2026-08-27, см. подробный
+    комментарий в app/models/specification.py):
+      1. Собрать активные (status="active") калькуляции этой заявки
+         с данным brand_slot.
+      2. Если для (request_id, brand_slot) уже есть Specification —
+         удалить её и все её SpecificationItem (полная перезапись).
+      3. Создать новую Specification (client_id = request.client_id,
+         номер по счётчику префикса "S").
+      4. По одной SpecificationItem на калькуляцию (БЕЗ схлопывания
+         повторяющихся названий — каждая калькуляция своя строка),
+         line_total = final_total * quantity.
+      5. total_amount = Σ line_total.
+    НЕ пересчитывает сами калькуляции перед сборкой — берёт
+    final_total как есть на момент нажатия (решение Вахтанга:
+    "кнопка только собирает и показывает спеку").
+
+    Возвращает {"redirect_url": "/specification-v2/{id}"} — НЕ патч
+    полей текущей заявки (в отличие от большинства action_handlers):
+    кнопка создаёт ДРУГОЙ документ, а не правит instance, поэтому
+    фронт (runAction() в page.py) при виде redirect_url переходит на
+    страницу созданной спецификации вместо подмешивания результата
+    в открытую форму заявки.
+    """
+
+    def handler(instance: Request, session) -> dict:
+        from app.engine.document_numbering import next_document_number
+
+        calculations = session.exec(
+            select(Calculation).where(
+                Calculation.request_id == instance.id,
+                Calculation.brand_slot == brand_slot,
+                Calculation.status == "active",
+            )
+        ).all()
+
+        existing = session.exec(
+            select(Specification).where(
+                Specification.request_id == instance.id,
+                Specification.brand_slot == brand_slot,
+            )
+        ).first()
+        if existing is not None:
+            old_items = session.exec(
+                select(SpecificationItem).where(SpecificationItem.specification_id == existing.id)
+            ).all()
+            for item in old_items:
+                session.delete(item)
+            session.delete(existing)
+            session.flush()
+
+        spec = Specification(
+            request_id=instance.id,
+            brand_slot=brand_slot,
+            client_id=instance.client_id,
+            document_number=next_document_number(session, "S"),
+        )
+        session.add(spec)
+        session.flush()
+
+        total_amount = 0.0
+        for calc in calculations:
+            line_total = (calc.final_total or 0.0) * (calc.quantity or 0.0)
+            total_amount += line_total
+            session.add(SpecificationItem(
+                specification_id=spec.id,
+                calculation_id=calc.id,
+                product_name=calc.full_name,
+                unit_price=calc.final_total,
+                quantity=calc.quantity,
+                line_total=line_total,
+            ))
+
+        spec.total_amount = total_amount
+        session.add(spec)
+        session.commit()
+        session.refresh(spec)
+
+        return {"redirect_url": f"/specification-v2/{spec.id}"}
+
+    return handler
+
+
 request_table = TableConfig(
     key="request",
     model=Request,
@@ -154,6 +253,20 @@ request_table = TableConfig(
     own_page_url="/request-v2",
     default_sort_field="document_date",
     default_sort_dir="desc",
+    action_handlers={
+        # build_specification_1/2/3 (2026-08-27) — один обработчик на
+        # слот (см. обоснование в _build_specification_handler выше:
+        # action_handlers — плоский словарь по имени action, номер
+        # слота зашит в самом имени). Подключены к кнопке
+        # "Спецификация" через FieldConfig.row_action_names у
+        # соответствующего brand_slot_N_id ниже. НЕ через
+        # TableConfig.action_buttons — кнопка рендерится рядом с полем
+        # (row_actions), не отдельным блоком под вкладкой формы, и
+        # у request сейчас вообще нет вкладок формы (form_tabs пуст).
+        "build_specification_1": _build_specification_handler(1),
+        "build_specification_2": _build_specification_handler(2),
+        "build_specification_3": _build_specification_handler(3),
+    },
     fields=[
         FieldConfig(name="document_number", label="Номер", list_width="90px"),
         FieldConfig(name="document_date", label="Дата", widget="date", list_width="110px"),
@@ -165,11 +278,14 @@ request_table = TableConfig(
         # журнала. in_form не трогаем (default True) — в форме видны
         # как прежде, вместе со своими row_actions.
         FieldConfig(name="brand_slot_1_id", label="Вариант 1 — бренд", widget="select", in_list=False,
-                    row_actions=["Спецификация", "Пересчитать"]),
+                    row_actions=["Спецификация", "Пересчитать"],
+                    row_action_names=["build_specification_1", None]),
         FieldConfig(name="brand_slot_2_id", label="Вариант 2 — бренд", widget="select", in_list=False,
-                    row_actions=["Спецификация", "Пересчитать"]),
+                    row_actions=["Спецификация", "Пересчитать"],
+                    row_action_names=["build_specification_2", None]),
         FieldConfig(name="brand_slot_3_id", label="Вариант 3 — бренд", widget="select", in_list=False,
-                    row_actions=["Спецификация", "Пересчитать"]),
+                    row_actions=["Спецификация", "Пересчитать"],
+                    row_action_names=["build_specification_3", None]),
         FieldConfig(name="note", label="Заметка", widget="textarea", in_list=False, placeholder="К чему относится эта заявка…"),
     ],
     relations=[
@@ -516,6 +632,16 @@ calculation_table = TableConfig(
                     form_width="140px", on_change_action="brand_slot_labels"),
         FieldConfig(name="client_name", label="Рабочее название", required=True, searchable=True,
                     search_default=True, list_width="22%", tab="Основное"),
+        # quantity (2026-08-27) — количество ИЗДЕЛИЙ этого типа, нужно
+        # спецификации (см. подробный комментарий в
+        # app/models/calculation.py) — сама вкладка "Стоимость"
+        # по-прежнему считает цену ОДНОГО изделия, это поле её не
+        # трогает. Рядом с "Рабочее название" по прямой просьбе
+        # Вахтанга ("нужно сделать её это поле количество на первой
+        # вкладке возле поля где мы вводим рабочее название").
+        FieldConfig(name="quantity", label="Количество изделий", widget="number",
+                    is_numeric=True, list_width="90px", form_width="120px", tab="Основное",
+                    default=1),
         FieldConfig(name="full_name", label="Полное название", in_list=False, tab="Основное",
                     inline_action="recalc_full_name"),
         FieldConfig(name="brand_slot", label="Вариант (слот бренда)", widget="radio",
@@ -595,6 +721,7 @@ calculation_table = TableConfig(
     ],
     form_rows=[
         FormRow(field_names=["document_number", "document_date", "document_time"]),
+        FormRow(field_names=["client_name", "quantity"]),
         FormRow(field_names=["materials_total", "kits_total", "base_total"]),
         FormRow(field_names=["insurance_markup", "insured_total"]),
         FormRow(field_names=["markup_percent", "markup_total"]),
@@ -820,6 +947,100 @@ calculation_item_table = TableConfig(
 )
 
 
+# Спецификация (specification) — третий документ цепочки zayavka ->
+# calculation -> specification -> invoice. Формируется НЕ через
+# обычную кнопку "+ Добавить" (allow_create=False — создание идёт
+# ТОЛЬКО через кнопку "Спецификация" у нужного брендового слота
+# заявки, см. _build_specification_handler/request_table выше),
+# редактирование строк тоже недоступно человеку напрямую
+# (allow_delete=False — вся запись целиком удаляется и создаётся
+# заново кнопкой "Спецификация", отдельное ручное удаление
+# бессмысленно и могло бы рассинхронизировать total_amount).
+# Единственное действие человека над уже созданной спецификацией в
+# этом шаге — просмотр (список -> клик по строке -> карточка с
+# шапкой; сами позиции — см. specification_item_table ниже, отдельный
+# список, отфильтрованный по specification_id).
+#
+# own_page_url — та же логика, что у request/calculation: кнопка
+# "Спецификация" делает redirect на "/specification-v2/{id}" (см.
+# _build_specification_handler), открывая карточку сразу.
+specification_table = TableConfig(
+    key="specification",
+    model=Specification,
+    title="Спецификации",
+    title_singular="спецификация",
+    search_placeholder="Поиск по номеру…",
+    delete_mode="soft",
+    allow_create=False,
+    allow_delete=False,
+    document_number_field="document_number",
+    document_prefix="S",
+    own_page_url="/specification-v2",
+    default_sort_fields=[("document_date", "desc"), ("document_time", "desc")],
+    fields=[
+        FieldConfig(name="document_number", label="Номер", list_width="90px", form_width="120px"),
+        FieldConfig(name="document_date", label="Дата", widget="date", list_width="110px", form_width="140px"),
+        FieldConfig(name="document_time", label="Время", widget="time", list_width="90px", form_width="110px"),
+        FieldConfig(name="request_id", label="Заявка", widget="select", list_width="18%", form_width="140px"),
+        FieldConfig(name="client_id", label="Заказчик", widget="select", list_width="22%"),
+        FieldConfig(name="brand_slot", label="Вариант (слот бренда)", widget="select",
+                    list_width="90px", readonly=True,
+                    options=[("1", "Вариант 1"), ("2", "Вариант 2"), ("3", "Вариант 3")]),
+        FieldConfig(name="total_amount", label="Сумма по спецификации", widget="number",
+                    is_numeric=True, list_width="120px", readonly=True),
+    ],
+    relations=[
+        Relation(field="request_id", target_table="request", display_field="document_number", label="Заявка",
+                 show_filter_chips=False),
+        Relation(field="client_id", target_table="client", display_field="short_name", label="Заказчик",
+                 show_filter_chips=False),
+    ],
+    form_rows=[
+        FormRow(field_names=["document_number", "document_date", "document_time"]),
+        FormRow(field_names=["client_id", "brand_slot"]),
+    ],
+)
+
+
+# specification_item — строки спецификации (см. подробный комментарий
+# механики формирования в app/models/specification.py). НЕ отдельный
+# пункт меню и не drill-down уровень — hierarchy здесь ЧИСТО ради
+# parent_field (тот же приём, что и у kit_item/calculation_item): даёт
+# GET /api/specification_item?parent_id={specification_id} бесплатно
+# через уже существующий универсальный механизм движка. allow_create/
+# allow_delete=False — строки исключительно снэпшот, создаются и
+# удаляются ТОЛЬКО целиком вместе со всей спецификацией (см.
+# _build_specification_handler), отдельное ручное редактирование
+# строки нарушило бы "замороженность" снимка и total_amount шапки.
+specification_item_table = TableConfig(
+    key="specification_item",
+    model=SpecificationItem,
+    title="Позиции спецификации",
+    title_singular="позиция спецификации",
+    search_placeholder="Поиск по названию…",
+    allow_create=False,
+    allow_delete=False,
+    hierarchy=Hierarchy(parent_field="specification_id", parent_key="specification"),
+    fields=[
+        FieldConfig(name="specification_id", label="Спецификация", widget="select", in_list=False, in_form=False),
+        FieldConfig(name="calculation_id", label="Калькуляция", widget="select", in_list=False, in_form=False),
+        FieldConfig(name="product_name", label="Изделие", list_width="30%"),
+        FieldConfig(name="quantity", label="Количество", widget="number",
+                    is_numeric=True, list_width="90px"),
+        FieldConfig(name="unit_price", label="Цена за изделие", widget="number",
+                    is_numeric=True, list_width="120px"),
+        FieldConfig(name="line_total", label="Сумма по строке", widget="number",
+                    is_numeric=True, list_width="120px"),
+    ],
+    relations=[
+        Relation(field="specification_id", target_table="specification", display_field="document_number",
+                 label="Спецификация", show_filter_chips=False),
+        Relation(field="calculation_id", target_table="calculation", display_field="full_name",
+                 label="Калькуляция", show_filter_chips=False),
+    ],
+)
+
+
 constant_table = TableConfig(
     key="constant",
     model=Constant,
@@ -843,4 +1064,5 @@ ALL_TABLES = [
     brand_table, unit_table, material_table, kit_group_table, kit_section_table,
     kit_table, kit_item_table, constant_table, client_table, request_table,
     calculation_table, calculation_item_table, product_type_rate_table,
+    specification_table, specification_item_table,
 ]

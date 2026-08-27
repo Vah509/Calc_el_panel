@@ -38,6 +38,16 @@
 # request.brand_slot_N_id: группировка идёт по НОМЕРУ слота, не по
 # самому brand_id (сам бренд смотрим через request по этому номеру).
 #
+# quantity (добавлено 2026-08-27, вкладка "Основное", рядом с
+# client_name) — количество ИЗДЕЛИЙ этого типа, которое нужно
+# изготовить. НЕ участвует в расчёте вкладки "Стоимость" —
+# materials_total/kits_total/.../final_total считаются на ОДНО
+# изделие, как и раньше (решение Вахтанга: "во всей калькуляции
+# берётся материалы и комплекты на одно изделие, стоимость считается
+# на одно изделие"). Используется ТОЛЬКО спецификацией — при сборе
+# specification_item сумма по строке = final_total * quantity, см.
+# app/models/specification.py.
+#
 # status — свободные переходы, без принудительного порядка (решение
 # из HANDOFF_kits_and_calculation.md, раздел 2): draft/active/
 # archived_pending/delete_pending. Пересчёт стоимости разрешён в
@@ -143,6 +153,7 @@ class Calculation(SQLModel, table=True):
     full_name: str = Field(default="")
     name_template: str = Field(default=DEFAULT_NAME_TEMPLATE)
     brand_slot: Optional[int] = Field(default=None)
+    quantity: float = Field(default=1.0)
     status: str = Field(default="draft")
 
     # --- Стоимость (см. комментарий блока выше) ---

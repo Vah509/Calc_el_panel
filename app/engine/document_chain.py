@@ -44,18 +44,29 @@ class ChainLink:
     fk_field: str
 
 
-# Текущее состояние цепочки: только request -> calculation реально
-# существует в коде. specification/invoice ЕЩЁ НЕ реализованы —
-# специально НЕ добавляем сюда строки-заглушки под несуществующие
-# таблицы (ключа "specification"/"invoice" пока нет в ALL_TABLES, и
-# добавление ссылки на несуществующий TableConfig только создало бы
-# рассинхрон, который придётся отлавливать защитным кодом). Когда
-# появится specification: добавить
-#   ChainLink(child_key="specification", parent_key="calculation", fk_field="calculation_id"),
-# и всё — обход в document_chain_children()/build_chain() подхватит
-# новый уровень автоматически, страница/API менять не придётся.
+# specification (2026-08-27) — родитель В ЦЕПОЧКЕ ДОКУМЕНТОВ это
+# request, НЕ calculation, хотя по смыслу спецификация формируется
+# ИЗ калькуляций — одна спецификация агрегирует НЕСКОЛЬКО калькуляций
+# сразу (все активные калькуляции заявки с данным brand_slot), а
+# ChainLink моделирует связь 1:N через один FK, что не подходит для
+# N:1 "калькуляции -> спецификация". Вместо этого specification и
+# calculation — ДВА СОСЕДНИХ дочерних уровня request одновременно
+# (обе ссылки ниже имеют parent_key="request") — обход в
+# document_chain_children()/build_chain() группирует их в один общий
+# "уровень" BFS, что и нужно: в цепочке заявки видно калькуляции И
+# спецификации рядом, каждая ссылается на свою заявку напрямую.
+# Трассировка конкретных калькуляций внутри спецификации — через
+# specification_item.calculation_id (см. app/models/specification.py),
+# не через этот реестр документов.
+#
+# invoice ЕЩЁ НЕ реализован — специально НЕ добавляем сюда
+# строку-заглушку под несуществующую таблицу (ключа "invoice" пока
+# нет в ALL_TABLES, и добавление ссылки на несуществующий TableConfig
+# только создало бы рассинхрон, который придётся отлавливать
+# защитным кодом).
 CHAIN_LINKS: list[ChainLink] = [
     ChainLink(child_key="calculation", parent_key="request", fk_field="request_id"),
+    ChainLink(child_key="specification", parent_key="request", fk_field="request_id"),
 ]
 
 # Корень цепочки документов — заявка. Единственное место, откуда

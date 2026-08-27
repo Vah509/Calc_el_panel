@@ -93,16 +93,29 @@ def get_documents_chain(request_id: int, session: Session = Depends(get_session)
     # BFS вниз по CHAIN_LINKS: текущий уровень id-шников -> следующий.
     current_level_key = root_config.key
     current_level_ids = [request_id]
+    # Очередь ещё не обработанных веток BFS — нужна с тех пор, как
+    # один parent_key может иметь НЕСКОЛЬКО дочерних связей сразу (см.
+    # комментарий ниже) и обе ветки нужно обойти дальше вниз, а не
+    # только последнюю найденную.
+    pending_levels: list[tuple[str, list[int]]] = []
 
     while True:
         links = children_of(current_level_key)
         if not links:
-            break
-        # Сейчас в реестре максимум одна связь на parent_key (цепочка
-        # линейная), но пишем на случай нескольких сразу — просто
-        # обе группы добавятся на этот же "уровень" обхода.
-        next_level_key = None
-        next_level_ids: list[int] = []
+            if not pending_levels:
+                break
+            current_level_key, current_level_ids = pending_levels.pop(0)
+            continue
+        # С 2026-08-27 (specification) в реестре УЖЕ ЕСТЬ несколько
+        # связей на один parent_key одновременно (calculation И
+        # specification — оба дети request, см.
+        # app/engine/document_chain.py) — поэтому next-уровень собирается
+        # ПО КАЖДОЙ дочерней таблице отдельно (не смешивая id разных
+        # таблиц под одним ключом, как было бы при наивном общем
+        # next_level_ids): следующая итерация BFS обходит children_of()
+        # для КАЖДОЙ из них по очереди, продолжая только те ветки, где
+        # реально нашлись строки.
+        next_levels: list[tuple[str, list[int]]] = []
         for link in links:
             child_config = _TABLE_BY_KEY.get(link.child_key)
             if child_config is None:
@@ -114,12 +127,18 @@ def get_documents_chain(request_id: int, session: Session = Depends(get_session)
                 select(child_config.model).where(fk_column.in_(current_level_ids))
             ).all()
             groups.append({**_group_meta(child_config), "items": [_serialize_row(r) for r in rows]})
-            next_level_key = link.child_key
-            next_level_ids.extend([r.id for r in rows])
+            if rows:
+                next_levels.append((link.child_key, [r.id for r in rows]))
 
-        if not next_level_ids:
-            break
-        current_level_key = next_level_key
-        current_level_ids = next_level_ids
+        if not next_levels:
+            if not pending_levels:
+                break
+            current_level_key, current_level_ids = pending_levels.pop(0)
+            continue
+        # BFS продолжается со ВСЕХ веток сразу, не только с последней —
+        # очередь (child_key, ids) обрабатывается по одной ветке за
+        # проход внешнего while, остальные остаются в pending_levels.
+        current_level_key, current_level_ids = next_levels[0]
+        pending_levels.extend(next_levels[1:])
 
     return {"request_id": request_id, "groups": groups}

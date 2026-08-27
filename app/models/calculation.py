@@ -52,6 +52,58 @@
 # редактируются вручную, как и дата у заявки; сортировка списка по
 # умолчанию — сначала по document_date, потом по document_time,
 # оба по убыванию (новые сверху).
+#
+# --- Вкладка "Стоимость" (2026-08-26) ---
+# Считает итоговую цену изделия поверх суммы строк calculation_item
+# (материалы + комплекты). Пересчёт — той же кнопкой "Пересчитать",
+# что уже пересчитывает цены материалов/комплектов на вкладке
+# "Материалы" (см. _recalc_material_prices_handler в
+# app/engine/tables.py) — по прямому решению Вахтанга ЛЮБАЯ кнопка
+# пересчёта внутри калькуляции пересчитывает её целиком.
+#
+# Порядок расчёта (согласовано 2026-08-26):
+#   1. materials_total  = Σ price_excl_vat по CalculationItem, где
+#      заполнен material_id
+#   2. kits_total        = Σ price_excl_vat по CalculationItem, где
+#      заполнен kit_id
+#   3. base_total        = materials_total + kits_total
+#   4. insured_total     = base_total * insurance_markup
+#   5а. markup_total     = insured_total * markup_percent  (способ "наценка")
+#   5б. hours_total      = insured_total + assembly_hours * (стоимость
+#      часа из ProductTypeRate.hourly_rate по product_type_rate_id)
+#      (способ "часы")
+#   6. final_total       = markup_total ИЛИ hours_total, в зависимости
+#      от cost_method — то, что попадает в базу при нажатии "Сохранить"
+# Если calculation_item ещё нет ни одного — все суммы просто 0, без
+# ошибки (пустая калькуляция — не invalid state).
+#
+# materials_total/kits_total/base_total/insured_total/markup_total/
+# hours_total/final_total — СНЭПШОТЫ, как и цены самих CalculationItem:
+# обновляются по кнопке "Пересчитать", между пересчётами не "плывут"
+# сами по себе даже если что-то в справочниках изменилось.
+#
+# markup_percent/insurance_markup — редактируемые ЧИСЛА НА САМОЙ
+# калькуляции (НЕ readonly-ссылка на константу), дефолт при создании
+# берётся из констант "markup_percent"/"insurance_markup" (см.
+# app/database.py::seed_constants) — тот же паттерн, что и
+# name_template/DEFAULT_NAME_TEMPLATE выше, значение можно свободно
+# поправить под конкретный случай на конкретной калькуляции.
+#
+# cost_method — переключатель способа расчёта ("markup"/"hours"),
+# тот же принцип radio, что и brand_slot: ровно один активен.
+# Определяет, какая из двух посчитанных сумм (markup_total/hours_total)
+# идёт в final_total при сохранении. Оба блока (наценка и часы) в
+# форме показываются ОДНОВРЕМЕННО — переключатель влияет только на
+# то, что попадает в итог, не на видимость полей.
+#
+# assembly_hours/product_type_rate_id — используются только способом
+# "часы", но существуют независимо от того, какой cost_method выбран
+# сейчас (человек может прикинуть оба варианта и переключаться между
+# ними). product_type_rate_id — FK на ProductTypeRate (справочник
+# "Стоимость сборки": тип изделия -> стоимость часа), nullable — но
+# форма подставляет изделие по умолчанию при создании новой
+# калькуляции (см. DEFAULT_PRODUCT_TYPE_RATE_NAME ниже и
+# _default_product_type_rate_id в app/engine/tables.py).
 # ============================================================
 
 from datetime import date, time, datetime
@@ -73,6 +125,13 @@ def _now_time() -> time:
 # app/engine/tables.py) и в app/engine/name_template.py.
 DEFAULT_NAME_TEMPLATE = "Сборка {client_name}"
 
+# Название записи ProductTypeRate, подставляемой по умолчанию как
+# product_type_rate_id при создании новой калькуляции (см.
+# _default_product_type_rate_id в app/engine/tables.py). Если записи
+# с таким name ещё нет в справочнике "Стоимость сборки" — поле просто
+# остаётся пустым, ничего не падает.
+DEFAULT_PRODUCT_TYPE_RATE_NAME = "Стандартное изделие"
+
 
 class Calculation(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -85,6 +144,20 @@ class Calculation(SQLModel, table=True):
     name_template: str = Field(default=DEFAULT_NAME_TEMPLATE)
     brand_slot: Optional[int] = Field(default=None)
     status: str = Field(default="draft")
+
+    # --- Стоимость (см. комментарий блока выше) ---
+    cost_method: str = Field(default="markup")
+    markup_percent: float = Field(default=1.4)
+    insurance_markup: float = Field(default=1.1)
+    assembly_hours: float = Field(default=0.0)
+    product_type_rate_id: Optional[int] = Field(default=None, foreign_key="producttyperate.id")
+    materials_total: float = Field(default=0.0)
+    kits_total: float = Field(default=0.0)
+    base_total: float = Field(default=0.0)
+    insured_total: float = Field(default=0.0)
+    markup_total: float = Field(default=0.0)
+    hours_total: float = Field(default=0.0)
+    final_total: float = Field(default=0.0)
 
     # is_deleted — визуальная пометка "к удалению" (soft-delete),
     # НЕ фильтрация — см. комментарий в app/models/material.py.

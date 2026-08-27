@@ -22,6 +22,7 @@ from app.models.client import Client
 from app.models.request import Request
 from app.models.calculation import Calculation, DEFAULT_NAME_TEMPLATE
 from app.models.calculation_item import CalculationItem
+from app.models.product_type_rate import ProductTypeRate
 from app.models.document_counter import DocumentCounter  # noqa: F401 — не таблица
 # движка (нет своего TableConfig/страницы), но должна быть импортирована
 # здесь, чтобы SQLModel.metadata.create_all() увидела её при старте
@@ -63,6 +64,29 @@ unit_table = TableConfig(
                     placeholder="шт"),
         FieldConfig(name="sort_order", label="Порядок", widget="number",
                     is_numeric=True, list_width="100px", default=0, in_list=False),
+    ],
+)
+
+
+# Стоимость сборки (2026-08-26) — справочник для способа расчёта
+# стоимости калькуляции "по часам" (см. вкладка "Стоимость" в
+# calculation_table ниже, Calculation.product_type_rate_id). Бывают
+# более сложные и более простые изделия — стоимость часа сборки по
+# ним может отличаться, отсюда отдельный справочник, а не одна общая
+# константа "стоимость часа". Обычный плоский справочник, без
+# hierarchy — см. app/models/product_type_rate.py.
+product_type_rate_table = TableConfig(
+    key="product_type_rate",
+    model=ProductTypeRate,
+    title="Стоимость сборки",
+    title_singular="тип изделия",
+    search_placeholder="Поиск по названию…",
+    delete_mode="soft",
+    fields=[
+        FieldConfig(name="name", label="Название", required=True, searchable=True,
+                    search_default=True, list_width="60%"),
+        FieldConfig(name="hourly_rate", label="Стоимость часа", widget="number",
+                    is_numeric=True, list_width="140px", default=0),
     ],
 )
 
@@ -215,7 +239,13 @@ def _recalc_material_prices_handler(instance: Calculation, session) -> dict:
 
     Между двумя нажатиями цена в обеих категориях — "замороженный"
     снэпшот (см. обоснование в app/models/calculation_item.py), даже
-    если материал/состав комплекта изменился за это время."""
+    если материал/состав комплекта изменился за это время.
+
+    С 2026-08-26 та же кнопка ЕЩЁ И пересчитывает вкладку "Стоимость"
+    (см. _recalc_cost_totals ниже) — сначала обновляются цены строк
+    (это), потом на их основе — итоговая стоимость изделия. Один
+    обработчик на оба действия, по тому же принципу "одна кнопка
+    пересчитывает калькуляцию целиком"."""
     from app.models.material import Material
     from app.models.kit_item import KitItem
     items = session.exec(
@@ -244,7 +274,79 @@ def _recalc_material_prices_handler(instance: Calculation, session) -> dict:
             session.add(item)
             updated += 1
     session.commit()
-    return {"recalculated": updated}
+    session.refresh(instance)
+    cost_fields = _recalc_cost_totals(instance, session)
+    return {"recalculated": updated, **cost_fields}
+
+
+def _recalc_cost_totals(instance: Calculation, session) -> dict:
+    """Пересчёт вкладки "Стоимость" (2026-08-26) — вызывается ИЗ
+    _recalc_material_prices_handler после того, как обновлены цены
+    самих строк calculation_item, поэтому здесь просто суммирует уже
+    актуальные price_excl_vat, не трогая справочники материалов сам.
+
+    Порядок (согласовано с Вахтангом, см. подробный комментарий в
+    app/models/calculation.py):
+      materials_total  = Σ price_excl_vat по строкам с material_id
+      kits_total       = Σ price_excl_vat по строкам с kit_id
+      base_total       = materials_total + kits_total
+      insured_total    = base_total * instance.insurance_markup
+      markup_total     = insured_total * instance.markup_percent
+      hours_total      = insured_total + assembly_hours * hourly_rate
+                          (hourly_rate из ProductTypeRate,
+                          product_type_rate_id может быть не задан —
+                          тогда просто 0, не ошибка)
+      final_total      = markup_total, если cost_method == "markup",
+                          иначе hours_total
+
+    Если у калькуляции вообще нет строк — все суммы получаются 0 без
+    исключений (пустой список -> sum([]) == 0), это ожидаемое
+    поведение, не invalid state (см. обсуждение с Вахтангом
+    2026-08-26)."""
+    from app.models.product_type_rate import ProductTypeRate
+
+    items = session.exec(
+        select(CalculationItem).where(CalculationItem.calculation_id == instance.id)
+    ).all()
+    materials_total = round(
+        sum(item.price_excl_vat for item in items if item.material_id), 2
+    )
+    kits_total = round(
+        sum(item.price_excl_vat for item in items if item.kit_id), 2
+    )
+    base_total = round(materials_total + kits_total, 2)
+    insured_total = round(base_total * instance.insurance_markup, 2)
+    markup_total = round(insured_total * instance.markup_percent, 2)
+
+    hourly_rate = 0.0
+    if instance.product_type_rate_id:
+        rate = session.get(ProductTypeRate, instance.product_type_rate_id)
+        if rate:
+            hourly_rate = rate.hourly_rate
+    hours_total = round(insured_total + instance.assembly_hours * hourly_rate, 2)
+
+    final_total = markup_total if instance.cost_method == "markup" else hours_total
+
+    instance.materials_total = materials_total
+    instance.kits_total = kits_total
+    instance.base_total = base_total
+    instance.insured_total = insured_total
+    instance.markup_total = markup_total
+    instance.hours_total = hours_total
+    instance.final_total = final_total
+    session.add(instance)
+    session.commit()
+    session.refresh(instance)
+
+    return {
+        "materials_total": instance.materials_total,
+        "kits_total": instance.kits_total,
+        "base_total": instance.base_total,
+        "insured_total": instance.insured_total,
+        "markup_total": instance.markup_total,
+        "hours_total": instance.hours_total,
+        "final_total": instance.final_total,
+    }
 
 
 def _brand_slot_labels_handler(instance: Calculation, session) -> dict:
@@ -306,7 +408,7 @@ calculation_table = TableConfig(
     own_page_url="/calculation-v2",
     document_prefix="K",
     default_sort_fields=[("document_date", "desc"), ("document_time", "desc")],
-    form_tabs=["Основное", "Настройки", "Материалы", "Комплекты"],
+    form_tabs=["Основное", "Настройки", "Материалы", "Комплекты", "Стоимость"],
     needs_constants=True,
     extra_lookups=["brand"],
     materials_tab="Материалы",
@@ -371,13 +473,61 @@ calculation_table = TableConfig(
                     hint="Доступные вставки: {client_name} — рабочее название, "
                          "{brand_slot} — номер варианта (1/2/3), {request_number} — "
                          "номер связанной заявки. Например: Сборка {client_name}"),
+
+        # --- Вкладка "Стоимость" (2026-08-26) --- см. подробный
+        # комментарий порядка расчёта в app/models/calculation.py и в
+        # _recalc_cost_totals (app/engine/tables.py). Пересчёт — той
+        # же кнопкой "Пересчитать", что и на вкладке "Материалы"
+        # (materials_recalc_action="recalc_material_prices" ниже).
+        FieldConfig(name="materials_total", label="Материалы, итого", widget="number",
+                    is_numeric=True, in_list=False, tab="Стоимость", readonly=True),
+        FieldConfig(name="kits_total", label="Комплекты, итого", widget="number",
+                    is_numeric=True, in_list=False, tab="Стоимость", readonly=True),
+        FieldConfig(name="base_total", label="База (материалы + комплекты)", widget="number",
+                    is_numeric=True, in_list=False, tab="Стоимость", readonly=True),
+        FieldConfig(name="insurance_markup", label="Страховочная наценка", widget="number",
+                    is_numeric=True, in_list=False, tab="Стоимость", default=1.1,
+                    default_from_constant="insurance_markup",
+                    hint="Применяется к обоим способам расчёта: база умножается на "
+                         "эту наценку до дальнейшего расчёта. Можно поправить вручную "
+                         "для конкретной калькуляции — дефолт берётся из справочника "
+                         "констант и на уже созданные калькуляции не влияет."),
+        FieldConfig(name="insured_total", label="База со страховкой", widget="number",
+                    is_numeric=True, in_list=False, tab="Стоимость", readonly=True),
+        FieldConfig(name="markup_percent", label="Процент надбавки", widget="number",
+                    is_numeric=True, in_list=False, tab="Стоимость", default=1.4,
+                    default_from_constant="markup_percent",
+                    hint="Способ \"Наценка\": база со страховкой умножается на эту "
+                         "величину. Можно поправить вручную для конкретной калькуляции."),
+        FieldConfig(name="markup_total", label="Сумма (способ \"Наценка\")", widget="number",
+                    is_numeric=True, in_list=False, tab="Стоимость", readonly=True),
+        FieldConfig(name="assembly_hours", label="Часы на сборку", widget="number",
+                    is_numeric=True, in_list=False, tab="Стоимость", default=0,
+                    hint="Способ \"По часам\": количество часов, умножается на "
+                         "стоимость часа выбранного ниже типа изделия."),
+        FieldConfig(name="product_type_rate_id", label="Тип изделия (стоимость часа)",
+                    widget="select", is_numeric=False, in_list=False, tab="Стоимость",
+                    default_first_option=True),
+        FieldConfig(name="hours_total", label="Сумма (способ \"По часам\")", widget="number",
+                    is_numeric=True, in_list=False, tab="Стоимость", readonly=True),
+        FieldConfig(name="cost_method", label="Способ расчёта стоимости", widget="radio",
+                    in_list=False, tab="Стоимость", default="markup",
+                    options=[("markup", "Наценка"), ("hours", "По часам")]),
+        FieldConfig(name="final_total", label="Итоговая стоимость", widget="number",
+                    is_numeric=True, in_list=False, tab="Стоимость", readonly=True),
     ],
     relations=[
         Relation(field="request_id", target_table="request", display_field="document_number", label="Заявка",
                  show_filter_chips=False),
+        Relation(field="product_type_rate_id", target_table="product_type_rate", display_field="name",
+                 label="Тип изделия", show_filter_chips=False),
     ],
     form_rows=[
         FormRow(field_names=["document_number", "document_date", "document_time"]),
+        FormRow(field_names=["materials_total", "kits_total", "base_total"]),
+        FormRow(field_names=["insurance_markup", "insured_total"]),
+        FormRow(field_names=["markup_percent", "markup_total"]),
+        FormRow(field_names=["assembly_hours", "product_type_rate_id", "hours_total"]),
     ],
 )
 
@@ -621,5 +771,5 @@ constant_table = TableConfig(
 ALL_TABLES = [
     brand_table, unit_table, material_table, kit_group_table, kit_section_table,
     kit_table, kit_item_table, constant_table, client_table, request_table,
-    calculation_table, calculation_item_table,
+    calculation_table, calculation_item_table, product_type_rate_table,
 ]

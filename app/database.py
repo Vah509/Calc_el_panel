@@ -95,6 +95,26 @@ def _ensure_is_deleted_columns() -> None:
         # материалы (kit_id не относится к ним), новые позиции комплектов
         # получат kit_id явно при создании (см. вкладка "Комплекты").
         ("calculationitem", "kit_id", "INTEGER NULL"),
+        # 2026-08-26: вкладка "Стоимость" — все поля ниже добавлены в
+        # модель Calculation ПОСЛЕ того, как таблица calculation уже
+        # существует на Postgres (создана в v?? вместе с request_id/
+        # client_name и т.д.) — та же ловушка, см. комментарии выше.
+        # DEFAULT для каждого поля СОВПАДАЕТ с default= в модели Python
+        # (см. app/models/calculation.py) — существующие калькуляции
+        # получат те же значения, что получила бы новая запись, пока
+        # человек не нажмёт "Пересчитать"/не поправит вручную.
+        ("calculation", "cost_method", "VARCHAR NOT NULL DEFAULT 'markup'"),
+        ("calculation", "markup_percent", "DOUBLE PRECISION NOT NULL DEFAULT 1.4"),
+        ("calculation", "insurance_markup", "DOUBLE PRECISION NOT NULL DEFAULT 1.1"),
+        ("calculation", "assembly_hours", "DOUBLE PRECISION NOT NULL DEFAULT 0"),
+        ("calculation", "product_type_rate_id", "INTEGER NULL"),
+        ("calculation", "materials_total", "DOUBLE PRECISION NOT NULL DEFAULT 0"),
+        ("calculation", "kits_total", "DOUBLE PRECISION NOT NULL DEFAULT 0"),
+        ("calculation", "base_total", "DOUBLE PRECISION NOT NULL DEFAULT 0"),
+        ("calculation", "insured_total", "DOUBLE PRECISION NOT NULL DEFAULT 0"),
+        ("calculation", "markup_total", "DOUBLE PRECISION NOT NULL DEFAULT 0"),
+        ("calculation", "hours_total", "DOUBLE PRECISION NOT NULL DEFAULT 0"),
+        ("calculation", "final_total", "DOUBLE PRECISION NOT NULL DEFAULT 0"),
     ]
     with engine.connect() as conn:
         for table, column, ddl_type in tables_columns:
@@ -174,6 +194,14 @@ def seed_constants() -> None:
         ("vat_rate", "20", "Ставка НДС (%), используется при пересчёте цен материалов"),
         ("default_page_size", "100", "Максимальное число строк в списках"),
         ("calculation_name_template", "Сборка {client_name}", "Шаблон названия калькуляции по умолчанию"),
+        # 2026-08-26, вкладка "Стоимость" калькуляции — дефолты для
+        # markup_percent/insurance_markup на НОВОЙ калькуляции (см.
+        # app/models/calculation.py). Значения на самой калькуляции
+        # свободно редактируются вручную — эти константы влияют только
+        # на то, что подставится при СОЗДАНИИ, изменение здесь не
+        # затрагивает уже созданные калькуляции задним числом.
+        ("markup_percent", "1.4", "Процент надбавки (способ расчёта стоимости «наценка»)"),
+        ("insurance_markup", "1.1", "Страховочная наценка (применяется к обоим способам расчёта стоимости)"),
     ]
     with Session(engine) as session:
         for key, value, description in defaults:

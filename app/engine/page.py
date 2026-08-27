@@ -1553,7 +1553,15 @@ function enginePage() {
             // (см. _normalize_relation_fields в api.py — подчищает то
             // же самое на бэкенде как отдельная линия защиты, но здесь
             // правильнее не производить '' вообще).
-            blank[f.name] = f.default ?? null;
+            if (f.defaultFirstOption) {
+              // См. FieldConfig.default_first_option в config.py —
+              // подставляем id первой записи связанной таблицы вместо
+              // null, если список опций уже загружен и непуст.
+              const options = (this.relationOptions && this.relationOptions[f.name]) || [];
+              blank[f.name] = options.length > 0 ? options[0].id : (f.default ?? null);
+            } else {
+              blank[f.name] = f.default ?? null;
+            }
           } else if (f.defaultFromConstant && this.constants[f.defaultFromConstant] !== undefined) {
             // Динамический default из справочника constant (см.
             // FieldConfig.default_from_constant) — приоритетнее
@@ -2943,6 +2951,7 @@ def _serialize_level_config(config: TableConfig) -> dict:
                 "isNumeric": f.is_numeric,
                 "default": f.default,
                 "defaultFromConstant": f.default_from_constant,
+                "defaultFirstOption": f.default_first_option,
                 "required": f.required,
                 "virtual": f.virtual,
                 "widget": f.widget,

@@ -522,6 +522,24 @@ _PAGE_TEMPLATE_SOURCE = r"""
           {% if loop.first and config.computed_pairs %}
           <div class="vat-note">↻ Пересчитывается автоматически при изменении одного из полей — можно переопределить вручную.</div>
           {% endif %}
+          {% if tab == 'Стоимость' and config.materials_recalc_action %}
+          <!-- Вкладка "Стоимость" калькуляции (2026-08-27) — та же самая
+               кнопка "Пересчитать" и то же действие (materials_recalc_action
+               = recalc_material_prices), что и на вкладках "Материалы"/
+               "Комплекты": по решению Вахтанга кнопка везде делает ОДНО И
+               ТО ЖЕ — идёт в справочник материалов, обновляет актуальные
+               цены строк calculation_item (и материалов, и комплектов),
+               затем на их основе пересчитывает итоги "Стоимости". Здесь
+               физически продублирована в разметке, чтобы с этой вкладки
+               не нужно было прыгать на "Материалы" ради того же действия.
+               После выполнения подтягиваем оба списка позиций, чтобы они
+               не оставались с устаревшими ценами, если человек потом
+               откроет те вкладки в этой же сессии. -->
+          <div class="materials-toolbar" x-show="editing.id" x-cloak>
+            <button type="button" class="btn btn-ghost"
+                    @click="runAction('{{ config.materials_recalc_action }}').then(() => Promise.all([loadMaterialsItems(), loadKitsItems()]))">Пересчитать</button>
+          </div>
+          {% endif %}
           {{ render_action_buttons(action_buttons_by_tab.get(tab, [])) }}
           {% if loop.first and config.extra_actions %}
           <div class="extra-actions" x-show="editing.id">
@@ -2076,7 +2094,14 @@ function enginePage() {
         params.set('page_size', 1000);
         const res = await fetch('/api/' + key + '?' + params.toString());
         const data = await res.json();
-        this.materialsItems = data.items;
+        // Один и тот же родительский список calculation_item содержит и
+        // материалы, и комплекты вперемешку (см. CalculationItem.kit_id) —
+        // фильтр по material_id делается на фронте, зеркально фильтру
+        // !!row.kit_id в loadKitsItems(). Без этого строки-комплекты
+        // тоже попадают в список материалов: material_id у них пуст,
+        // materialItemLabel() ничего не находит — строка отображается
+        // без названия, но с ценой.
+        this.materialsItems = data.items.filter(row => !!row.material_id);
         this.materialsSelectedIds = [];
         if (this.materialsMaterialOptions.length === 0) {
           const matRes = await fetch('/api/material?page_size=1000');

@@ -449,6 +449,9 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
             if name in data:
                 setattr(instance, name, data[name])
 
+        if config.before_update_hook:
+            config.before_update_hook(instance, session)
+
         session.add(instance)
         session.commit()
         session.refresh(instance)

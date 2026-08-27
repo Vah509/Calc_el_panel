@@ -233,6 +233,40 @@ def _refresh_cost_totals_handler(instance: Calculation, session) -> dict:
     return _recalc_cost_totals(instance, session)
 
 
+def _sync_final_total_before_save(instance: Calculation, session) -> None:
+    """TableConfig.before_update_hook калькуляции (2026-08-27) — вызывается
+    ВНУТРИ update_item (engine/api.py) сразу после применения полей из
+    PUT-payload, до commit.
+
+    final_total помечен readonly=True (человек не может прислать его
+    напрямую через PUT — см. readonly_field_names в api.py), поэтому
+    единственный способ поддерживать его синхронным с cost_method —
+    пересчитать здесь же, СРАЗУ после того, как cost_method применён
+    к instance из этого же payload.
+
+    Нужно из-за клиентского CLIENT_ACTIONS.pick_final_total (page.py):
+    переключение radio "Наценка"/"По часам" на форме мгновенно меняет
+    editing.final_total на клиенте (без похода на сервер — иначе
+    переключатель не давал бы видимого эффекта, ровно тот баг, который
+    сообщил Вахтанг 2026-08-27), но САМО СОХРАНЕНИЕ (кнопка
+    "Сохранить") идёт через обычный PUT, где final_total как readonly
+    поле отбрасывается движком — без этого хука в базе осталось бы
+    старое значение final_total, снова рассинхронизированное с
+    cost_method сразу после сохранения (до следующего клика
+    "Пересчитать").
+
+    НЕ трогает materials_total/kits_total/base_total/insured_total/
+    markup_total/hours_total — это была бы уже другая задача
+    (актуализация цен из справочника), для неё есть отдельная кнопка
+    "Пересчитать" (recalc_material_prices). Здесь только выбор ГОТОВОГО
+    markup_total либо hours_total под актуальный cost_method — та же
+    логика, что и в _recalc_cost_totals ниже, но без пересчёта самих
+    сумм."""
+    instance.final_total = (
+        instance.hours_total if instance.cost_method == "hours" else instance.markup_total
+    )
+
+
 def _recalc_material_prices_handler(instance: Calculation, session) -> dict:
     """Кнопка "Пересчитать", показанная И на вкладке "Материалы", И на
     вкладке "Комплекты" (2026-08-23) — по прямой просьбе Вахтанга
@@ -445,6 +479,7 @@ calculation_table = TableConfig(
     kits_tab="Комплекты",
     kits_item_table_key="calculation_item",
     open_edit_action="refresh_cost_totals",
+    before_update_hook=_sync_final_total_before_save,
     action_buttons=[
         ActionButton(action="recalc_full_name", label="Сформировать название", tab="Основное",
                      client_side=True),
@@ -547,7 +582,8 @@ calculation_table = TableConfig(
                     is_numeric=True, in_list=False, tab="Стоимость", readonly=True),
         FieldConfig(name="cost_method", label="Способ расчёта стоимости", widget="radio",
                     in_list=False, tab="Стоимость", default="markup",
-                    options=[("markup", "Наценка"), ("hours", "По часам")]),
+                    options=[("markup", "Наценка"), ("hours", "По часам")],
+                    on_change_action="pick_final_total"),
         FieldConfig(name="final_total", label="Итоговая стоимость", widget="number",
                     is_numeric=True, in_list=False, tab="Стоимость", readonly=True),
     ],

@@ -349,7 +349,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
             <div class="radio-group">
               {% for value, label in f.options %}
               <label class="radio-option">
-                <input type="radio" name="{{ f.name }}" value="{{ value }}" x-model="editing.{{ f.name }}">
+                <input type="radio" name="{{ f.name }}" value="{{ value }}" x-model="editing.{{ f.name }}"{% if f.on_change_action %} @change="runAction('{{ f.on_change_action }}')"{% endif %}>
                 <span x-text="(editing.{{ f.radio_labels_field or '_none_' }} && editing.{{ f.radio_labels_field or '_none_' }}['{{ value }}']) || '{{ label }}'"></span>
               </label>
               {% endfor %}
@@ -1020,6 +1020,22 @@ const CLIENT_ACTIONS = {
       if (brand) labels[slot] = brand.name;
     }
     return { brand_slot_labels: labels };
+  },
+  // pick_final_total — переключатель "Способ расчёта стоимости"
+  // (cost_method, calculation, 2026-08-27) — final_total должен
+  // мгновенно обновляться при переключении radio "Наценка"/"По часам",
+  // не дожидаясь клика "Пересчитать" (обнаружено Вахтангом: после
+  // переключения radio "Итоговая стоимость" оставалась старым
+  // значением, пока не нажата кнопка). Работает целиком на клиенте —
+  // markup_total/hours_total уже посчитаны и лежат в editing (либо из
+  // последнего "Пересчитать", либо из refresh_cost_totals при
+  // открытии формы, см. open_edit_action), пересчитывать их заново не
+  // нужно — только выбрать нужное значение под текущий cost_method.
+  pick_final_total(editing) {
+    const final_total = editing.cost_method === 'hours'
+      ? Number(editing.hours_total ?? 0)
+      : Number(editing.markup_total ?? 0);
+    return { final_total };
   },
 };
 

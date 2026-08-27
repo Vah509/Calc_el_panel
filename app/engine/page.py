@@ -1667,6 +1667,16 @@ function enginePage() {
         for (const f of radioActions) {
           await this.runAction(f.radioLabelsAction);
         }
+        // Автовызов CONFIG.openEditAction (TableConfig.open_edit_action,
+        // 2026-08-27) — то же место в цикле открытия формы, что и у
+        // radioActions выше, но не привязано к конкретному полю: у
+        // calculation используется для refresh_cost_totals, чтобы
+        // вкладка "Стоимость" показывала актуальные суммы сразу при
+        // открытии, без обязательного клика "Пересчитать" (см.
+        // _refresh_cost_totals_handler в tables.py).
+        if (CONFIG.openEditAction && this.editing.id) {
+          await this.runAction(CONFIG.openEditAction);
+        }
       } catch (err) { showJsError(err); }
     },
 
@@ -2969,6 +2979,7 @@ def _serialize_level_config(config: TableConfig) -> dict:
         "materialsRecalcAction": config.materials_recalc_action,
         "kitsTab": config.kits_tab,
         "kitsItemTableKey": config.kits_item_table_key,
+        "openEditAction": config.open_edit_action,
         "fields": [
             {
                 "name": f.name,

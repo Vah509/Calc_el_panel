@@ -215,6 +215,24 @@ def _recalc_full_name_handler(instance: Calculation, session) -> dict:
     return {"full_name": instance.full_name}
 
 
+def _refresh_cost_totals_handler(instance: Calculation, session) -> dict:
+    """Вызывается АВТОМАТИЧЕСКИ при открытии формы редактирования
+    (openEdit() -> runAction() в page.py, по аналогии с
+    brand_slot_labels ниже), а не по клику на кнопку "Пересчитать".
+
+    В отличие от _recalc_material_prices_handler, здесь НЕ трогаются
+    цены самих строк calculation_item (не ходим в справочник материалов) —
+    только пересчитываются итоговые суммы вкладки "Стоимость" из уже
+    сохранённых снэпшот-цен строк. Нужно, чтобы человек, открывший
+    калькуляцию, сразу видел актуальную стоимость того, что реально
+    сохранено в базе — без обязательного клика "Пересчитать" (решение
+    Вахтанга 2026-08-27: "цифры по стоимости комплекта должны
+    подтягиваться сразу"). "Пересчитать" остаётся отдельным действием
+    ИМЕННО для синхронизации цен со справочником материалов — это два
+    разных смысла, разведённых по разным обработчикам."""
+    return _recalc_cost_totals(instance, session)
+
+
 def _recalc_material_prices_handler(instance: Calculation, session) -> dict:
     """Кнопка "Пересчитать", показанная И на вкладке "Материалы", И на
     вкладке "Комплекты" (2026-08-23) — по прямой просьбе Вахтанга
@@ -308,11 +326,21 @@ def _recalc_cost_totals(instance: Calculation, session) -> dict:
     items = session.exec(
         select(CalculationItem).where(CalculationItem.calculation_id == instance.id)
     ).all()
+    # ВАЖНО: price_excl_vat строки — это цена/сумма за ОДНУ единицу
+    # (для материала — цена за единицу материала, для комплекта — сумма
+    # состава комплекта за один комплект, см. app/models/calculation_item.py),
+    # а не сумма строки. Сумма строки = price_excl_vat × quantity, ТА ЖЕ
+    # формула, что уже используется на вкладках "Материалы"/"Комплекты"
+    # во фронте (materialsTotal/kitsTotal в page.py) и в списке позиций
+    # (materials-row-sum). Раньше здесь суммировался голый price_excl_vat
+    # без учёта quantity — при quantity > 1 "Материалы, итого"/"Комплекты,
+    # итого" на вкладке "Стоимость" оказывались заметно меньше реальной
+    # суммы строк (обнаружено Вахтангом на реальных данных 2026-08-27).
     materials_total = round(
-        sum(item.price_excl_vat for item in items if item.material_id), 2
+        sum(item.price_excl_vat * item.quantity for item in items if item.material_id), 2
     )
     kits_total = round(
-        sum(item.price_excl_vat for item in items if item.kit_id), 2
+        sum(item.price_excl_vat * item.quantity for item in items if item.kit_id), 2
     )
     base_total = round(materials_total + kits_total, 2)
     insured_total = round(base_total * instance.insurance_markup, 2)
@@ -416,6 +444,7 @@ calculation_table = TableConfig(
     materials_recalc_action="recalc_material_prices",
     kits_tab="Комплекты",
     kits_item_table_key="calculation_item",
+    open_edit_action="refresh_cost_totals",
     action_buttons=[
         ActionButton(action="recalc_full_name", label="Сформировать название", tab="Основное",
                      client_side=True),
@@ -434,6 +463,12 @@ calculation_table = TableConfig(
         "recalc_full_name": _recalc_full_name_handler,
         "brand_slot_labels": _brand_slot_labels_handler,
         "recalc_material_prices": _recalc_material_prices_handler,
+        # refresh_cost_totals — НЕ через ActionButton (нет собственной
+        # кнопки, вызывается автоматически при открытии формы, см.
+        # openEdit() в page.py, по аналогии с brand_slot_labels выше) —
+        # регистрации здесь достаточно для работы
+        # POST /api/calculation/{id}/actions/refresh_cost_totals.
+        "refresh_cost_totals": _refresh_cost_totals_handler,
     },
     fields=[
         FieldConfig(name="document_number", label="Номер", list_width="90px", tab="Основное",

@@ -528,6 +528,21 @@ _PAGE_TEMPLATE_SOURCE = r"""
           <div class="vat-note">↻ Пересчитывается автоматически при изменении одного из полей — можно переопределить вручную.</div>
           {% endif %}
           {% if tab == 'Стоимость' and config.materials_recalc_action %}
+          <!-- Автопересчёт "Стоимости" (2026-08-28) — x-effect отслеживает
+               ВСЕ реактивные зависимости, прочитанные внутри
+               applyLiveCostTotals() (materialsTotal/kitsTotal/editing.*, см.
+               соответствующие геттеры выше в page.py), и перезапускается
+               сам при любом их изменении: добавили/удалили/поправили
+               строку материала или комплекта, поменяли insurance_markup/
+               markup_percent/assembly_hours/product_type_rate_id/
+               cost_method — без похода на сервер, без нажатия "Пересчитать"
+               (та кнопка ниже осталась ТОЛЬКО ради подтяжки актуальных цен
+               из справочника материалов, см. её комментарий). Пустой div,
+               не показывается — сюда просто удобно повесить x-effect
+               именно на область вкладки "Стоимость", а не глобально на всю
+               форму (там она давала бы лишние срабатывания на вкладках, где
+               суммы стоимости не показываются). -->
+          <div x-effect="applyLiveCostTotals()" style="display:none"></div>
           <!-- Вкладка "Стоимость" калькуляции (2026-08-27) — та же самая
                кнопка "Пересчитать" и то же действие (materials_recalc_action
                = recalc_material_prices), что и на вкладках "Материалы"/
@@ -960,6 +975,10 @@ const ENGINE_FORMULAS = {
   }
 };
 
+function round2(value) {
+  return Math.round((Number(value) || 0) * 100) / 100;
+}
+
 function applyFormula(formulaName, direction, value, rate) {
   const formula = ENGINE_FORMULAS[formulaName];
   if (!formula) { showJsError('Неизвестная формула: ' + formulaName); return value; }
@@ -1136,6 +1155,61 @@ function enginePage() {
       return this.kitDetailItems.reduce(
         (sum, row) => sum + Number(row.price_excl_vat ?? 0) * Number(row.quantity ?? 0), 0
       );
+    },
+    // --- Автопересчёт вкладки "Стоимость" калькуляции (2026-08-28) ---
+    // Зеркало _recalc_cost_totals (app/engine/tables.py) на клиенте.
+    // ЦЕЛИКОМ реактивно (computed-геттеры на materialsTotal/kitsTotal/
+    // editing.*) — при любом изменении состава материалов/комплектов
+    // (добавили строку, поправили quantity, удалили позицию) итоговая
+    // стоимость на экране обновляется СРАЗУ, без похода на сервер и без
+    // нажатия "Пересчитать". Кнопка "Пересчитать" по-прежнему нужна и
+    // остаётся — она одна умеет подтянуть АКТУАЛЬНЫЕ цены из справочника
+    // материалов (см. _recalc_material_prices_handler), чего клиент без
+    // сетевого запроса сделать не может; этот блок лишь суммирует то,
+    // что уже введено в строках на экране (снэпшоты), той же формулой.
+    // ВАЖНО: при добавлении новых слагаемых в формулу на бэке (в
+    // _recalc_cost_totals) — держать в синхроне и здесь, как и
+    // recalc_full_name/render_name_template выше.
+    get liveBaseTotal() {
+      return round2(this.materialsTotal + this.kitsTotal);
+    },
+    get liveInsuredTotal() {
+      const insuranceMarkup = Number(this.editing?.insurance_markup ?? 0);
+      return round2(this.liveBaseTotal * insuranceMarkup);
+    },
+    get liveMarkupTotal() {
+      const markupPercent = Number(this.editing?.markup_percent ?? 0);
+      return round2(this.liveInsuredTotal * markupPercent);
+    },
+    get liveHourlyRate() {
+      const rateId = this.editing?.product_type_rate_id;
+      if (!rateId) return 0;
+      const rates = (this.relationOptions && this.relationOptions.product_type_rate_id) || [];
+      const rate = rates.find(r => r.id === rateId);
+      return rate ? Number(rate.hourly_rate ?? 0) : 0;
+    },
+    get liveHoursTotal() {
+      const assemblyHours = Number(this.editing?.assembly_hours ?? 0);
+      return round2(this.liveInsuredTotal + assemblyHours * this.liveHourlyRate);
+    },
+    get liveFinalTotal() {
+      return this.editing?.cost_method === 'hours' ? this.liveHoursTotal : this.liveMarkupTotal;
+    },
+    // Подмешивает свежепосчитанные значения в editing — вызывается из
+    // x-effect на форме calculation (см. шаблон вкладки "Стоимость"),
+    // а не из самих геттеров выше (геттеры только читают, не пишут),
+    // чтобы поля editing.materials_total и т.д. отражались в
+    // :value/x-model полей формы и уходили в БД при "Сохранить" ровно
+    // тем же путём, что и после ручного "Пересчитать".
+    applyLiveCostTotals() {
+      if (!this.editing) return;
+      this.editing.materials_total = round2(this.materialsTotal);
+      this.editing.kits_total = round2(this.kitsTotal);
+      this.editing.base_total = this.liveBaseTotal;
+      this.editing.insured_total = this.liveInsuredTotal;
+      this.editing.markup_total = this.liveMarkupTotal;
+      this.editing.hours_total = this.liveHoursTotal;
+      this.editing.final_total = this.liveFinalTotal;
     },
     // Начальная сортировка (v56) — из TableConfig.default_sort_field/
     // default_sort_dir, если задано (например request сортируется по

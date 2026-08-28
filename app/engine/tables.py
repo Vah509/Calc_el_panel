@@ -197,11 +197,26 @@ def _build_specification_handler(brand_slot: int):
             )
         ).first()
         if existing is not None:
+            # ВАЖНО (баг 2026-08-28, ForeignKeyViolation на Postgres при
+            # повторном нажатии "Спека N"): Specification/SpecificationItem
+            # — плоские модели БЕЗ SQLModel relationship()/cascade, только
+            # foreign_key= строкой. Без relationship() SQLAlchemy Unit of
+            # Work не видит связь между ними на уровне mapper graph и не
+            # гарантирует, что дети будут удалены раньше родителя внутри
+            # ОДНОГО flush() — порядок DELETE в реальном SQL может
+            # получиться "родитель раньше детей", что на Postgres рушится
+            # с ForeignKeyViolation (SQLite такую проверку по умолчанию не
+            # делает — тесты этого не поймали). На проде проявлялось не
+            # всегда — зависело от текущего состояния identity map.
+            # Решение: два РАЗДЕЛЬНЫХ flush() — сначала гарантированно
+            # удалить и отправить в БД детей (SpecificationItem), и только
+            # потом, вторым flush(), удалить родителя (Specification).
             old_items = session.exec(
                 select(SpecificationItem).where(SpecificationItem.specification_id == existing.id)
             ).all()
             for item in old_items:
                 session.delete(item)
+            session.flush()
             session.delete(existing)
             session.flush()
 

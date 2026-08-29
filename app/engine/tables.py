@@ -9,6 +9,7 @@
 # ============================================================
 
 from sqlmodel import select
+from fastapi import HTTPException
 from app.engine.config import TableConfig, FieldConfig, ComputedPair, Relation, FormRow, Hierarchy, ActionButton
 from app.models.material import Material
 from app.models.brand import Brand
@@ -25,6 +26,9 @@ from app.models.calculation_item import CalculationItem
 from app.models.product_type_rate import ProductTypeRate
 from app.models.specification import Specification
 from app.models.specification_item import SpecificationItem
+from app.models.firm import Firm
+from app.models.invoice import Invoice
+from app.models.invoice_item import InvoiceItem
 from app.models.document_counter import DocumentCounter  # noqa: F401 — не таблица
 # движка (нет своего TableConfig/страницы), но должна быть импортирована
 # здесь, чтобы SQLModel.metadata.create_all() увидела её при старте
@@ -987,6 +991,247 @@ calculation_item_table = TableConfig(
 # own_page_url — та же логика, что у request/calculation: кнопка
 # "Спецификация" делает redirect на "/specification-v2/{id}" (см.
 # _build_specification_handler), открывая карточку сразу.
+# Счёт (invoice) — четвёртый документ цепочки zayavka -> calculation
+# -> specification -> invoice (обсуждение 2026-08-29, см. подробный
+# комментарий механики в app/models/invoice.py). Кнопка "Создать
+# счёт" живёт на СПЕЦИФИКАЦИИ (не на заявке — в отличие от
+# "Спецификация" у request), потому что счёт создаётся ИЗ конкретной
+# уже сформированной спецификации, а не из заявки напрямую.
+#
+# Механика (согласовано с Вахтангом 2026-08-29):
+#   1. Ищем уже существующий Invoice с specification_id == этой
+#      спецификации (ещё НЕ отвязанный от неё). Если нашли — это
+#      "Обновить": перечитываем позиции заново (см.
+#      _sync_invoice_items_from_specification ниже), шапку не
+#      трогаем (firm_id/client_invoice_id и т.д. остаются как
+#      человек их поправил).
+#   2. Не нашли (либо потому что счёта ещё не было, либо потому что
+#      единственный существовавший счёт уже ОТВЯЗАН — specification_id
+#      сброшен в NULL) — создаём НОВЫЙ Invoice: request_id из
+#      спецификации, client_id/client_invoice_id — снэпшот из Request
+#      (client_invoice_id пуст -> берём client_id, "плательщик по
+#      умолчанию = заказчик"), firm_id — дефолтная Firm
+#      (is_default=True), номер по счётчику префикса "I".
+#   3. В обоих случаях — построчная синхронизация позиций из
+#      SpecificationItem (см. _sync_invoice_items_from_specification):
+#      полная перезапись (delete-all+create-all), discount_percent
+#      каждой НОВОЙ строки = 0 (Вахтанг: "новая строка без скидки"),
+#      т.к. пересоздание строк не может сохранить прежние построчные
+#      скидки один-в-один при простом delete-all — это ожидаемое
+#      поведение только для явного повторного нажатия "Обновить" на
+#      ещё привязанном счёте (человек видит, что произошло, и может
+#      заново применить скидку кнопкой "Дать скидку").
+#   4. Пересчитываем итоги шапки (см. _recalculate_invoice_totals).
+#
+# НЕ пересчитывает саму спецификацию/калькуляции перед сборкой —
+# берёт SpecificationItem как есть на момент нажатия (тот же принцип,
+# что у _build_specification_handler).
+def _sync_invoice_items_from_specification(invoice: Invoice, spec: Specification, session) -> None:
+    """Полная перезапись InvoiceItem по текущим SpecificationItem —
+    используется и при первом создании счёта, и при "Обновить" на
+    ещё привязанном счёте. delete-all+create-all — та же логика, что
+    у _build_specification_handler при повторном формировании
+    спецификации (см. комментарий там про два раздельных flush(),
+    чтобы не словить ForeignKeyViolation на Postgres)."""
+    old_items = session.exec(
+        select(InvoiceItem).where(InvoiceItem.invoice_id == invoice.id)
+    ).all()
+    for item in old_items:
+        session.delete(item)
+    session.flush()
+
+    spec_items = session.exec(
+        select(SpecificationItem).where(SpecificationItem.specification_id == spec.id)
+    ).all()
+    for spec_item in spec_items:
+        session.add(InvoiceItem(
+            invoice_id=invoice.id,
+            specification_item_id=spec_item.id,
+            product_name=spec_item.product_name,
+            quantity=spec_item.quantity,
+            unit_price=spec_item.unit_price,
+            discount_percent=0.0,
+            unit_price_after_discount=spec_item.unit_price,
+            line_total=spec_item.unit_price * spec_item.quantity,
+        ))
+    session.flush()
+
+
+def _recalculate_invoice_totals(invoice: Invoice, session) -> None:
+    """Пересчитывает total_excl_vat/vat_amount/total_incl_vat по
+    текущим InvoiceItem.line_total (уже с учётом построчной скидки —
+    см. app/models/invoice_item.py) и ставке НДС из справочника
+    constants (тот же constants['vat_rate'], что использует
+    material/calculation — единая ставка на весь проект, не своя на
+    документ)."""
+    items = session.exec(
+        select(InvoiceItem).where(InvoiceItem.invoice_id == invoice.id)
+    ).all()
+    total_excl_vat = sum((item.line_total or 0.0) for item in items)
+
+    vat_rate_row = session.exec(select(Constant).where(Constant.key == "vat_rate")).first()
+    try:
+        vat_rate = float(vat_rate_row.value) if vat_rate_row else 20.0
+    except (TypeError, ValueError):
+        vat_rate = 20.0
+
+    vat_amount = total_excl_vat * vat_rate / 100.0
+    invoice.total_excl_vat = round(total_excl_vat, 2)
+    invoice.vat_amount = round(vat_amount, 2)
+    invoice.total_incl_vat = round(total_excl_vat + vat_amount, 2)
+    session.add(invoice)
+
+
+def _build_invoice_handler(instance: Specification, session) -> dict:
+    """Обработчик кнопки «Создать счёт» на спецификации (см.
+    обоснование механики выше). instance здесь — Specification (не
+    Request), т.к. кнопка зарегистрирована в action_handlers
+    specification_table, не request_table."""
+    from app.engine.document_numbering import next_document_number
+
+    request = session.get(Request, instance.request_id)
+
+    existing = session.exec(
+        select(Invoice).where(Invoice.specification_id == instance.id)
+    ).first()
+
+    if existing is not None:
+        invoice = existing
+    else:
+        client_invoice_id = (request.client_invoice_id if request else None) or (
+            request.client_id if request else None
+        )
+        firm = session.exec(select(Firm).where(Firm.is_default == True)).first()  # noqa: E712
+        invoice = Invoice(
+            request_id=instance.request_id,
+            specification_id=instance.id,
+            firm_id=firm.id if firm else None,
+            client_id=request.client_id if request else None,
+            client_invoice_id=client_invoice_id,
+            document_number=next_document_number(session, "I"),
+        )
+        session.add(invoice)
+        session.flush()
+
+    _sync_invoice_items_from_specification(invoice, instance, session)
+    _recalculate_invoice_totals(invoice, session)
+    session.commit()
+    session.refresh(invoice)
+
+    return {"redirect_url": f"/invoice-v2/{invoice.id}"}
+
+
+def _unlink_invoice_handler(instance: Invoice, session) -> dict:
+    """Кнопка «Отвязать» на счёте (2026-08-29) — сбрасывает ТОЛЬКО
+    specification_id в NULL, request_id и все позиции/поля счёта
+    остаются как есть (решение Вахтанга: "счёт остаётся как есть,
+    всё редактируется, просто мы не обновляем его"). После этого
+    повторное «Создать счёт» с ТОЙ ЖЕ спецификации ищет Invoice с
+    specification_id == этой спецификации, не находит (он уже NULL)
+    и создаёт НОВЫЙ документ — см. _build_invoice_handler выше."""
+    instance.specification_id = None
+    session.add(instance)
+    session.commit()
+    session.refresh(instance)
+    return {"specification_id": None}
+
+
+def _refresh_invoice_items_handler(instance: Invoice, session) -> dict:
+    """Кнопка «Обновить» на счёте, пока он ЕЩЁ привязан к
+    спецификации (specification_id заполнен) — перечитывает позиции
+    заново (см. _sync_invoice_items_from_specification), скидки
+    построчно сбрасываются в 0 (та же оговорка, что в комментарии
+    у _build_invoice_handler). Если specification_id уже NULL
+    (счёт отвязан) — ничего не делает, кнопка на фронте в этом
+    состоянии должна быть скрыта/неактивна, но обработчик всё равно
+    защищается на случай прямого вызова API."""
+    if not instance.specification_id:
+        return {}
+    spec = session.get(Specification, instance.specification_id)
+    if not spec:
+        return {}
+    _sync_invoice_items_from_specification(instance, spec, session)
+    _recalculate_invoice_totals(instance, session)
+    session.commit()
+    session.refresh(instance)
+    return {
+        "total_excl_vat": instance.total_excl_vat,
+        "vat_amount": instance.vat_amount,
+        "total_incl_vat": instance.total_incl_vat,
+    }
+
+
+def _apply_bulk_discount_handler(instance: Invoice, session, payload: dict) -> dict:
+    """Обработчик кнопки «Дать скидку» (2026-08-29) — ЕДИНСТВЕННЫЙ
+    action_handler во всём проекте, принимающий payload от человека
+    (см. обоснование в TableConfig.invoice_items_bulk_discount_action
+    и роут run_action в engine/api.py). payload = {"discount_percent":
+    число}, введённое через window.prompt() на фронте.
+
+    Перезаписывает discount_percent ВСЕХ строк счёта одинаковым
+    значением, ВКЛЮЧАЯ те, где уже стояло своё построчное значение
+    (прямое решение Вахтанга 2026-08-29: "модалка перезаписывает все
+    строчные значения одинаково") — не пропускает уже изменённые
+    вручную строки."""
+    try:
+        discount_percent = float(payload.get("discount_percent"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="Скидка должна быть числом (например -10 или 5).")
+
+    items = session.exec(
+        select(InvoiceItem).where(InvoiceItem.invoice_id == instance.id)
+    ).all()
+    for item in items:
+        item.discount_percent = discount_percent
+        item.unit_price_after_discount = round(item.unit_price * (1 + discount_percent / 100.0), 2)
+        item.line_total = round(item.unit_price_after_discount * item.quantity, 2)
+        session.add(item)
+    session.flush()
+
+    _recalculate_invoice_totals(instance, session)
+    session.commit()
+    session.refresh(instance)
+    return {
+        "total_excl_vat": instance.total_excl_vat,
+        "vat_amount": instance.vat_amount,
+        "total_incl_vat": instance.total_incl_vat,
+    }
+
+
+def _recalc_invoice_item_before_update(instance: InvoiceItem, session) -> None:
+    """before_update_hook (универсальный примитив движка, см.
+    app/engine/config.py) — вызывается СРАЗУ после применения полей
+    из PUT-запроса к instance, ДО commit. Пересчитывает
+    unit_price_after_discount/line_total из ТОЛЬКО ЧТО сохранённого
+    discount_percent (тот же принцип, что у
+    _sync_final_total_before_save для calculation) — используется,
+    когда человек редактирует скидку прямо в таблице строк счёта
+    (см. invoice_items_tab в config.py), сервер — финальный источник
+    истины для расчётных полей, а не фронт.
+
+    Дополнительно (2026-08-29, исправление) пересчитывает итоги
+    ШАПКИ счёта (total_excl_vat/vat_amount/total_incl_vat) прямо
+    здесь — ИНАЧЕ построчное редактирование скидки через обычный
+    PUT /api/invoice_item/{id} обновит саму строку, но "Разом без
+    ПДВ" на карточке счёта останется устаревшим, пока не нажата
+    "Дать скидку"/"Обновить" (те два handler'а зовут
+    _recalculate_invoice_totals сами, а обычный PUT — нет). Строка
+    ещё не закоммичена (session.flush() внутри
+    _recalculate_invoice_totals достаточно, коммит сделает
+    update_item в engine/api.py уже после этого хука)."""
+    instance.unit_price_after_discount = round(
+        instance.unit_price * (1 + (instance.discount_percent or 0.0) / 100.0), 2
+    )
+    instance.line_total = round(instance.unit_price_after_discount * instance.quantity, 2)
+    session.add(instance)
+    session.flush()
+
+    if instance.invoice_id:
+        invoice = session.get(Invoice, instance.invoice_id)
+        if invoice:
+            _recalculate_invoice_totals(invoice, session)
+
+
 specification_table = TableConfig(
     key="specification",
     model=Specification,
@@ -1016,6 +1261,16 @@ specification_table = TableConfig(
         ("line_total", "Итого", "money"),
     ],
     readonly_items_sum_field="total_amount",
+    # build_invoice (2026-08-29) — кнопка "Создать счёт" (см.
+    # _build_invoice_handler выше). tab=None — specification не имеет
+    # form_tabs (как и request), рендерится тем же способом, что
+    # у request'овских кнопок build_specification_N.
+    action_buttons=[
+        ActionButton(action="build_invoice", label="Создать счёт", tab=None),
+    ],
+    action_handlers={
+        "build_invoice": _build_invoice_handler,
+    },
     fields=[
         FieldConfig(name="document_number", label="Номер", list_width="90px", form_width="120px"),
         FieldConfig(name="document_date", label="Дата", widget="date", list_width="110px", form_width="140px"),
@@ -1039,6 +1294,7 @@ specification_table = TableConfig(
         FormRow(field_names=["client_id", "brand_slot"]),
     ],
 )
+
 
 
 # specification_item — строки спецификации (см. подробный комментарий
@@ -1080,6 +1336,200 @@ specification_item_table = TableConfig(
 )
 
 
+# Фирма (firm) — справочник СВОИХ юрлиц-продавцов, см. подробный
+# комментарий в app/models/firm.py. Используется шапкой счёта
+# (invoice.firm_id) как "Постачальник". is_default — ровно одна
+# фирма может быть отмечена как фирма "по умолчанию" (простой
+# checkbox, без constraint в БД — при создании нового Invoice
+# берётся ПЕРВАЯ найденная is_default=True, см.
+# _build_invoice_handler; если их случайно несколько — Вахтанг сам
+# поправит вручную, это не автоматизируется).
+# _set_default_firm_handler — кнопка "Сделать по умолчанию" (см.
+# firm_table ниже). is_default НЕ обычное FieldConfig-поле (та же
+# логика, что и is_deleted — см. app/models/material.py): движок не
+# умеет коректно коэрсить bool из <select>/<radio> (x-model отдаёт
+# строку "true"/"false", а create_item её никак не приводит к
+# настоящему bool перед INSERT — упало бы на Postgres). Вместо этого
+# отдельная кнопка через action_handlers, как и остальные
+# нестандартные переключатели в проекте.
+def _set_default_firm_handler(instance: Firm, session) -> dict:
+    """Снимает is_default со ВСЕХ остальных фирм и ставит его только
+    на instance — гарантирует, что "по умолчанию" ровно одна фирма
+    (простая инвариантная проверка в коде, без constraint в БД)."""
+    others = session.exec(select(Firm).where(Firm.id != instance.id)).all()
+    for other in others:
+        if other.is_default:
+            other.is_default = False
+            session.add(other)
+    instance.is_default = True
+    session.add(instance)
+    session.commit()
+    session.refresh(instance)
+    return {"is_default": True}
+
+
+firm_table = TableConfig(
+    key="firm",
+    model=Firm,
+    title="Наши фирмы",
+    title_singular="фирма",
+    search_placeholder="Поиск по названию…",
+    delete_mode="soft",
+    action_buttons=[
+        ActionButton(action="set_default_firm", label="Сделать по умолчанию", tab=None),
+    ],
+    action_handlers={
+        "set_default_firm": _set_default_firm_handler,
+    },
+    fields=[
+        FieldConfig(name="full_name", label="Полное название", required=True,
+                    searchable=True, search_default=True, list_width="26%"),
+        FieldConfig(name="is_default", label="По умолчанию", widget="text", readonly=True,
+                    list_width="110px"),
+        FieldConfig(name="egrpou_code", label="ЄДРПОУ", list_width="110px"),
+        FieldConfig(name="tax_id", label="ІПН", list_width="130px", in_list=False),
+        FieldConfig(name="vat_certificate_number", label="№ свідоцтва платника ПДВ", in_list=False),
+        FieldConfig(name="bank_account", label="Р/р (IBAN)", in_list=False),
+        FieldConfig(name="bank_name", label="Банк", in_list=False),
+        FieldConfig(name="bank_mfo", label="МФО", list_width="90px", in_list=False),
+        FieldConfig(name="phone", label="Телефон", list_width="120px"),
+        FieldConfig(name="address", label="Адрес", in_list=False),
+    ],
+    form_rows=[
+        FormRow(field_names=["egrpou_code", "tax_id", "bank_mfo"]),
+        FormRow(field_names=["bank_account", "bank_name"]),
+        FormRow(field_names=["vat_certificate_number"]),
+        FormRow(field_names=["phone", "address"]),
+    ],
+)
+
+
+# Счёт (invoice) — см. подробный комментарий механики в
+# app/models/invoice.py и обработчики выше (_build_invoice_handler и
+# соседние). own_page_url — та же логика, что у specification: кнопка
+# "Создать счёт" делает redirect на "/invoice-v2/{id}".
+#
+# unlink_invoice — кнопка "Отвязать" (см. _unlink_invoice_handler)
+# показывается ТОЛЬКО пока specification_id заполнен (проверка на
+# фронте — CONFIG-driven x-show, см. page.py); после отвязки вместо
+# неё показывается заглушка "Отвязан от спецификации".
+# refresh_invoice_items — кнопка "Обновить", тоже только пока
+# привязан (см. _refresh_invoice_items_handler).
+invoice_table = TableConfig(
+    key="invoice",
+    model=Invoice,
+    title="Счета",
+    title_singular="счёт",
+    search_placeholder="Поиск по номеру…",
+    delete_mode="soft",
+    allow_create=False,
+    document_number_field="document_number",
+    document_prefix="I",
+    own_page_url="/invoice-v2",
+    default_sort_fields=[("document_date", "desc"), ("document_time", "desc")],
+    extra_lookups=["firm"],
+    invoice_items_tab="Позиции",
+    invoice_items_table_key="invoice_item",
+    invoice_items_columns=[
+        ("product_name", "Изделие", "text"),
+        ("quantity", "Кіл-сть", "text"),
+    ],
+    invoice_items_discount_field="discount_percent",
+    invoice_items_price_field="unit_price",
+    invoice_items_price_after_discount_field="unit_price_after_discount",
+    invoice_items_line_total_field="line_total",
+    invoice_items_sum_field="total_excl_vat",
+    invoice_items_bulk_discount_action="apply_bulk_discount",
+    action_buttons=[
+        ActionButton(action="refresh_invoice_items", label="Обновить", tab=None),
+        ActionButton(action="unlink_invoice", label="Отвязать от спецификации", tab=None),
+    ],
+    action_handlers={
+        "apply_bulk_discount": _apply_bulk_discount_handler,
+        "refresh_invoice_items": _refresh_invoice_items_handler,
+        "unlink_invoice": _unlink_invoice_handler,
+    },
+    fields=[
+        FieldConfig(name="document_number", label="Номер", list_width="90px", form_width="120px"),
+        FieldConfig(name="document_date", label="Дата", widget="date", list_width="110px", form_width="140px"),
+        FieldConfig(name="document_time", label="Время", widget="time", list_width="90px", form_width="110px"),
+        FieldConfig(name="request_id", label="Заявка", widget="select", list_width="16%", form_width="140px"),
+        FieldConfig(name="specification_id", label="Спецификация", widget="select", list_width="16%",
+                    form_width="140px"),
+        FieldConfig(name="firm_id", label="Постачальник (наша фирма)", widget="select", list_width="20%"),
+        FieldConfig(name="client_id", label="Заказчик", widget="select", list_width="18%"),
+        FieldConfig(name="client_invoice_id", label="Платник", widget="select", list_width="18%"),
+        FieldConfig(name="total_excl_vat", label="Разом без ПДВ", widget="number",
+                    is_numeric=True, list_width="110px", readonly=True),
+        FieldConfig(name="vat_amount", label="ПДВ", widget="number",
+                    is_numeric=True, list_width="90px", readonly=True),
+        FieldConfig(name="total_incl_vat", label="Всього з ПДВ", widget="number",
+                    is_numeric=True, list_width="110px", readonly=True),
+    ],
+    relations=[
+        Relation(field="request_id", target_table="request", display_field="document_number", label="Заявка",
+                 show_filter_chips=False),
+        Relation(field="specification_id", target_table="specification", display_field="document_number",
+                 label="Спецификация", show_filter_chips=False),
+        Relation(field="firm_id", target_table="firm", display_field="full_name", label="Постачальник",
+                 show_filter_chips=False),
+        Relation(field="client_id", target_table="client", display_field="short_name", label="Заказчик",
+                 show_filter_chips=False),
+        Relation(field="client_invoice_id", target_table="client", display_field="short_name", label="Платник",
+                 show_filter_chips=False),
+    ],
+    form_rows=[
+        FormRow(field_names=["document_number", "document_date", "document_time"]),
+        FormRow(field_names=["request_id", "specification_id"]),
+        FormRow(field_names=["firm_id"]),
+        FormRow(field_names=["client_id", "client_invoice_id"]),
+        FormRow(field_names=["total_excl_vat", "vat_amount", "total_incl_vat"]),
+    ],
+)
+
+
+# invoice_item — строки счёта (см. подробный комментарий механики в
+# app/models/invoice_item.py). allow_create/allow_delete=False —
+# строки создаются/пересоздаются ТОЛЬКО вместе со всем счётом (см.
+# _build_invoice_handler/_refresh_invoice_items_handler), но, В
+# ОТЛИЧИЕ от specification_item, discount_percent КАЖДОЙ отдельной
+# строки редактируется человеком напрямую — через обычный
+# PUT /api/invoice_item/{id} движка (см. invoice_items_tab на
+# invoice_table и рендер в page.py), не только целиком через
+# пересоздание счёта.
+invoice_item_table = TableConfig(
+    key="invoice_item",
+    model=InvoiceItem,
+    title="Позиции счёта",
+    title_singular="позиция счёта",
+    search_placeholder="Поиск по названию…",
+    allow_create=False,
+    allow_delete=False,
+    hierarchy=Hierarchy(parent_field="invoice_id", parent_key="invoice"),
+    before_update_hook=_recalc_invoice_item_before_update,
+    fields=[
+        FieldConfig(name="invoice_id", label="Счёт", widget="select", in_list=False, in_form=False),
+        FieldConfig(name="specification_item_id", label="Строка спецификации", widget="select",
+                    in_list=False, in_form=False),
+        FieldConfig(name="product_name", label="Изделие", list_width="26%"),
+        FieldConfig(name="quantity", label="Количество", widget="number",
+                    is_numeric=True, list_width="90px"),
+        FieldConfig(name="unit_price", label="Цена без ПДВ", widget="number",
+                    is_numeric=True, list_width="120px", readonly=True),
+        FieldConfig(name="discount_percent", label="Знижка, %", widget="number",
+                    is_numeric=True, list_width="100px", default=0),
+        FieldConfig(name="unit_price_after_discount", label="Ціна зі знижкою", widget="number",
+                    is_numeric=True, list_width="120px", readonly=True),
+        FieldConfig(name="line_total", label="Сума без ПДВ", widget="number",
+                    is_numeric=True, list_width="120px", readonly=True),
+    ],
+    relations=[
+        Relation(field="invoice_id", target_table="invoice", display_field="document_number",
+                 label="Счёт", show_filter_chips=False),
+    ],
+)
+
+
 constant_table = TableConfig(
     key="constant",
     model=Constant,
@@ -1103,5 +1553,6 @@ ALL_TABLES = [
     brand_table, unit_table, material_table, kit_group_table, kit_section_table,
     kit_table, kit_item_table, constant_table, client_table, request_table,
     calculation_table, calculation_item_table, product_type_rate_table,
-    specification_table, specification_item_table,
+    specification_table, specification_item_table, firm_table, invoice_table,
+    invoice_item_table,
 ]

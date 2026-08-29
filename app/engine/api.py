@@ -575,7 +575,12 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
         return _serialize(new_instance)
 
     @router.post("/{item_id}/actions/{action}")
-    def run_action(item_id: int, action: str, session: Session = Depends(get_engine_session)):
+    def run_action(
+        item_id: int,
+        action: str,
+        payload: Optional[dict[str, Any]] = None,
+        session: Session = Depends(get_engine_session),
+    ):
         """Именованное действие с реальной логикой в теле формы (см.
         TableConfig.action_buttons/action_handlers в config.py и
         runAction() в engine/page.py) — например "Пересчитать название"
@@ -583,7 +588,20 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
         заглушки без обработчика), здесь есть конкретная функция,
         зарегистрированная таблицей в action_handlers. Обработчик сам
         решает, что сохранять в БД; этот роут только диспетчеризует
-        вызов и возвращает результат фронту для подмешивания в editing."""
+        вызов и возвращает результат фронту для подмешивания в editing.
+
+        payload (2026-08-29, введено для "Дать скидку" у invoice) —
+        НЕОБЯЗАТЕЛЬНОЕ тело запроса, единственный action во всём
+        движке, которому нужны доп. данные от человека (процент
+        скидки), а не только id записи — до этого action_handlers
+        были параметризованы исключительно ЧЕРЕЗ ИМЯ action (см.
+        _build_specification_handler — номер слота зашит в имени),
+        здесь это не подходит: процент вводится каждый раз разный, а
+        не фиксируется в конфиге. Обработчик сам решает, звать ли
+        payload — вызывается с ним ТОЛЬКО если объявлен с третьим
+        позиционным параметром (см. handler.__code__.co_argcount ниже),
+        иначе вызывается по-старому с двумя аргументами — существующие
+        action_handlers (recalc_full_name и т.д.) не тронуты."""
         handler = config.action_handlers.get(action)
         if not handler:
             raise HTTPException(
@@ -593,6 +611,8 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
         instance = session.get(model, item_id)
         if not instance:
             raise HTTPException(status_code=404, detail=f"{config.title_singular} не найден(а)")
+        if handler.__code__.co_argcount >= 3:
+            return handler(instance, session, payload or {})
         return handler(instance, session)
 
     @router.put("/{item_id}/items")

@@ -10,7 +10,7 @@
 # см. напоминание в конце ответа Claude при отправке нового шага.
 # ============================================================
 
-APP_VERSION = "v85"
+APP_VERSION = "v86"
 
 # Верхнее меню — разделы с выпадающими пунктами. Каждый раздел:
 # {"title": "...", "links": [{"label": "...", "url": "..."}, ...]}
@@ -37,6 +37,7 @@ NAV_MENU = [
             {"label": "Заявки", "url": "/request-v2"},
             {"label": "Калькуляции", "url": "/calculation-v2"},
             {"label": "Спецификации", "url": "/specification-v2"},
+            {"label": "Счета", "url": "/invoice-v2"},
         ],
     },
     {
@@ -46,6 +47,7 @@ NAV_MENU = [
             {"label": "Бренды", "url": "/brand-v2"},
             {"label": "Единицы измерения", "url": "/unit-v2"},
             {"label": "Клиенты", "url": "/client-v2"},
+            {"label": "Наши фирмы", "url": "/firm-v2"},
             {"label": "Группы комплектов", "url": "/kit_group-v2"},
             {"label": "Стоимость сборки", "url": "/product_type_rate-v2"},
             {"label": "Константы", "url": "/constant-v2"},

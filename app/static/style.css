@@ -775,3 +775,17 @@ footer.hint { padding: 10px 20px 30px; font-size: 12px; color: var(--ink-soft); 
   font-weight: 600;
 }
 .readonly-items-total span:last-child { font-variant-numeric: tabular-nums; }
+
+/* Таблица строк счёта (TableConfig.invoice_items_tab, 2026-08-29) —
+   переиспользует .readonly-items-table целиком (тот же внешний вид),
+   только добавляет стиль для ЕДИНСТВЕННОГО интерактивного элемента —
+   инпута скидки в каждой строке (см. invoiceItemDiscountChanged() в
+   page.py). */
+.invoice-items-table .invoice-discount-input {
+  width: 70px;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}

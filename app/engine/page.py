@@ -617,6 +617,58 @@ _PAGE_TEMPLATE_SOURCE = r"""
           {% endif %}
         </div>
         {% endif %}
+        {% if config.invoice_items_tab %}
+        <!-- Редактируемая (только колонка скидки) таблица строк счёта
+             (TableConfig.invoice_items_tab, 2026-08-29) — параллельный
+             аналог readonly_items_tab выше, см. подробный комментарий в
+             app/engine/config.py. Не показывается для ещё не сохранённой
+             записи — invoice сейчас allow_create=False (создаётся только
+             кнопкой "Создать счёт" на спецификации), проверка оставлена
+             для общности примитива, как и у readonly_items_tab. -->
+        <div x-show="!editing.id" class="materials-tab-hint">Позиции появятся после сохранения документа.</div>
+        <div x-show="editing.id" x-cloak class="readonly-items-block">
+          <div class="materials-toolbar">
+            <button type="button" class="btn btn-ghost" @click="invoiceItemsApplyBulkDiscount()">Дать скидку</button>
+          </div>
+          <table class="readonly-items-table invoice-items-table">
+            <thead>
+              <tr>
+                {% for field_name, col_label, col_format in config.invoice_items_columns %}
+                <th>{{ col_label }}</th>
+                {% endfor %}
+                <th>Ціна без ПДВ</th>
+                <th>Знижка, %</th>
+                <th>Ціна зі знижкою</th>
+                <th>Сума без ПДВ</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="row in readonlyItems" :key="row.id">
+                <tr>
+                  {% for field_name, col_label, col_format in config.invoice_items_columns %}
+                  <td x-text="readonlyItemsColumnValue(row, '{{ field_name }}', '{{ col_format }}')"></td>
+                  {% endfor %}
+                  <td x-text="Number(row['{{ config.invoice_items_price_field }}'] ?? 0).toFixed(2)"></td>
+                  <td>
+                    <input type="number" step="0.01" class="invoice-discount-input"
+                           x-model.number="row.{{ config.invoice_items_discount_field }}"
+                           @change="invoiceItemDiscountChanged(row)">
+                  </td>
+                  <td x-text="Number(row['{{ config.invoice_items_price_after_discount_field }}'] ?? 0).toFixed(2)"></td>
+                  <td x-text="Number(row['{{ config.invoice_items_line_total_field }}'] ?? 0).toFixed(2)"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <div class="readonly-items-empty" x-show="readonlyItems.length === 0">Пока пусто — позиции не сформированы</div>
+          {% if config.invoice_items_sum_field %}
+          <div class="readonly-items-total">
+            <span>Разом без ПДВ:</span>
+            <span x-text="Number(editing['{{ config.invoice_items_sum_field }}'] ?? 0).toFixed(2)"></span>
+          </div>
+          {% endif %}
+        </div>
+        {% endif %}
         {% if config.extra_actions %}
         <div class="extra-actions" x-show="editing.id">
           {% for action_label in config.extra_actions %}
@@ -1792,6 +1844,9 @@ function enginePage() {
         if (CONFIG.readonlyItemsTab && this.editing.id) {
           this.loadReadonlyItems();
         }
+        if (CONFIG.invoiceItemsTab && this.editing.id) {
+          this.loadReadonlyItems();
+        }
         // Автозагрузка динамических подписей для radio-полей (см.
         // FieldConfig.radio_labels_field/radio_labels_action в
         // config.py) — переиспользует runAction(), поэтому идёт по
@@ -2252,15 +2307,89 @@ function enginePage() {
       // но без фильтрации по material_id/kit_id (эта таблица однородна —
       // одна SpecificationItem = одна строка, без "материалы vs
       // комплекты вперемешку", как у calculation_item).
+      //
+      // invoiceItemsTableKey (2026-08-29) — тот же метод переиспользован
+      // для invoice_items_tab (см. openEdit()): единственная разница —
+      // источник ключа дочерней таблицы, сам parent_id-запрос идентичен.
       try {
         hideJsError();
-        const key = CONFIG.readonlyItemsTableKey;
+        const key = CONFIG.readonlyItemsTableKey || CONFIG.invoiceItemsTableKey;
         const params = new URLSearchParams();
         params.set('parent_id', this.editing.id);
         params.set('page_size', 1000);
         const res = await fetch('/api/' + key + '?' + params.toString());
         const data = await res.json();
         this.readonlyItems = data.items;
+      } catch (err) { showJsError(err); }
+    },
+
+    async invoiceItemDiscountChanged(row) {
+      // Построчное редактирование скидки в таблице invoice_items_tab
+      // (2026-08-29) — обычный PUT движка на дочернюю таблицу
+      // (invoice_item), сервер сам пересчитывает unit_price_after_discount/
+      // line_total (см. before_update_hook у invoice_item_table в
+      // tables.py) — здесь только шлём новое discount_percent и
+      // подменяем строку результатом, чтобы расчётные колонки и итог
+      // "Разом без ПДВ" обновились сразу без перезагрузки всей таблицы.
+      try {
+        hideJsError();
+        const key = CONFIG.invoiceItemsTableKey;
+        const discountField = CONFIG.invoiceItemsDiscountField;
+        const res = await fetch(`/api/${key}/${row.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [discountField]: row[discountField] }),
+        });
+        if (!res.ok) { showJsError(await res.text()); return; }
+        const updated = await res.json();
+        const idx = this.readonlyItems.findIndex(r => r.id === row.id);
+        if (idx !== -1) this.readonlyItems[idx] = updated;
+        await this.invoiceItemsRefreshTotals();
+      } catch (err) { showJsError(err); }
+    },
+
+    async invoiceItemsRefreshTotals() {
+      // После правки построчной скидки (см. invoiceItemDiscountChanged)
+      // шапка счёта (total_excl_vat/vat_amount/total_incl_vat) не
+      // пересчитывается сама по себе — перечитываем актуальную запись
+      // целиком, т.к. эти поля считает сервер (см.
+      // _apply_bulk_discount_handler/_recalculate_invoice_totals в
+      // tables.py — тот же принцип пересчёта, что нужен и здесь, но
+      // без изменения самих строк, поэтому просто GET текущей записи).
+      try {
+        const res = await fetch(`/api/${this.currentLevel().key}/${this.editing.id}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        this.editing = { ...this.editing, ...data };
+      } catch (err) { showJsError(err); }
+    },
+
+    async invoiceItemsApplyBulkDiscount() {
+      // Кнопка "Дать скидку" (2026-08-29) — один window.prompt() для
+      // всего счёта сразу (см. TableConfig.invoice_items_bulk_discount_
+      // action и _apply_bulk_discount_handler в tables.py). Простой
+      // prompt(), а не отдельная модалка — единственное значение,
+      // вводимое человеком, не оправдывает более тяжёлый UI. Пустой
+      // ввод/Отмена — ничего не отправляем.
+      const raw = window.prompt('Скидка/наценка, % (например -10 или 5):', '0');
+      if (raw === null || raw.trim() === '') return;
+      const discountPercent = Number(raw);
+      if (Number.isNaN(discountPercent)) {
+        showJsError('Скидка должна быть числом.');
+        return;
+      }
+      try {
+        hideJsError();
+        const action = CONFIG.invoiceItemsBulkDiscountAction;
+        const res = await fetch(`/api/${this.currentLevel().key}/${this.editing.id}/actions/${action}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ discount_percent: discountPercent }),
+        });
+        if (!res.ok) { showJsError(await res.text()); return; }
+        const data = await res.json();
+        this.editing = { ...this.editing, ...data };
+        await this.loadReadonlyItems();
       } catch (err) { showJsError(err); }
     },
 
@@ -3171,6 +3300,14 @@ def _serialize_level_config(config: TableConfig) -> dict:
         "kitsItemTableKey": config.kits_item_table_key,
         "readonlyItemsTab": config.readonly_items_tab,
         "readonlyItemsTableKey": config.readonly_items_table_key,
+        "invoiceItemsTab": config.invoice_items_tab,
+        "invoiceItemsTableKey": config.invoice_items_table_key,
+        "invoiceItemsDiscountField": config.invoice_items_discount_field,
+        "invoiceItemsPriceField": config.invoice_items_price_field,
+        "invoiceItemsPriceAfterDiscountField": config.invoice_items_price_after_discount_field,
+        "invoiceItemsLineTotalField": config.invoice_items_line_total_field,
+        "invoiceItemsSumField": config.invoice_items_sum_field,
+        "invoiceItemsBulkDiscountAction": config.invoice_items_bulk_discount_action,
         "openEditAction": config.open_edit_action,
         "fields": [
             {

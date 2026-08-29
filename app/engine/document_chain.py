@@ -59,14 +59,24 @@ class ChainLink:
 # specification_item.calculation_id (см. app/models/specification.py),
 # не через этот реестр документов.
 #
-# invoice ЕЩЁ НЕ реализован — специально НЕ добавляем сюда
-# строку-заглушку под несуществующую таблицу (ключа "invoice" пока
-# нет в ALL_TABLES, и добавление ссылки на несуществующий TableConfig
-# только создало бы рассинхрон, который придётся отлавливать
-# защитным кодом).
+# invoice (2026-08-29) реализован — см. ChainLink ниже.
+# invoice (2026-08-29) — родитель В ЦЕПОЧКЕ ДОКУМЕНТОВ это request
+# (тот же принцип, что и у specification выше, обоснование см. в
+# app/models/invoice.py: request_id у Invoice ВСЕГДА заполнен и
+# НИКОГДА не сбрасывается, даже когда specification_id отвязан
+# кнопкой «Отвязать» — значит invoice должен продолжать быть виден
+# в цепочке заявки независимо от текущего состояния привязки к
+# спецификации). specification_id как отдельная связь СОЗНАТЕЛЬНО
+# НЕ регистрируется здесь отдельным ChainLink — она nullable и
+# может быть сброшена человеком, а обход цепочки документов должен
+# оставаться стабильным независимо от этого практического решения
+# (то же рассуждение, что у specification -> calculation:
+# трассировка через конкретное поле модели, не через реестр
+# документов).
 CHAIN_LINKS: list[ChainLink] = [
     ChainLink(child_key="calculation", parent_key="request", fk_field="request_id"),
     ChainLink(child_key="specification", parent_key="request", fk_field="request_id"),
+    ChainLink(child_key="invoice", parent_key="request", fk_field="request_id"),
 ]
 
 # Корень цепочки документов — заявка. Единственное место, откуда

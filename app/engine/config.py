@@ -783,6 +783,77 @@ class TableConfig:
                                     # calculation_item) — движок делает
                                     # GET /api/{readonly_items_table_key}?parent_id=
                                     # при открытии формы редактирования.
+    invoice_items_tab: Optional[str] = None
+                                    # Имя вкладки ИЛИ, для таблиц без form_tabs
+                                    # (как invoice сейчас), просто маркер "рендерить
+                                    # здесь" — параллельный аналог readonly_items_tab
+                                    # (2026-08-29), но с ОДНИМ редактируемым полем на
+                                    # строку: скидка/наценка (см. invoice_items_
+                                    # discount_field). Остальные колонки — read-only
+                                    # снэпшот, как у readonly_items_tab. Плюс кнопка
+                                    # "Дать скидку" над таблицей — открывает один
+                                    # window.prompt(), значение уходит на ВСЕ строки
+                                    # разом (invoice_items_bulk_discount_action).
+                                    # Не переиспользует readonly_items_tab напрямую
+                                    # (тот принципиально "без единого интерактивного
+                                    # элемента") — отдельный, но похожий примитив,
+                                    # т.к. счёт — единственный документ с построчным
+                                    # редактированием без add/remove/picker.
+    invoice_items_table_key: Optional[str] = None
+                                    # Ключ дочерней TableConfig (например
+                                    # "invoice_item") — обязателен вместе с
+                                    # invoice_items_tab, тот же parent_id-механизм
+                                    # (hierarchy.parent_field), что и у
+                                    # readonly_items_table_key.
+    invoice_items_columns: list[tuple[str, str, str]] = field(default_factory=list)
+                                    # Read-only колонки ДО поля скидки (например
+                                    # "Изделие"/"Кол-во"/"Цена без ПДВ") — тот же
+                                    # формат (имя_поля, заголовок, "text"/"money"),
+                                    # что и readonly_items_columns. Колонки скидки/
+                                    # цены-со-скидкой/суммы рендерятся движком САМИ,
+                                    # без явного перечисления здесь (см.
+                                    # invoice_items_discount_field ниже) — они
+                                    # частично интерактивны (скидка) либо всегда
+                                    # идут в фиксированном порядке сразу после.
+    invoice_items_discount_field: Optional[str] = None
+                                    # Имя поля модели дочерней таблицы, хранящего
+                                    # скидку/наценку в процентах (например
+                                    # "discount_percent" у InvoiceItem) —
+                                    # редактируется прямо в таблице (<input
+                                    # type="number">), сохраняется через обычный
+                                    # PUT /api/{invoice_items_table_key}/{id} движка
+                                    # при потере фокуса поля (@change), сервер сам
+                                    # пересчитывает unit_price_after_discount/
+                                    # line_total (см. before_update_hook у
+                                    # invoice_item_table в tables.py).
+    invoice_items_price_field: Optional[str] = None
+                                    # Имя поля базовой цены БЕЗ скидки (например
+                                    # "unit_price") — рендерится read-only колонкой
+                                    # "Ціна без ПДВ" сразу перед скидкой.
+    invoice_items_price_after_discount_field: Optional[str] = None
+                                    # Имя РАСЧЁТНОГО поля "цена со скидкой" —
+                                    # read-only колонка сразу после скидки.
+    invoice_items_line_total_field: Optional[str] = None
+                                    # Имя РАСЧЁТНОГО поля "сумма по строке" —
+                                    # последняя колонка таблицы.
+    invoice_items_sum_field: Optional[str] = None
+                                    # Имя поля родителя с итоговой суммой без ПДВ
+                                    # (например "total_excl_vat" у Invoice) —
+                                    # строка "Разом без ПДВ" под таблицей, тот же
+                                    # принцип, что readonly_items_sum_field.
+    invoice_items_bulk_discount_action: Optional[str] = None
+                                    # Имя action (ключ в action_handlers) — кнопка
+                                    # "Дать скидку" над таблицей строк. Обработчик
+                                    # получает payload {"discount_percent": число}
+                                    # (см. invoiceItemsApplyBulkDiscount() в page.py,
+                                    # использует POST .../actions/{action} с телом
+                                    # запроса — единственный action во всём движке,
+                                    # которому нужен payload, поэтому роут действий
+                                    # читает необязательное тело запроса, см.
+                                    # engine/api.py). Перезаписывает discount_percent
+                                    # ВСЕХ строк счёта одинаковым значением, включая
+                                    # те, где уже стояло своё (решение Вахтанга
+                                    # 2026-08-29), и пересчитывает итоги шапки.
     readonly_items_columns: list[tuple[str, str, str]] = field(default_factory=list)
                                     # Список колонок таблицы: (имя_поля, заголовок,
                                     # формат). Формат — один из "text" (как есть) или

@@ -730,3 +730,48 @@ footer.hint { padding: 10px 20px 30px; font-size: 12px; color: var(--ink-soft); 
   flex-shrink: 0;
   padding: 0 4px;
 }
+
+/* --- Read-only список дочерних строк (TableConfig.readonly_items_tab,
+   2026-08-28) — простая таблица, никакого редактирования (не
+   переиспользует .materials-row/.picker-qty-* — те несут интерактивные
+   элементы, которых здесь принципиально не должно быть). Введено для
+   specification (позиции формируются только сервером), переиспользуемо
+   для будущего invoice. */
+.readonly-items-block { margin-top: 4px; }
+.readonly-items-table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 14px;
+}
+.readonly-items-table th {
+  text-align: left;
+  padding: 10px 12px;
+  background: #fafaf8;
+  border-bottom: 1px solid var(--line);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.readonly-items-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+}
+.readonly-items-table tr:last-child td { border-bottom: none; }
+.readonly-items-empty { color: var(--ink-soft); font-size: 13.5px; text-align: center; padding: 16px 0; }
+.readonly-items-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 12px 14px;
+  margin-top: 12px;
+  background: #fafaf8;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.readonly-items-total span:last-child { font-variant-numeric: tabular-nums; }

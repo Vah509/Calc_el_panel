@@ -2,63 +2,72 @@
 
 ## Состояние
 
-**v84 — фикс Internal Server Error при повторном нажатии "Спека N".**
+**v85 — табличная часть спецификации (строки на карточке документа).**
 
-После деплоя v83 обнаружился прод-баг (НЕ связан с автопересчётом
-стоимости из v83): повторное нажатие кнопки "Спецификация" на слоте,
-где спецификация уже есть, падало с 500 — но не всегда, зависело от
-слота/состояния. Причина найдена по Railway Deploy Logs:
-
-```
-psycopg2.errors.ForeignKeyViolation: update or delete on table
-"specification" violates foreign key constraint
-"specificationitem_specification_id_fkey" on table "specificationitem"
-DETAIL: Key (id)=(4) is still referenced from table "specificationitem".
-```
+После v84 (фикс FK-бага) спецификации собираются стабильно, но карточка
+`/specification-v2/{id}` показывала только шапку с итоговой суммой —
+сами позиции (SpecificationItem) существовали в БД, но нигде не
+отображались. v85 добавляет таблицу строк прямо на форму.
 
 ## Сделано в этой сессии
 
-- **Причина**: `Specification`/`SpecificationItem` — плоские модели,
-  связаны только `foreign_key=` строкой, БЕЗ SQLModel
-  `relationship()`/cascade. Без relationship() SQLAlchemy Unit of Work
-  не видит связь на уровне mapper graph и не гарантирует порядок
-  DELETE внутри ОДНОГО `flush()` — на Postgres иногда получался
-  порядок "родитель раньше детей" → `ForeignKeyViolation`. SQLite
-  (локальные тесты) FK не проверяет по умолчанию (`PRAGMA
-  foreign_keys` нигде не включён в `app/database.py`) — тесты этого в
-  принципе не могли поймать. Прод-специфичный баг, как и класс
-  проблем из "PostgreSQL vs SQLite trap" — но другого рода (порядок
-  операций, не отсутствие колонки).
-- **Фикс** — `app/engine/tables.py`, `_build_specification_handler`:
-  разделил один `session.flush()` на два — сначала удалить и
-  ГАРАНТИРОВАННО отправить в БД все `SpecificationItem` (flush),
-  и только затем вторым flush() удалить сам `Specification`.
-  Подробный комментарий на месте правки.
-- Regression-тест (ad hoc, TestClient, не сохранён в репо — по
-  заведённому в проекте процессу): три подряд нажатия
-  `build_specification_1` на одну и ту же заявку — все 200, спека и
-  её единственная строка стабильно пересоздаются (id переиспользуется
-  корректно). На SQLite это не бьёт по FK-порядку так, как на
-  Postgres, но подтверждает, что новый порядок кода (children flush →
-  parent flush) детерминирован и логически верный.
-- `app/version.py` — `APP_VERSION = "v84"`
+- **Новый универсальный примитив движка** (по прямой просьбе Вахтанга —
+  "может пригодиться и для счёта", не одноразовый хак под
+  specification): `TableConfig.readonly_items_tab` /
+  `readonly_items_table_key` / `readonly_items_columns` /
+  `readonly_items_sum_field` (app/engine/config.py). Рендерит ПРОСТОЙ
+  read-only список дочерних строк — без единого интерактивного
+  элемента (не путать с materials_tab/kits_tab — там есть добавление/
+  удаление/инлайн-редактирование количества). Для таблиц без
+  `form_tabs` (как specification) рендерится безусловно в обычной
+  (не-вкладочной) ветке формы.
+- `app/engine/tables.py`, `specification_table`: добавлены
+  `extra_lookups=["calculation"]` (нужен для колонки "Калькуляция" —
+  document_number по calculation_id, без похода на сервер) и
+  `readonly_items_tab="Позиции"` / `readonly_items_table_key=
+  "specification_item"` / `readonly_items_columns` = [Калькуляция,
+  Изделие, Кол-во, Цена за ед., Итого] / `readonly_items_sum_field=
+  "total_amount"`.
+- `app/engine/page.py`:
+  - Jinja-блок таблицы строк в не-вкладочной ветке формы (там же, где
+    `render_form_rows(form_layout_by_tab[''])`) — `<table
+    class="readonly-items-table">`, колонки из
+    `config.readonly_items_columns`, строка "Итого" снизу из
+    `readonly_items_sum_field`
+  - JS: `readonlyItems` (state), `loadReadonlyItems()` (тот же
+    parent_id-механизм, что и `loadMaterialsItems()`, без фильтрации —
+    таблица однородна), `readonlyItemsColumnValue(row, fieldName,
+    format)` — читает поле row напрямую ("text"/"money" форматы) ЛИБО,
+    для специального поля `"calculation_number"`, ищет
+    document_number калькуляции в уже загруженном
+    `relationOptions.calculation` по `row.calculation_id`
+  - `openEdit()` — вызывает `loadReadonlyItems()`, когда
+    `CONFIG.readonlyItemsTab && editing.id` (та же точка входа
+    отрабатывает и для full-page форм типа specification — они внутри
+    вызывают тот же `openEdit()` через `maybeOpenOwnPage()`)
+  - Новые ключи в CONFIG: `readonlyItemsTab`, `readonlyItemsTableKey`
+- `app/static/style.css` — `.readonly-items-table`/`.readonly-items-
+  total`/`.readonly-items-empty` (простой стиль таблицы, не
+  переиспользует `.materials-row` — та разметка несёт интерактивные
+  элементы)
+- Тест (ad hoc, TestClient): создал заявку+калькуляцию, вызвал
+  `build_specification_1`, открыл `/specification-v2/{id}` — HTML
+  содержит `readonly-items-table`, цикл `x-for="row in
+  readonlyItems"`, заголовок колонки "Калькуляция", блок
+  `readonly-items-total`. Отдельно проверил
+  `GET /api/specification_item?parent_id=` — строка возвращается с
+  верными `unit_price`/`quantity`/`line_total` (100 × 2 = 200).
+- `app/version.py` — `APP_VERSION = "v85"`
 
 ## Открыто
 
-- **Проверить на реальном проде после деплоя v84**: заявка R-000009 —
-  нажать "Спецификация" повторно на вариантах 1 и 2 (там, где раньше
-  падало) несколько раз подряд, убедиться что ошибки больше нет
+- **Проверить на реальном устройстве**: открыть S-000009/S-000010 у
+  заявки R-000009 — убедиться, что таблица строк отображается с
+  правильными калькуляциями/суммами, и что "Итого" совпадает с шапкой
 - v83 (автопересчёт стоимости на клиенте) — всё ещё не проверен
-  вживую на устройстве, см. предыдущий HANDOFF-пункт, актуально
-- Общий урок про SQLite FK-проверку выключенной по умолчанию — не
-  включал `PRAGMA foreign_keys=ON` сейчас (это отдельное решение,
-  может задеть другие места, где на удаление polагаются иначе) —
-  стоит обсудить отдельно, включать ли для локальных тестов, чтобы
-  ловить такие вещи раньше
-- Спецификация (v81) — открытый вопрос из прошлой сессии: показывать
-  ли строки спецификации прямо на карточке документа (сейчас только
-  отдельным списком `specification_item` через `?parent_id=`) — не
-  решали
+  вживую на устройстве
 - Рефакторинг `enginePage()` — по-прежнему сознательно отложен
 - `invoice`, ценообразование, «перепроведение» остальных документов,
-  Excel/PDF — не начаты
+  Excel/PDF — не начаты. `invoice` теперь может переиспользовать
+  `readonly_items_tab`, если его строки тоже окажутся снэпшотом
+  (решать отдельно на сессии по счёту)

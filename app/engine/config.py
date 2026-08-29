@@ -747,6 +747,72 @@ class TableConfig:
                                     # (одна физическая таблица calculation_item на оба
                                     # виджета), но названо отдельным полем на случай,
                                     # если в будущем понадобится развести физически.
+    readonly_items_tab: Optional[str] = None
+                                    # Имя вкладки (должно совпадать с одним из
+                                    # form_tabs) ИЛИ, для таблиц без вкладок вообще
+                                    # (form_tabs пуст — как у specification), само имя
+                                    # таблицы просто как маркер "рендерить здесь" — на
+                                    # ней движок рисует ПРОСТОЙ read-only список
+                                    # дочерних строк: колонки (см.
+                                    # readonly_items_columns) + сумма снизу по
+                                    # readonly_items_sum_field, БЕЗ единого
+                                    # интерактивного элемента (не materials_tab/
+                                    # kits_tab — там есть добавление/удаление/
+                                    # инлайн-редактирование количества, у этого
+                                    # примитива такого нет и не будет: он для
+                                    # документов, чьи дочерние строки создаются
+                                    # ТОЛЬКО программно — см. specification_item,
+                                    # заполняется в _build_specification_handler,
+                                    # человек их не редактирует напрямую).
+                                    # Введён 2026-08-28 как отдельный, более простой
+                                    # универсальный примитив движка (по прямой
+                                    # просьбе Вахтанга "сделай так, чтобы могло
+                                    # пригодиться и для счёта") — НЕ переиспользует
+                                    # materials_tab, потому что тот жёстко заточен
+                                    # под calculation_item (material_id/price_excl_vat/
+                                    # инкремент-декремент/picker добавления) и не
+                                    # параметризован по полям. None — вкладка/таблица
+                                    # не содержит этот виджет (обычное поведение).
+    readonly_items_table_key: Optional[str] = None
+                                    # Ключ TableConfig дочерней таблицы позиций
+                                    # (например "specification_item") — обязателен
+                                    # вместе с readonly_items_tab. Дочерняя таблица
+                                    # должна иметь hierarchy.parent_field, указывающий
+                                    # на FK к текущей записи (тот же переиспользуемый
+                                    # parent_id-механизм, что и у kit_item/
+                                    # calculation_item) — движок делает
+                                    # GET /api/{readonly_items_table_key}?parent_id=
+                                    # при открытии формы редактирования.
+    readonly_items_columns: list[tuple[str, str, str]] = field(default_factory=list)
+                                    # Список колонок таблицы: (имя_поля, заголовок,
+                                    # формат). Формат — один из "text" (как есть) или
+                                    # "money" (Number(...).toFixed(2)) — единственные
+                                    # два варианта, которых достаточно для текущих
+                                    # сценариев (специфичные форматы можно добавить
+                                    # позже по конкретной необходимости, не заранее).
+                                    # Порядок в списке = порядок колонок слева направо.
+                                    # Пример (specification):
+                                    # [("calculation_number", "Калькуляция", "text"),
+                                    #  ("product_name", "Изделие", "text"),
+                                    #  ("quantity", "Кол-во", "text"),
+                                    #  ("unit_price", "Цена за ед.", "money"),
+                                    #  ("line_total", "Итого", "money")]
+                                    # "calculation_number" — вычисляется на клиенте
+                                    # (см. readonlyItemsColumnValue() в page.py), не
+                                    # физическое поле SpecificationItem — берётся по
+                                    # row.calculation_id из relationOptions.calculation
+                                    # (extra_lookups), см. specification_table ниже.
+    readonly_items_sum_field: Optional[str] = None
+                                    # Имя поля ЭТОЙ (родительской) записи, где уже
+                                    # лежит готовая итоговая сумма (например
+                                    # Specification.total_amount) — показывается
+                                    # строкой "Итого: ..." под таблицей. Само поле НЕ
+                                    # пересчитывается на клиенте (в отличие от
+                                    # materialsTotal/liveFinalTotal у calculation) —
+                                    # это снэпшот, посчитанный сервером один раз при
+                                    # сборке документа (см. комментарий в
+                                    # app/models/specification.py "ЭТО СНИМОК, не
+                                    # live-агрегация"). None — сумма не показывается.
     action_buttons: list["ActionButton"] = field(default_factory=list)
                                     # Кнопки с реальной логикой в теле модалки (не
                                     # disabled-заглушки, см. ActionButton). Показываются

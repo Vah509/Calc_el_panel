@@ -577,6 +577,46 @@ _PAGE_TEMPLATE_SOURCE = r"""
         <div class="vat-note">↻ Пересчитывается автоматически при изменении одного из полей — можно переопределить вручную.</div>
         {% endif %}
         {{ render_action_buttons(action_buttons_by_tab.get('', [])) }}
+        {% if config.readonly_items_tab %}
+        <!-- Read-only список дочерних строк (TableConfig.readonly_items_tab,
+             2026-08-28) — таблица без form_tabs (specification), поэтому
+             рендерится здесь безусловно, не внутри цикла по вкладкам (тот
+             блок — выше, для таблиц С вкладками, см. ветку
+             config.materials_tab == tab). Не показывается для ещё НЕ
+             сохранённой записи — у specification позиции физически не
+             могут существовать без specification_id (впрочем
+             specification и так allow_create=False — этот случай сейчас
+             не встречается на практике, проверка оставлена для общности
+             примитива). -->
+        <div x-show="!editing.id" class="materials-tab-hint">Позиции появятся после сохранения документа.</div>
+        <div x-show="editing.id" x-cloak class="readonly-items-block">
+          <table class="readonly-items-table">
+            <thead>
+              <tr>
+                {% for field_name, col_label, col_format in config.readonly_items_columns %}
+                <th>{{ col_label }}</th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="row in readonlyItems" :key="row.id">
+                <tr>
+                  {% for field_name, col_label, col_format in config.readonly_items_columns %}
+                  <td x-text="readonlyItemsColumnValue(row, '{{ field_name }}', '{{ col_format }}')"></td>
+                  {% endfor %}
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <div class="readonly-items-empty" x-show="readonlyItems.length === 0">Пока пусто — позиции не сформированы</div>
+          {% if config.readonly_items_sum_field %}
+          <div class="readonly-items-total">
+            <span>Итого:</span>
+            <span x-text="Number(editing['{{ config.readonly_items_sum_field }}'] ?? 0).toFixed(2)"></span>
+          </div>
+          {% endif %}
+        </div>
+        {% endif %}
         {% if config.extra_actions %}
         <div class="extra-actions" x-show="editing.id">
           {% for action_label in config.extra_actions %}
@@ -1097,6 +1137,7 @@ function enginePage() {
     // отдельно от items_modal/kitItems выше (другая модель хранения:
     // каждая позиция хранит СВОЙ снэпшот цены, не replace-all). ---
     materialsItems: [],
+    readonlyItems: [],
     materialsSelectedIds: [],
     materialsMaterialOptions: [],
     materialsUnitOptions: [],
@@ -1748,6 +1789,9 @@ function enginePage() {
         if (CONFIG.kitsTab && this.editing.id) {
           this.loadKitsItems();
         }
+        if (CONFIG.readonlyItemsTab && this.editing.id) {
+          this.loadReadonlyItems();
+        }
         // Автозагрузка динамических подписей для radio-полей (см.
         // FieldConfig.radio_labels_field/radio_labels_action в
         // config.py) — переиспользует runAction(), поэтому идёт по
@@ -2201,6 +2245,45 @@ function enginePage() {
     // на сервер отдельным запросом — нет "черновика", нечего
     // "отменять" одной кнопкой, ровно как у обычных плоских таблиц
     // движка (material/brand). ---
+
+    async loadReadonlyItems() {
+      // Read-only список дочерних строк (TableConfig.readonly_items_tab,
+      // 2026-08-28) — тот же parent_id-механизм, что и loadMaterialsItems,
+      // но без фильтрации по material_id/kit_id (эта таблица однородна —
+      // одна SpecificationItem = одна строка, без "материалы vs
+      // комплекты вперемешку", как у calculation_item).
+      try {
+        hideJsError();
+        const key = CONFIG.readonlyItemsTableKey;
+        const params = new URLSearchParams();
+        params.set('parent_id', this.editing.id);
+        params.set('page_size', 1000);
+        const res = await fetch('/api/' + key + '?' + params.toString());
+        const data = await res.json();
+        this.readonlyItems = data.items;
+      } catch (err) { showJsError(err); }
+    },
+
+    readonlyItemsColumnValue(row, fieldName, format) {
+      // "calculation_number" — единственное расчётное поле сейчас: не
+      // физическая колонка SpecificationItem, а document_number
+      // калькуляции, найденный по row.calculation_id в
+      // relationOptions['calculation'] (см. extra_lookups=["calculation"]
+      // у specification_table) — без похода на сервер. Остальные поля
+      // читаются с row напрямую по формату.
+      let value;
+      if (fieldName === 'calculation_number') {
+        const calcs = (this.relationOptions && this.relationOptions.calculation) || [];
+        const calc = calcs.find(c => c.id === row.calculation_id);
+        value = calc ? calc.document_number : '';
+      } else {
+        value = row[fieldName];
+      }
+      if (format === 'money') {
+        return Number(value ?? 0).toFixed(2);
+      }
+      return value ?? '';
+    },
 
     async loadMaterialsItems() {
       try {
@@ -3086,6 +3169,8 @@ def _serialize_level_config(config: TableConfig) -> dict:
         "materialsRecalcAction": config.materials_recalc_action,
         "kitsTab": config.kits_tab,
         "kitsItemTableKey": config.kits_item_table_key,
+        "readonlyItemsTab": config.readonly_items_tab,
+        "readonlyItemsTableKey": config.readonly_items_table_key,
         "openEditAction": config.open_edit_action,
         "fields": [
             {

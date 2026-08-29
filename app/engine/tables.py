@@ -1000,6 +1000,22 @@ specification_table = TableConfig(
     document_prefix="S",
     own_page_url="/specification-v2",
     default_sort_fields=[("document_date", "desc"), ("document_time", "desc")],
+    extra_lookups=["calculation"],
+    # extra_lookups=["calculation"] — грузит relationOptions['calculation']
+    # ЦЕЛИКОМ на клиенте (см. общий механизм в config.py), нужно только
+    # readonly_items_columns ниже: колонка "calculation_number" достаёт
+    # document_number калькуляции по specification_item.calculation_id
+    # без похода на сервер (см. readonlyItemsColumnValue() в page.py).
+    readonly_items_tab="Позиции",
+    readonly_items_table_key="specification_item",
+    readonly_items_columns=[
+        ("calculation_number", "Калькуляция", "text"),
+        ("product_name", "Изделие", "text"),
+        ("quantity", "Кол-во", "text"),
+        ("unit_price", "Цена за ед.", "money"),
+        ("line_total", "Итого", "money"),
+    ],
+    readonly_items_sum_field="total_amount",
     fields=[
         FieldConfig(name="document_number", label="Номер", list_width="90px", form_width="120px"),
         FieldConfig(name="document_date", label="Дата", widget="date", list_width="110px", form_width="140px"),

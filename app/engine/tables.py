@@ -1172,6 +1172,21 @@ def _build_invoice_handler(instance: Specification, session) -> dict:
 
     if existing is not None:
         invoice = existing
+        # (2026-08-30) — если у уже существующего счёта firm_id пуст
+        # (например, счёт создавался ДО того, как в справочнике
+        # появилась хоть одна фирма/фирма с is_default=True), при
+        # каждом повторном "обновлении на месте" пробуем подставить
+        # дефолтную фирму заново — человек не должен обязательно лезть
+        # в форму счёта вручную только потому, что фирму завели уже
+        # ПОСЛЕ первого создания счёта. Если firm_id уже заполнен
+        # (человек либо оставил дефолтный выбор, либо поменял вручную)
+        # — НЕ трогаем, это уже осознанный выбор на конкретном
+        # документе, а не пустое место.
+        if not invoice.firm_id:
+            firm = session.exec(select(Firm).where(Firm.is_default == True)).first()  # noqa: E712
+            if firm:
+                invoice.firm_id = firm.id
+                session.add(invoice)
     else:
         client_invoice_id = (request.client_invoice_id if request else None) or (
             request.client_id if request else None

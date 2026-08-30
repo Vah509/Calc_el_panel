@@ -388,7 +388,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
         {% endif %}
       {% endmacro %}
 
-      <div class="modal-body">
+      <div class="modal-body"{% if render_mode == 'form' and not config.hierarchy %} style="max-height:none; overflow-y:visible;"{% endif %}>
         {% if not config.hierarchy %}
         {% if config.form_tabs %}
         <!-- Форма с вкладками (TableConfig.form_tabs) — переключение

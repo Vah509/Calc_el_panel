@@ -1383,9 +1383,7 @@ firm_table = TableConfig(
     },
     fields=[
         FieldConfig(name="full_name", label="Полное название", required=True,
-                    searchable=True, search_default=True, list_width="26%"),
-        FieldConfig(name="is_default", label="По умолчанию", widget="text", readonly=True,
-                    list_width="110px"),
+                    searchable=True, search_default=True, list_width="30%"),
         FieldConfig(name="egrpou_code", label="ЄДРПОУ", list_width="110px"),
         FieldConfig(name="tax_id", label="ІПН", list_width="130px", in_list=False),
         FieldConfig(name="vat_certificate_number", label="№ свідоцтва платника ПДВ", in_list=False),

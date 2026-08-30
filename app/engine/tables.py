@@ -159,14 +159,37 @@ def _build_specification_handler(brand_slot: int):
     т.д.), а не передаваться отдельно. Фабрика просто убирает
     дублирование тела функции между тремя слотами.
 
-    Механика (согласовано с Вахтангом 2026-08-27, см. подробный
-    комментарий в app/models/specification.py):
+    Механика (переработано 2026-08-30 — решение Вахтанга: подчинённый
+    документ при повторном формировании ОБНОВЛЯЕТСЯ НА МЕСТЕ, а не
+    удаляется и создаётся заново — то же поведение, что уже было у
+    счёта, теперь и у спецификации):
       1. Собрать активные (status="active") калькуляции этой заявки
          с данным brand_slot.
       2. Если для (request_id, brand_slot) уже есть Specification —
-         удалить её и все её SpecificationItem (полная перезапись).
-      3. Создать новую Specification (client_id = request.client_id,
-         номер по счётчику префикса "S").
+         ОБНОВИТЬ ЕЁ НА МЕСТЕ: id и document_number (номер) НЕ
+         меняются, привязки (в т.ч. уже созданный из неё Invoice —
+         через specification_id) НЕ рвутся; document_date/
+         document_time выставляются на текущий момент (проще и
+         единообразнее, чем оставлять исходную дату — решение
+         Вахтанга: "думаю для реализации это будет проще"). Позиции
+         (SpecificationItem) при этом всё равно полностью
+         пересобираются (delete+create) — сами строки меняют id,
+         поэтому ссылка InvoiceItem.specification_item_id (трассировка)
+         обнуляется у уже существующих строк счёта перед удалением
+         старых SpecificationItem (см. комментарий у orphaned_invoice_
+         items ниже) — это НЕ отвязка счёта, Invoice.specification_id
+         остаётся как был.
+      2а. ВАЖНО: если для этой спецификации уже есть привязанный
+          (specification_id заполнен) Invoice — он должен быть
+          обновлён СРАЗУ ЖЕ следом (тот самый "следующий документ",
+          который тоже нужно обновить, по прямому указанию Вахтанга)
+          — вызывается тот же код, что и у кнопки «Обновить» на
+          счёте (_sync_invoice_items_from_specification +
+          _recalculate_invoice_totals), а не оставляется до
+          следующего ручного нажатия человеком.
+      3. Если Specification для этого слота ещё не было — создаём
+         новую (client_id = request.client_id, номер по счётчику
+         префикса "S"), как и раньше.
       4. По одной SpecificationItem на калькуляцию (БЕЗ схлопывания
          повторяющихся названий — каждая калькуляция своя строка),
          line_total = final_total * quantity.
@@ -177,14 +200,15 @@ def _build_specification_handler(brand_slot: int):
 
     Возвращает {"redirect_url": "/specification-v2/{id}"} — НЕ патч
     полей текущей заявки (в отличие от большинства action_handlers):
-    кнопка создаёт ДРУГОЙ документ, а не правит instance, поэтому
-    фронт (runAction() в page.py) при виде redirect_url переходит на
-    страницу созданной спецификации вместо подмешивания результата
-    в открытую форму заявки.
+    кнопка создаёт (или обновляет) ДРУГОЙ документ, а не правит
+    instance, поэтому фронт (runAction() в page.py) при виде
+    redirect_url переходит на страницу спецификации вместо
+    подмешивания результата в открытую форму заявки.
     """
 
     def handler(instance: Request, session) -> dict:
         from app.engine.document_numbering import next_document_number
+        from datetime import date as _date, datetime as _datetime
 
         calculations = session.exec(
             select(Calculation).where(
@@ -200,38 +224,64 @@ def _build_specification_handler(brand_slot: int):
                 Specification.brand_slot == brand_slot,
             )
         ).first()
+
         if existing is not None:
-            # ВАЖНО (баг 2026-08-28, ForeignKeyViolation на Postgres при
-            # повторном нажатии "Спека N"): Specification/SpecificationItem
-            # — плоские модели БЕЗ SQLModel relationship()/cascade, только
-            # foreign_key= строкой. Без relationship() SQLAlchemy Unit of
-            # Work не видит связь между ними на уровне mapper graph и не
-            # гарантирует, что дети будут удалены раньше родителя внутри
-            # ОДНОГО flush() — порядок DELETE в реальном SQL может
-            # получиться "родитель раньше детей", что на Postgres рушится
-            # с ForeignKeyViolation (SQLite такую проверку по умолчанию не
-            # делает — тесты этого не поймали). На проде проявлялось не
-            # всегда — зависело от текущего состояния identity map.
-            # Решение: два РАЗДЕЛЬНЫХ flush() — сначала гарантированно
-            # удалить и отправить в БД детей (SpecificationItem), и только
-            # потом, вторым flush(), удалить родителя (Specification).
+            # ОБНОВЛЕНИЕ НА МЕСТЕ (2026-08-30) — id/document_number
+            # сохраняются, дата/время формирования обновляются на
+            # текущие. Позиции (SpecificationItem) всё равно
+            # полностью пересобираются ниже (проще, чем построчно
+            # сверять состав калькуляций), поэтому их СОБСТВЕННЫЕ id
+            # всё равно меняются — отсюда необходимость обнулить
+            # трассировочную ссылку у InvoiceItem (см. ниже), даже
+            # притом что сама Specification и сам Invoice.
+            # specification_id теперь остаются нетронутыми.
+            existing.document_date = _date.today()
+            existing.document_time = _datetime.now().time().replace(microsecond=0)
+            session.add(existing)
+            session.flush()
+            spec = existing
+
+            # ForeignKeyViolation на Postgres (обнаружено 2026-08-28
+            # для самих Specification/SpecificationItem, повторно
+            # 2026-08-30 через InvoiceItem): SpecificationItem всё
+            # равно удаляются и пересоздаются при каждом формировании
+            # (позиции могли измениться — калькуляции добавили/убрали/
+            # поменяли), а у InvoiceItem есть FK specification_item_id
+            # -> specificationitem.id (см. app/models/invoice_item.py —
+            # намеренно ТОЛЬКО для трассировки, "снэпшот", НЕ для
+            # live-обновления). Обнуляем эту ссылку у уже существующих
+            # строк счёта ПЕРЕД удалением старых SpecificationItem —
+            # сам InvoiceItem и его данные (цена/скидка/сумма) не
+            # трогаем, только снимаем ссылку на исчезающую строку.
+            # Specification/Invoice.specification_id при этом НЕ
+            # трогаются вообще — счёт остаётся привязан к этой же
+            # спецификации, просто трассировка до конкретной старой
+            # строки прерывается.
             old_items = session.exec(
                 select(SpecificationItem).where(SpecificationItem.specification_id == existing.id)
             ).all()
+            old_item_ids = [item.id for item in old_items]
+            if old_item_ids:
+                orphaned_invoice_items = session.exec(
+                    select(InvoiceItem).where(InvoiceItem.specification_item_id.in_(old_item_ids))
+                ).all()
+                for inv_item in orphaned_invoice_items:
+                    inv_item.specification_item_id = None
+                    session.add(inv_item)
+                session.flush()
+
             for item in old_items:
                 session.delete(item)
             session.flush()
-            session.delete(existing)
+        else:
+            spec = Specification(
+                request_id=instance.id,
+                brand_slot=brand_slot,
+                client_id=instance.client_id,
+                document_number=next_document_number(session, "S"),
+            )
+            session.add(spec)
             session.flush()
-
-        spec = Specification(
-            request_id=instance.id,
-            brand_slot=brand_slot,
-            client_id=instance.client_id,
-            document_number=next_document_number(session, "S"),
-        )
-        session.add(spec)
-        session.flush()
 
         total_amount = 0.0
         for calc in calculations:
@@ -248,6 +298,21 @@ def _build_specification_handler(brand_slot: int):
 
         spec.total_amount = total_amount
         session.add(spec)
+        session.flush()
+
+        # "Следующий документ тоже нужно обновить" (прямое указание
+        # Вахтанга, 2026-08-30): если из ЭТОЙ спецификации уже собран
+        # привязанный (specification_id ещё указывает сюда) Invoice —
+        # обновляем и его сразу же, тем же кодом, что и ручная кнопка
+        # «Обновить» на счёте, а не оставляем рассинхрон до следующего
+        # захода человека на карточку счёта.
+        linked_invoice = session.exec(
+            select(Invoice).where(Invoice.specification_id == spec.id)
+        ).first()
+        if linked_invoice is not None:
+            _sync_invoice_items_from_specification(linked_invoice, spec, session)
+            _recalculate_invoice_totals(linked_invoice, session)
+
         session.commit()
         session.refresh(spec)
 
@@ -1026,6 +1091,16 @@ calculation_item_table = TableConfig(
 # НЕ пересчитывает саму спецификацию/калькуляции перед сборкой —
 # берёт SpecificationItem как есть на момент нажатия (тот же принцип,
 # что у _build_specification_handler).
+#
+# Каскад (добавлено 2026-08-30, прямое указание Вахтанга: "следующий
+# документ тоже надо обновить"): с тех пор как спецификация
+# обновляется НА МЕСТЕ (id/номер не меняются, см.
+# _build_specification_handler), при каждом повторном формировании
+# спецификации ЭТИ ЖЕ ДВЕ ФУНКЦИИ (_sync_invoice_items_from_
+# specification + _recalculate_invoice_totals) вызываются автоматически
+# для уже привязанного к ней Invoice — человеку не нужно отдельно
+# заходить на карточку счёта и жать «Обновить» после пересборки
+# спецификации.
 def _sync_invoice_items_from_specification(invoice: Invoice, spec: Specification, session) -> None:
     """Полная перезапись InvoiceItem по текущим SpecificationItem —
     используется и при первом создании счёта, и при "Обновить" на

@@ -31,6 +31,18 @@ _HUNDREDS = ["", "сто", "двісті", "триста", "чотириста",
              "шістсот", "сімсот", "вісімсот", "дев'ятсот"]
 
 
+def _million_form(n: int) -> str:
+    last_two = n % 100
+    last_one = n % 10
+    if 11 <= last_two <= 14:
+        return "мільйонів"
+    if last_one == 1:
+        return "мільйон"
+    if 2 <= last_one <= 4:
+        return "мільйони"
+    return "мільйонів"
+
+
 def _three_digit_words(n: int, feminine: bool) -> list[str]:
     words = []
     h, rem = divmod(n, 100)
@@ -86,16 +98,31 @@ def _kopiyka_form(n: int) -> str:
 def _int_to_words(n: int, feminine_units: bool) -> str:
     """feminine_units — род ПОСЛЕДНЕЙ тройки (единиц числа), т.к.
     именно она согласуется с существительным, идущим после всего
-    числа (гривня/копійка — женский род)."""
+    числа (гривня/копійка — женский род).
+
+    ВАЖНО (баг найден 2026-08-31 на реальном счёте Вахтанга — сумма
+    оказалась ≥ 1 000 000, IndexError в _HUNDREDS): числo нужно
+    разбивать на тройки РЕКУРСИВНО (мільйони -> тисячі -> одиниці),
+    каждая тройка сама по себе всегда 0-999 и подаётся в
+    _three_digit_words независимо. Раньше "тисячи" получали ВЕСЬ
+    n // 1000 целиком (могло быть >999 при n >= 1_000_000) и падали
+    на _HUNDREDS[h] при h >= 10. Тестовые случаи (макс. 105 532)
+    этот баг не ловили — нужно тестировать суммы за миллион отдельно
+    (см. HANDOFF)."""
     if n == 0:
         return "нуль"
     parts = []
-    thousands, rem = divmod(n, 1000)
+    millions, rem_after_millions = divmod(n, 1_000_000)
+    thousands, rem = divmod(rem_after_millions, 1000)
+    if millions:
+        m_words = _three_digit_words(millions, feminine=False)
+        parts.append(" ".join(m_words))
+        parts.append(_million_form(millions))
     if thousands:
         t_words = _three_digit_words(thousands, feminine=True)
         parts.append(" ".join(t_words))
         parts.append(_thousand_form(thousands))
-    if rem or not thousands:
+    if rem or not (millions or thousands):
         r_words = _three_digit_words(rem, feminine=feminine_units)
         if r_words:
             parts.append(" ".join(r_words))

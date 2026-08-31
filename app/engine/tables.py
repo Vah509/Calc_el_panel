@@ -1562,10 +1562,12 @@ invoice_table = TableConfig(
     action_buttons=[
         ActionButton(action="refresh_invoice_items", label="Обновить", tab=None),
         ActionButton(action="unlink_invoice", label="Отвязать от спецификации", tab=None),
-        # download_invoice_pdf — client_side=True, см. CLIENT_ACTIONS
-        # в app/engine/page.py и GET /invoice-print/{id}/pdf
-        # (app/invoice_print/router.py). Согласовано 2026-08-31.
+        # download_invoice_pdf / download_invoice_xlsx — client_side=True,
+        # см. CLIENT_ACTIONS в app/engine/page.py и GET
+        # /invoice-print/{id}/pdf|xlsx (app/invoice_print/router.py).
+        # Excel-кнопка добавлена 2026-08-31 сразу после PDF, тот же паттерн.
         ActionButton(action="download_invoice_pdf", label="Скачать PDF", tab=None, client_side=True),
+        ActionButton(action="download_invoice_xlsx", label="Скачать Excel", tab=None, client_side=True),
     ],
     action_handlers={
         "apply_bulk_discount": _apply_bulk_discount_handler,

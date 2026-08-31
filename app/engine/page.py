@@ -1107,6 +1107,19 @@ const CLIENT_ACTIONS = {
     return null;
   },
 
+  // download_invoice_xlsx (2026-08-31) — та же логика, что и
+  // download_invoice_pdf выше, только Excel-версия той же печатной
+  // формы (см. GET /invoice-print/{id}/xlsx,
+  // app/invoice_print/xlsx_builder.py).
+  download_invoice_xlsx(editing) {
+    if (!editing.id) {
+      showJsError(new Error('Сначала сохраните счёт — печатная форма собирается из уже сохранённых позиций.'));
+      return null;
+    }
+    window.open(`/invoice-print/${editing.id}/xlsx`, '_blank');
+    return null;
+  },
+
   recalc_full_name(editing, appState) {
     const template = editing.name_template || '';
     let requestNumber = '';

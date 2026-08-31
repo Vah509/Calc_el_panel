@@ -404,6 +404,8 @@ def build_api_router(config: TableConfig, get_engine_session=get_session) -> API
         data = _normalize_date_fields(data)
         data = _normalize_time_fields(data)
         data = _apply_document_numbering(data, session)
+        if config.before_create_hook:
+            data = config.before_create_hook(data, session)
         _validate_required(data)
         data = _apply_computed_pairs(data, session)
         data = _round_numeric_fields(data)

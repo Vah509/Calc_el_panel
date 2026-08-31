@@ -17,6 +17,7 @@ from app.database import init_db, engine, seed_constants
 from app.engine.register import register_engine_tables
 from app.processors.router import register_processors
 from app.documents_chain.router import register_documents_chain
+from app.invoice_print.router import register_invoice_print
 from app.version import APP_VERSION
 
 app = FastAPI(title="ЭлектроЩит — Учёт калькуляций")
@@ -39,6 +40,11 @@ register_processors(app, _templates)
 # по кнопке "Показать подчинённые документы" в журнале заявок, своей
 # ссылки в NAV_MENU сознательно нет (см. app/documents_chain/router.py).
 register_documents_chain(app, _templates)
+
+# Скачивание печатной формы счёта (кнопка "Скачать PDF" на карточке
+# invoice) — GET /invoice-print/{invoice_id}/pdf, см.
+# app/invoice_print/router.py.
+register_invoice_print(app)
 
 
 @app.on_event("startup")

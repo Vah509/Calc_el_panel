@@ -122,6 +122,15 @@ def _ensure_is_deleted_columns() -> None:
         # калькуляции трактуются как "одно изделие", пока человек не
         # поправит вручную.
         ("calculation", "quantity", "DOUBLE PRECISION NOT NULL DEFAULT 1"),
+        # 2026-08-31: unit_id добавлено в модель Calculation ПОСЛЕ того,
+        # как таблица calculation уже существует на Postgres — та же
+        # ловушка, см. комментарии выше. NULL (не NOT NULL) — та же
+        # логика, что и у material.unit_id (v63) выше по этому же
+        # списку: существующие калькуляции получают unit_id=NULL,
+        # новые калькуляции подставляют его через before_create_hook
+        # (_default_calculation_unit_id, tables.py), старые записи можно
+        # поправить руками через UI по желанию.
+        ("calculation", "unit_id", "INTEGER NULL"),
     ]
     with engine.connect() as conn:
         for table, column, ddl_type in tables_columns:

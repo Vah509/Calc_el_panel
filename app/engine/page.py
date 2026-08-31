@@ -1091,6 +1091,22 @@ function applyFormula(formulaName, direction, value, rate) {
 // <select> поля "Заявка") — это единственная причина, по которой
 // appState передаётся вторым аргументом.
 const CLIENT_ACTIONS = {
+  // download_invoice_pdf (2026-08-31) — кнопка "Скачать PDF" на
+  // карточке invoice: открывает готовый PDF счёта в новой вкладке
+  // (см. GET /invoice-print/{id}/pdf, app/invoice_print/router.py).
+  // Требует уже сохранённой записи (id) — печатная форма собирается
+  // из InvoiceItem в БД, не из ещё не сохранённого editing. Ничего
+  // не подмешивает в editing (возвращает null) — чистое действие
+  // "открыть ссылку", без изменения формы.
+  download_invoice_pdf(editing) {
+    if (!editing.id) {
+      showJsError(new Error('Сначала сохраните счёт — печатная форма собирается из уже сохранённых позиций.'));
+      return null;
+    }
+    window.open(`/invoice-print/${editing.id}/pdf`, '_blank');
+    return null;
+  },
+
   recalc_full_name(editing, appState) {
     const template = editing.name_template || '';
     let requestNumber = '';

@@ -147,6 +147,20 @@ DEFAULT_NAME_TEMPLATE = "Сборка {client_name}"
 # остаётся пустым, ничего не падает.
 DEFAULT_PRODUCT_TYPE_RATE_NAME = "Стандартное изделие"
 
+# unit_id (2026-08-31) — единица измерения САМОГО ИЗДЕЛИЯ калькуляции
+# (не путать с CalculationItem.material_id -> Material.unit_id — та
+# единица измерения относится к КОМПОНЕНТУ состава, эта — к готовой
+# позиции, которая целиком попадает строкой в счёт-фактуру: "Зборка
+# ЩОАм — 1 послуга" вместо единицы измерения кабеля/автомата внутри
+# неё). Нужно для печатной формы счёта (см. app/invoice_print/) —
+# колонка "Од." там строится из calculation.unit_id, а не из
+# материалов состава. FK на тот же справочник Unit, что и у Material
+# (Вахтанг, 2026-08-31: "может быть и штуки ... нужно указывать
+# непосредственно в калькуляции"). Nullable на уровне БД по той же
+# причине, что и Material.unit_id — не ломать миграцию уже
+# существующих в проде калькуляций без единицы измерения.
+DEFAULT_CALCULATION_UNIT_NAME = "послуга"
+
 
 class Calculation(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -158,6 +172,10 @@ class Calculation(SQLModel, table=True):
     full_name: str = Field(default="")
     name_template: str = Field(default=DEFAULT_NAME_TEMPLATE)
     brand_slot: Optional[int] = Field(default=None)
+    # Единица измерения изделия (см. комментарий DEFAULT_CALCULATION_UNIT_NAME
+    # выше) — "шт", "послуга" и т.п., подставляется по умолчанию хуком
+    # _default_calculation_unit_id (before_create_hook, tables.py).
+    unit_id: Optional[int] = Field(default=None, foreign_key="unit.id")
     quantity: float = Field(default=1.0)
     # status (2026-08-27: default сменён с "draft" на "active" —
     # статус "draft" убран из вариантов формы, см. calculation_table в

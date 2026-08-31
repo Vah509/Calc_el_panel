@@ -21,7 +21,7 @@ from app.models.kit import Kit
 from app.models.kit_item import KitItem
 from app.models.client import Client
 from app.models.request import Request
-from app.models.calculation import Calculation, DEFAULT_NAME_TEMPLATE
+from app.models.calculation import Calculation, DEFAULT_NAME_TEMPLATE, DEFAULT_CALCULATION_UNIT_NAME
 from app.models.calculation_item import CalculationItem
 from app.models.product_type_rate import ProductTypeRate
 from app.models.specification import Specification
@@ -659,6 +659,25 @@ def _brand_slot_labels_handler(instance: Calculation, session) -> dict:
 # поправленное название при каждом save). full_name остаётся обычным
 # редактируемым текстовым полем (не readonly) — можно поправить
 # результат подстановки точечно, не трогая сам шаблон.
+
+
+def _default_calculation_unit_id(data: dict, session) -> dict:
+    """before_create_hook калькуляции (2026-08-31): если unit_id не
+    передан явно при создании — подставляет id записи Unit с
+    name=DEFAULT_CALCULATION_UNIT_NAME ("послуга"), см. комментарий
+    у DEFAULT_CALCULATION_UNIT_NAME в app/models/calculation.py.
+    Если такой записи в справочнике ещё нет (свежая БД без ручного
+    заполнения справочника Unit) — молча оставляет unit_id пустым,
+    ничего не падает, поле просто редактируется вручную."""
+    if not data.get("unit_id"):
+        default_unit = session.exec(
+            select(Unit).where(Unit.name == DEFAULT_CALCULATION_UNIT_NAME)
+        ).first()
+        if default_unit:
+            data["unit_id"] = default_unit.id
+    return data
+
+
 calculation_table = TableConfig(
     key="calculation",
     model=Calculation,
@@ -680,6 +699,7 @@ calculation_table = TableConfig(
     kits_item_table_key="calculation_item",
     open_edit_action="refresh_cost_totals",
     before_update_hook=_sync_final_total_before_save,
+    before_create_hook=_default_calculation_unit_id,
     action_buttons=[
         ActionButton(action="recalc_full_name", label="Сформировать название", tab="Основное",
                      client_side=True),
@@ -728,6 +748,14 @@ calculation_table = TableConfig(
                     default=1),
         FieldConfig(name="full_name", label="Полное название", in_list=False, tab="Основное",
                     inline_action="recalc_full_name"),
+        # unit_id (2026-08-31) — единица измерения ИЗДЕЛИЯ целиком (см.
+        # подробный комментарий у DEFAULT_CALCULATION_UNIT_NAME в
+        # app/models/calculation.py). По умолчанию подставляется
+        # "послуга" через before_create_hook=_default_calculation_unit_id
+        # выше. Рядом с "Полное название" по просьбе Вахтанга
+        # ("нужно добавить отдельное поле возле наименования").
+        FieldConfig(name="unit_id", label="Ед. измерения", widget="select",
+                    in_list=False, tab="Основное"),
         FieldConfig(name="brand_slot", label="Вариант (слот бренда)", widget="radio",
                     list_width="90px", tab="Основное",
                     radio_labels_field="brand_slot_labels", radio_labels_action="brand_slot_labels",
@@ -810,10 +838,13 @@ calculation_table = TableConfig(
                  show_filter_chips=False),
         Relation(field="product_type_rate_id", target_table="product_type_rate", display_field="name",
                  label="Тип изделия", show_filter_chips=False),
+        Relation(field="unit_id", target_table="unit", display_field="name",
+                 label="Ед. измерения", show_filter_chips=False),
     ],
     form_rows=[
         FormRow(field_names=["document_number", "document_date", "document_time"]),
         FormRow(field_names=["client_name", "quantity", "status"]),
+        FormRow(field_names=["full_name", "unit_id"]),
         FormRow(field_names=["materials_total", "kits_total", "base_total"]),
         FormRow(field_names=["insurance_markup", "insured_total"]),
         FormRow(field_names=["markup_percent", "markup_total"]),
@@ -1531,6 +1562,10 @@ invoice_table = TableConfig(
     action_buttons=[
         ActionButton(action="refresh_invoice_items", label="Обновить", tab=None),
         ActionButton(action="unlink_invoice", label="Отвязать от спецификации", tab=None),
+        # download_invoice_pdf — client_side=True, см. CLIENT_ACTIONS
+        # в app/engine/page.py и GET /invoice-print/{id}/pdf
+        # (app/invoice_print/router.py). Согласовано 2026-08-31.
+        ActionButton(action="download_invoice_pdf", label="Скачать PDF", tab=None, client_side=True),
     ],
     action_handlers={
         "apply_bulk_discount": _apply_bulk_discount_handler,

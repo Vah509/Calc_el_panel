@@ -1150,10 +1150,25 @@ def _sync_invoice_items_from_specification(invoice: Invoice, spec: Specification
         select(SpecificationItem).where(SpecificationItem.specification_id == spec.id)
     ).all()
     for spec_item in spec_items:
+        # unit_name — снэпшот единицы измерения (добавлено 2026-08-31,
+        # см. подробный комментарий в app/models/invoice_item.py).
+        # SpecificationItem сама не хранит unit — идём по той же цепочке,
+        # что и app/invoice_print/data.py: calculation_id -> Calculation.
+        # unit_id -> Unit.name. Каждое звено nullable, при обрыве просто
+        # оставляем пустую строку, без падения (тот же принцип, что в
+        # data.py).
+        unit_name = ""
+        if spec_item.calculation_id:
+            calc = session.get(Calculation, spec_item.calculation_id)
+            if calc and calc.unit_id:
+                unit = session.get(Unit, calc.unit_id)
+                if unit:
+                    unit_name = unit.name
         session.add(InvoiceItem(
             invoice_id=invoice.id,
             specification_item_id=spec_item.id,
             product_name=spec_item.product_name,
+            unit_name=unit_name,
             quantity=spec_item.quantity,
             unit_price=spec_item.unit_price,
             discount_percent=0.0,
@@ -1551,6 +1566,7 @@ invoice_table = TableConfig(
     invoice_items_table_key="invoice_item",
     invoice_items_columns=[
         ("product_name", "Изделие", "text"),
+        ("unit_name", "Од.", "text"),
         ("quantity", "Кіл-сть", "text"),
     ],
     invoice_items_discount_field="discount_percent",
@@ -1637,6 +1653,7 @@ invoice_item_table = TableConfig(
         FieldConfig(name="specification_item_id", label="Строка спецификации", widget="select",
                     in_list=False, in_form=False),
         FieldConfig(name="product_name", label="Изделие", list_width="26%"),
+        FieldConfig(name="unit_name", label="Од.", list_width="60px", readonly=True),
         FieldConfig(name="quantity", label="Количество", widget="number",
                     is_numeric=True, list_width="90px"),
         FieldConfig(name="unit_price", label="Цена без ПДВ", widget="number",

@@ -16,9 +16,22 @@
 # же принцип "замороженного снимка", что у specification_item.
 # calculation_id).
 #
-# product_name/unit_price/quantity — СНЭПШОТЫ на момент создания/
-# обновления строки счёта:
+# product_name/unit_name/unit_price/quantity — СНЭПШОТЫ на момент
+# создания/обновления строки счёта:
 #   - product_name <- SpecificationItem.product_name
+#   - unit_name    <- SpecificationItem.calculation_id -> Calculation.unit_id
+#                      -> Unit.name (SpecificationItem САМА не хранит unit —
+#                      см. комментарий в specification_item.py; путь тот же,
+#                      что раньше использовался ТОЛЬКО в печатных формах,
+#                      см. app/invoice_print/data.py). Добавлено 2026-08-31
+#                      по прямому запросу Вахтанга — колонка "Од." нужна не
+#                      только в PDF/Excel, но и в самой табличке позиций
+#                      счёта на форме редактирования. СНЭПШОТ, не живая
+#                      ссылка на Unit (решение Вахтанга: "как и остальные
+#                      поля InvoiceItem") — если единицу измерения в
+#                      калькуляции поменяют ПОСЛЕ создания счёта, здесь
+#                      ничего не изменится, ту же логику "замороженного
+#                      снимка" уже используют product_name/unit_price.
 #   - unit_price   <- SpecificationItem.unit_price (цена БЕЗ скидки)
 #   - quantity     <- SpecificationItem.quantity
 #
@@ -55,6 +68,7 @@ class InvoiceItem(SQLModel, table=True):
     specification_item_id: Optional[int] = Field(default=None, foreign_key="specificationitem.id")
 
     product_name: str = Field(default="")
+    unit_name: str = Field(default="")
     quantity: float = Field(default=1.0)
     unit_price: float = Field(default=0.0)
     discount_percent: float = Field(default=0.0)

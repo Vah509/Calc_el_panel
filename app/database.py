@@ -131,6 +131,18 @@ def _ensure_is_deleted_columns() -> None:
         # (_default_calculation_unit_id, tables.py), старые записи можно
         # поправить руками через UI по желанию.
         ("calculation", "unit_id", "INTEGER NULL"),
+        # 2026-08-31: unit_name добавлено в модель InvoiceItem ПОСЛЕ того,
+        # как таблица invoiceitem уже существует на Postgres (уже есть
+        # реальные счета I-000001/I-000002) — та же ловушка, см.
+        # комментарии выше. DEFAULT '' совпадает с default= в модели
+        # Python (см. app/models/invoice_item.py) — существующие строки
+        # счетов получают unit_name='' (пустая колонка «Од.», как и было
+        # раньше в PDF/Excel до этой доработки), новые строки заполняются
+        # снэпшотом при создании/пересборке счёта (_sync_invoice_items_
+        # from_specification, app/engine/tables.py). Вахтанг подтвердил,
+        # что старые счета пересоздаст вручную — не нужно back-fill'ить
+        # существующие строки отдельным скриптом.
+        ("invoiceitem", "unit_name", "VARCHAR NOT NULL DEFAULT ''"),
     ]
     with engine.connect() as conn:
         for table, column, ddl_type in tables_columns:

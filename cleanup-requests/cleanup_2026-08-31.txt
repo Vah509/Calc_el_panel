@@ -1,0 +1,5 @@
+# Удаление устаревшего дневника проектирования — этап calculation/
+# specification/invoice полностью закодирован и в проде (v91-v94),
+# актуальные решения перенесены в entity_registry.md. Часть уборки
+# документации v95.
+docs/HANDOFF_kits_and_calculation.md

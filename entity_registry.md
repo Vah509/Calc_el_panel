@@ -1,13 +1,17 @@
 # Реестр сущностей — ЭлектроЩит
 
-Единый источник правды по факту реального кода (не по плану из спеки).
-Актуализирован под **v48** (2026-08-19) — заменяет собой прежние
-`entity_registry_v1.md` (описывал ещё дошаговый CRUD «Шага 1», давно не
-соответствовал коду) и `entity_registry_constants.md` (версия v26,
-слился сюда). Обновляется тем же шагом, где менялся код.
+Единый источник правды по факту реального кода (не по плану/спеке).
+Актуализирован под **v94** (2026-08-31) — полная переработка версии
+v48: за это время закодированы `request`, `calculation` +
+`calculation_item`, `specification` + `specification_item`, `firm`,
+`invoice` + `invoice_item`, печатные формы (PDF/Excel), цепочка
+документов и справочник `unit`. Обновляется тем же шагом, где
+меняется код (то, что это правило выпадало из процесса раньше и
+привело к сильному устареванию v48→v94 — сама причина этой ревизии).
 
-Формат: сначала общая инфраструктура (движок, процессоры), затем каждая
-таблица — данные / конфиг движка / примечания в одном месте.
+Формат: сначала общая инфраструктура (движок, документооборот,
+процессоры, печатные формы), затем каждая таблица — поля / движок /
+примечания в одном месте, в порядке `ALL_TABLES`.
 
 ---
 
@@ -18,228 +22,444 @@
 ```
 app/
 ├── __init__.py
-├── database.py         ← подключение к БД, get_session(), init_db(), seed_constants()
-├── main.py              ← точка входа, регистрация роутеров движка + processors, /health
-├── version.py            ← APP_VERSION, NAV_MENU (верхнее меню)
-├── models/
-│   ├── __init__.py        ← ⚠️ см. «Известные расхождения» ниже
-│   ├── brand.py
-│   ├── material.py
-│   ├── constant.py
-│   ├── kit_group.py
-│   ├── kit_section.py
-│   ├── kit.py
-│   └── kit_item.py
-├── engine/                ← универсальный CRUD/drill-down движок
-│   ├── config.py            ← TableConfig, FieldConfig, Hierarchy, Relation, ComputedPair
-│   ├── tables.py             ← экземпляры TableConfig для всех таблиц (ALL_TABLES)
-│   ├── api.py               ← build_api_router() — универсальные REST-эндпоинты
-│   ├── page.py               ← build_page_router() — HTML-страница (Alpine.js) + шаблон
-│   ├── page_router.py          ← обвязка page.py в APIRouter
-│   ├── register.py            ← регистрирует api+page роутеры для каждой ALL_TABLES записи
-│   ├── formulas.py            ← вспомогательные формулы (ComputedPair пересчёт)
-│   └── ENGINE.md              ← расширенная техническая документация движка (обновляется по запросу «свести документацию»)
-├── processors/
-│   ├── registry.py           ← PROCESSORS: recalc_material_vat + автосгенерированные purge_*
-│   ├── page.py               ← HTML-страница /processors
-│   └── router.py             ← роутинг страницы + запуск обработчика
+├── database.py            ← подключение к БД, get_session(), init_db(),
+│                             seed_constants(), _ensure_is_deleted_columns()
+│                             (ALTER TABLE для полей, добавленных в модель
+│                             ПОСЛЕ первого деплоя таблицы на Postgres —
+│                             см. критический принцип проекта в разделе 5)
+├── main.py                 ← точка входа, регистрирует роутеры движка +
+│                             processors + documents_chain + invoice_print, /health
+├── version.py               ← APP_VERSION, NAV_MENU (верхнее меню)
+├── models/                   ← 1 класс-таблица = 1 файл, все модели SQLModel
+│                             (полный список — раздел 2 ниже)
+├── engine/                    ← универсальный CRUD/drill-down движок
+│   ├── config.py                 ← TableConfig, FieldConfig, ComputedPair,
+│   │                                Relation, FormRow, ActionButton, Hierarchy
+│   ├── tables.py                  ← экземпляры TableConfig для всех таблиц
+│   │                                (ALL_TABLES) + все action-обработчики
+│   ├── api.py                    ← build_api_router() — REST по TableConfig
+│   ├── page.py                    ← build_page_router() — HTML (Alpine.js)
+│   ├── page_router.py              ← обвязка page.py в APIRouter
+│   ├── register.py                 ← регистрация api+page роутеров
+│   ├── document_numbering.py        ← next_document_number() — общий
+│   │                                счётчик номеров документов по префиксу
+│   ├── document_chain.py            ← ChainLink-реестр родитель/потомок
+│   │                                для страницы "Цепочка документов"
+│   ├── name_template.py             ← render_name_template() — подстановка
+│   │                                плейсхолдеров в шаблон названия
+│   │                                (Calculation.full_name)
+│   ├── formulas.py                  ← формулы ComputedPair (без eval),
+│   │                                продублированы в JS (page.py)
+│   └── ENGINE.md                    ← техническая документация движка
+├── documents_chain/            ← страница "Цепочка документов" (кнопка
+│   │                            на списке request), обходит CHAIN_LINKS
+│   ├── api.py, page.py, router.py
+├── invoice_print/               ← печатные формы счёта-фактуры
+│   ├── data.py                     ← build_invoice_print_data() — ЕДИНАЯ
+│   │                                точка сборки данных для PDF И Excel
+│   ├── pdf_builder.py               ← reportlab, DejaVuSans TTF (кириллица)
+│   ├── xlsx_builder.py               ← openpyxl, тот же макет, что PDF
+│   ├── amount_in_words.py            ← сумма прописью (укр., гривні/копійки)
+│   ├── router.py                     ← GET /invoice-print/{id}/pdf|xlsx
+│   └── fonts/                         ← DejaVuSans.ttf, DejaVuSans-Bold.ttf
+├── processors/                  ← страница /processors — разовые обработчики
+│   ├── registry.py                  ← PROCESSORS: recalc_material_vat +
+│   │                                автосгенерированные purge_*
+│   ├── page.py, router.py
 ├── static/style.css
-└── templates/base.html         ← общий каркас, верхнее меню из NAV_MENU
+└── templates/base.html            ← общий каркас, верхнее меню из NAV_MENU
 ```
 
 Паттерн: 1 класс-таблица = 1 файл в `models/`. Вся CRUD/UI-логика — в
 универсальном движке (`app/engine/`), не в отдельных роутерах на
-таблицу — движок читает `TableConfig` и порождает REST + HTML сам.
+таблицу. Составные документы (request/calculation/specification/
+invoice) добавляют СВОЮ бизнес-логику (обработчики кнопок, каскады)
+поверх того же движка через `action_handlers`/хуки — не отдельными
+роутерами в обход движка.
 
 ### Универсальные REST-эндпоинты движка (на каждую таблицу из ALL_TABLES)
 
 | Метод | Путь | Назначение |
 |---|---|---|
-| GET | `/api/{key}` | Список, поддерживает `parent_id` (drill-down), `q`/search-toggles, `page`/`page_size`, сортировку. Формат ответа: `{items, total, page, page_size, total_pages}` |
+| GET | `/api/{key}` | Список: `parent_id` (drill-down/иерархия строк), `q`/`search_fields`, `page`/`page_size`, сортировка. Формат: `{items, total, page, page_size, total_pages}` |
 | POST | `/api/{key}` | Создать |
 | PUT | `/api/{key}/{item_id}` | Обновить (readonly-поля в payload игнорируются) |
-| DELETE | `/api/{key}/{item_id}` | Удалить — поведение зависит от `delete_mode` (см. ниже) |
+| DELETE | `/api/{key}/{item_id}` | Удалить — поведение зависит от `delete_mode` |
 | POST | `/api/{key}/{item_id}/copy` | Server-side копирование записи |
-| PUT | `/api/{key}/{item_id}/items` | Полная замена дочерних записей (delete-all+create-all в одной транзакции) — используется `edit_mode="items_modal"` |
-| POST | `/api/{key}/bulk-mark-delete` | Безусловная установка `is_deleted` для набора id (не toggle) — 422 для таблиц с `delete_mode != "soft"` |
+| PUT | `/api/{key}/{item_id}/items` | Полная замена дочерних записей (только `edit_mode="items_modal"`) |
+| POST | `/api/{key}/bulk-mark-delete` | Безусловная установка `is_deleted` для набора id — 422 при `delete_mode != "soft"` |
+| POST | `/api/{key}/{item_id}/actions/{action}` | Вызов именованного `ActionButton`/`action_handlers` обработчика, опционально с телом запроса (единственный сценарий с payload — `invoice_items_bulk_discount_action`) |
 
-HTML-страница: `GET {url_path}` (например `/material-v2`) — одна страница
-на все уровни dril-down сразу (`config_json.levels[]`), без перезагрузки
-между уровнями.
+HTML-страница: `GET {url_path}` (например `/material-v2`,
+`/invoice-v2/{id}` для документов с `own_page_url`) — одна страница на
+все уровни drill-down/вкладки сразу, без перезагрузки между ними.
 
-### `delete_mode` — три режима (см. `TableConfig.delete_mode`)
+### `delete_mode` — три режима (`TableConfig.delete_mode`)
 
-| Режим | Поведение DELETE | Таблицы |
+| Режим | Поведение DELETE | Таблицы (v94) |
 |---|---|---|
-| `"soft"` | Пометка `is_deleted=True`, физическое удаление — только через purge-processor | material, brand, kit |
+| `"soft"` | Пометка `is_deleted=True`; физическое удаление — только через purge-processor | material, brand, kit, client, request, calculation, specification, firm, invoice |
 | `"simple"` | Физическое удаление, но только если нет дочерних записей | kit_group, kit_section |
-| `"hard"` (дефолт, если не указан) | Безусловное немедленное физическое удаление | kit_item |
+| `"hard"` (дефолт) | Безусловное немедленное физическое удаление | kit_item, calculation_item, specification_item, invoice_item, unit, product_type_rate, constant (allow_delete=False на деле блокирует) |
+
+### Документооборот: request → calculation → specification → invoice
+
+Цепочка составных документов, каждый — своя страница движка
+(`own_page_url`), связанные FK на `request_id` (не друг на друга
+напрямую — `specification`/`invoice` оба ссылаются на `request`, т.к.
+одна спецификация агрегирует НЕСКОЛЬКО калькуляций сразу, N:1 не
+вписывается в единственный FK). Каждый документ имеет собственную
+нумерацию по префиксу через `document_numbering.py` +
+`DocumentCounter` (одна строка на префикс: R/calculation-без-префикса.../S/I —
+см. таблицу `document_counter` в разделе 2).
+
+Построчные дочерние таблицы (`calculation_item`, `specification_item`,
+`invoice_item`) — каждая своя философия снэпшота/live-ссылки, см.
+таблицу ниже:
+
+| Дочерняя таблица | Родитель | Модель данных |
+|---|---|---|
+| `calculation_item` | calculation | LIVE — хранит `material_id`/`kit_id`, цена подтягивается на пересчёте |
+| `specification_item` | specification | СНЭПШОТ — `product_name`/`unit_price`/`quantity`/`line_total` копируются с `Calculation` один раз при формировании, между формированиями не "плывут" |
+| `invoice_item` | invoice | СНЭПШОТ — копируется со `SpecificationItem` при создании/пересборке счёта, `discount_percent` — единственное поле, редактируемое человеком напрямую (не пересоздаётся) |
+
+**Каскад пересборки** (2026-08-30/31): специфика "update in place" —
+при повторном формировании specification (кнопка «Спека N» на
+request) документ **обновляется на месте** (тот же id/номер, только
+`document_date`/`document_time` обновляются), и если у него уже есть
+привязанный invoice — тот пересобирается автоматически следом
+(`_sync_invoice_items_from_specification` + `_recalculate_invoice_totals`,
+см. `app/engine/tables.py`), без отдельного захода человека на
+карточку счёта.
+
+### `document_chain.py` — реестр цепочки документов
+
+`CHAIN_LINKS` (плоский список `ChainLink(child_key, parent_key, fk_field)`):
+```
+calculation   → request  (request_id)
+specification → request  (request_id)
+invoice       → request  (request_id)
+```
+Используется ТОЛЬКО страницей "Цепочка документов" (кнопка на списке
+request → `/documents-chain?request_id=`), обходит граф рекурсивно от
+корня (`request`). Добавление нового типа документа — одна новая
+строка в `CHAIN_LINKS`, без изменения кода страницы.
+
+### Печатные формы счёта (`app/invoice_print/`)
+
+`data.py::build_invoice_print_data(invoice_id, session)` — ЕДИНАЯ точка
+сборки `InvoicePrintData` (dataclass) из БД: реквизиты firm/client,
+построчные `InvoicePrintLine`, итоги. И `pdf_builder.py` (reportlab), и
+`xlsx_builder.py` (openpyxl) принимают уже готовый `InvoicePrintData` и
+только рисуют — расчёт сумм/прописи не дублируется между форматами.
+Единица измерения строки берётся из `InvoiceItem.unit_name` — снэпшот
+цепочки `SpecificationItem.calculation_id → Calculation.unit_id →
+Unit.name`, заполняется один раз при сборке счёта (v94).
+
+Роуты: `GET /invoice-print/{id}/pdf`, `GET /invoice-print/{id}/xlsx` —
+прямые ссылки для браузера (кнопки «Скачать PDF»/«Скачать Excel» на
+карточке invoice, `client_side=True` ActionButton — просто открывает
+URL в новой вкладке).
 
 ### Processors (`/processors`)
 
 - `recalc_material_vat` — пересчитывает `Material.price_incl_vat` по
   текущей ставке из `constant.vat_rate`.
 - `purge_{table_key}` — автогенерируется для КАЖДОЙ таблицы с
-  `delete_mode == "soft"` (сейчас: `purge_material`, `purge_brand`,
-  `purge_kit`). Физически удаляет все строки с `is_deleted=True`.
-  **⚠️ Без проверки зависимостей** — просто `session.delete()` по
-  списку. Для `purge_kit` это значит: если на момент запуска
-  обработчика на удалённый kit уже будут ссылаться `calculation_item`
-  (появятся в следующем крупном блоке), физическое удаление снесёт
-  ссылку без предупреждения. Отмечено в коде как известное упрощение
-  («более сложную проверку допишем отдельным шагом, когда появится
-  реальная потребность») — актуально пересмотреть, как только
-  calculation_item будет существовать.
+  `delete_mode == "soft"` (material, brand, kit, client, request,
+  calculation, specification, firm, invoice). Физически удаляет все
+  строки с `is_deleted=True`, **без проверки зависимостей** — известное
+  упрощение, актуально пересмотреть при первом реальном инциденте.
 
 ---
 
-## 2. Таблицы
+## 2. Таблицы (в порядке `ALL_TABLES`)
 
 ### `brand`
 | Поле | Тип | Назначение |
 |---|---|---|
 | id | int, PK | |
 | name | str, unique, indexed | Название бренда |
-| rate_vb | float, default 0.0 | Курс валюты поставщика (EUR/USD→грн), правится вручную. Используется калькуляцией (когда появится) вместе с `Material.price_vb_incl_vat` |
-| is_deleted | bool, default False, indexed | Soft-delete пометка |
+| rate_vb | float, default 0.0 | Курс валюты поставщика (EUR/USD→грн), правится вручную |
+| is_deleted | bool, default False, indexed | Soft-delete |
 
-Движок: `delete_mode="soft"`. Поля в форме/списке: `name`, `rate_vb`.
+Движок: `delete_mode="soft"`.
 
-⚠️ Спека предполагала ещё `is_universal` (флаг спецбренда «Universal»
-для непривязанных к производителю компонентов) — в коде этого поля
-по-прежнему нет.
+### `unit` (справочник единиц измерения)
+| Поле | Тип | Назначение |
+|---|---|---|
+| id | int, PK | |
+| name | str, unique | "шт", "м", "кг", "послуга" и т.п. |
+| sort_order | int, default 0 | Ручная сортировка в выпадающих списках |
+
+Плоский справочник, используется как FK из `material.unit_id` и
+`calculation.unit_id`. "Услуга" — обычная запись справочника ("услуга"
+как unit), отдельной сущности для услуг нет.
+
+### `product_type_rate` (справочник "Стоимость сборки")
+| Поле | Тип | Назначение |
+|---|---|---|
+| id | int, PK | |
+| name | str, indexed | Название типа изделия |
+| hourly_rate | float, default 0.0 | Часовая ставка сборки |
+| is_deleted | bool, default False, indexed | |
+
+Используется калькуляцией (`Calculation.product_type_rate_id`) на
+вкладке "Стоимость" для расчёта `hours_total` (сборка по часам, одна
+из двух альтернативных ветвей `cost_method`).
+
+### `client` (справочник клиентов)
+| Поле | Тип | Назначение |
+|---|---|---|
+| id | int, PK | |
+| short_name | str, indexed | Короткое название (поиск, списки) |
+| full_name | str | Полное название (для документов/счетов) |
+| egrpou_code | str, default "" | Код ЄДРПОУ |
+| phone | str, default "" | Общий телефон клиента |
+| contact_person_name / contact_person_phone | str, default "" | Контактное лицо, отдельный телефон |
+| is_deleted | bool, default False, indexed | Soft-delete |
+
+### `request` (заявка) — корень цепочки документов
+| Поле | Тип | Назначение |
+|---|---|---|
+| id | int, PK | |
+| document_number | str, default "" | Номер по счётчику префикса "R" |
+| document_date | date | |
+| client_id | int, FK→client.id | Заказчик (обязателен по бизнес-логике) |
+| client_invoice_id | int, FK→client.id, nullable | Плательщик, если отличается от заказчика — "по умолчанию = заказчик" реализовано на уровне API, не constraint модели |
+| brand_slot_1/2/3_id | int, FK→brand.id, nullable×3 | Три брендовых варианта, всегда все видны в форме |
+| note | str, default "" | |
+| is_deleted | bool, default False, indexed | |
+
+Движок: `delete_mode="soft"`, `document_number_field="document_number"`,
+`document_prefix="R"`, `own_page_url="/request-v2"`. Каждый брендовый
+слот имеет пару кнопок «Спецификация»/«Пересчитать» в своём ряду
+формы (`row_actions`) — только «Спецификация N» реально работает
+(строит/пересобирает specification для этого `brand_slot`),
+«Пересчитать» пока заглушка. Панель списка: «Создать документ на
+основании» → `/calculation-v2?from_request={id}`, «Показать цепочку» →
+`/documents-chain?request_id={id}`.
+
+### `calculation` (калькуляция) — одно изделие, один брендовый вариант
+| Поле | Тип | Назначение |
+|---|---|---|
+| id | int, PK | |
+| document_number, document_date, document_time | | Номер БЕЗ отдельного префикса документооборота — своя нумерация калькуляций |
+| request_id | int, FK→request.id, nullable | |
+| client_name | str, default "" | |
+| full_name | str, default "" | Название изделия — генерируется по `name_template` (см. `name_template.py`), можно переопределить вручную |
+| name_template | str, default `DEFAULT_NAME_TEMPLATE` | Шаблон подстановки плейсхолдеров |
+| brand_slot | int, nullable | 1/2/3 — совпадает по смыслу с `brand_slot_N` в request |
+| unit_id | int, FK→unit.id, nullable | Единица измерения ИЗДЕЛИЯ. Добавлено 2026-08-31 ПОСЛЕ первого деплоя таблицы — старые калькуляции имеют `unit_id=NULL` (см. `_ensure_is_deleted_columns`). Дефолт для новых калькуляций — "послуга" (`before_create_hook`, не первая опция списка) |
+| quantity | float, default 1.0 | Количество изделий |
+| status | str, default "active" | "active" / "delete_pending" — ручной выбор, без принудительного порядка переходов |
+| cost_method | str, default "markup" | "markup" (наценка) или "hours" (сборка по часам) — определяет, какая из двух ветвей формулы стоимости используется в `final_total` |
+| markup_percent | float, default 1.4 | |
+| insurance_markup | float, default 1.1 | |
+| assembly_hours | float, default 0.0 | Только для `cost_method="hours"` |
+| product_type_rate_id | int, FK→producttyperate.id, nullable | |
+| materials_total, kits_total, base_total, insured_total, markup_total, hours_total, final_total | float, default 0.0 | Расчётная цепочка (вкладка "Стоимость"): `base_total → insured_total → markup_total ИЛИ hours_total → final_total` |
+| is_deleted | bool, default False, indexed | |
+
+Движок: `delete_mode="soft"`, `own_page_url="/calculation-v2"`,
+`form_tabs=["Основное","Настройки","Материалы","Комплекты","Стоимость"]`,
+`materials_tab`/`kits_tab` (оба на общей физической таблице
+`calculation_item`, различаются фильтром `material_id`/`kit_id` IS NOT NULL),
+`needs_constants=True` (дефолт `name_template` из constant).
+`open_edit_action` пересчитывает суммы вкладки "Стоимость" при каждом
+открытии формы без обязательного клика "Пересчитать".
+
+### `calculation_item` (строки калькуляции — материалы ИЛИ комплекты)
+| Поле | Тип | Назначение |
+|---|---|---|
+| id | int, PK | |
+| calculation_id | int, FK→calculation.id, nullable | |
+| material_id | int, FK→material.id, nullable | Тип строки определяется тем, какое из двух полей заполнено |
+| kit_id | int, FK→kit.id, nullable | Добавлено ПОСЛЕ первого деплоя (v67) |
+| quantity | float, default 1.0 | |
+| price_excl_vat | float, default 0.0 | СНЭПШОТ цены на момент добавления/пересчёта, не живая ссылка |
+
+Движок: `hierarchy(parent_field="calculation_id")`, обе вкладки
+"Материалы"/"Комплекты" калькуляции — чисто UI-разделение одной
+физической таблицы через фильтр по заполненному FK.
 
 ### `material`
 | Поле | Тип | Назначение |
 |---|---|---|
 | id | int, PK | |
-| short_name | str, indexed | Короткое имя (поиск, списки) |
-| full_name | str | Полное имя (для документов) |
+| short_name | str, indexed | |
 | brand_id | int, FK→brand.id, nullable | |
 | sku_article | str, indexed, nullable | Артикул производителя |
-| price_excl_vat | float | Цена без НДС |
-| price_incl_vat | float | Цена с НДС (взаимный пересчёт с price_excl_vat через `ComputedPair`, ставка — живая ссылка на `constant.vat_rate`) |
-| price_vb_incl_vat | float, default 0.0 | Цена с НДС в валюте бренда-поставщика. Независимый факт, не авто-пересчитывается; связь с `Brand.rate_vb` считается «на лету» только в будущей калькуляции |
-| owner_id | int, indexed, nullable | Задел под многопользовательскую модель, пока не используется |
-| is_deleted | bool, default False, indexed | Soft-delete |
-
-Движок: `delete_mode="soft"`, `enable_search_toggles=True` (поиск по
-short_name/full_name/sku_article с переключателями полей).
-
-⚠️ `vat_rate` как поле модели **удалён** (v28) — ставка теперь общая,
-только в `constant.vat_rate`. Есть пометка «удалить физически колонку
-`vat_rate` из таблицы на Railway» — открытый ручной шаг, ждёт
-подтверждения после пересчёта реальных данных (см. `docs/HANDOFF.md`,
-блок «Ждёт ручного действия от Вахтанга»).
-
-### `constant`
-| Поле | Тип | Назначение |
-|---|---|---|
-| id | int, PK | |
-| key | str, unique, indexed | Ключ (readonly в UI/API) |
-| value | str | Значение, хранится строкой, тип приводится в коде использования |
-| description | str, default "" | Пояснение (readonly) |
-
-Seed (`seed_constants()`, идемпотентен, `app/database.py`, on_startup):
-- `vat_rate = "20"`
-- `default_page_size = "100"`
-
-Движок: `allow_create=False`, `allow_delete=False` — записи только
-редактируются (`value`), не создаются/не удаляются через UI. Нет
-панели выделения (allow_create=False).
-
-### `kit_group` (1-й уровень дерева комплектов)
-| Поле | Тип | Назначение |
-|---|---|---|
-| id | int, PK | |
-| name | str, unique, indexed | |
-| sort_order | int, default 0 | Порядок обхода в UI (не алфавитный — важен для рабочего процесса) |
+| unit_id | int, FK→unit.id, nullable | Добавлено v63, ПОСЛЕ первого деплоя таблицы |
+| price_excl_vat / price_incl_vat | float | Взаимный пересчёт через `ComputedPair`, ставка — живая ссылка на `constant.vat_rate` |
+| price_vb_incl_vat | float, default 0.0 | Цена с НДС в валюте бренда-поставщика; независимый факт, связь с `Brand.rate_vb` считается на лету только в калькуляции |
+| owner_id | int, indexed, nullable | Задел под многопользовательскую модель, не используется |
 | is_deleted | bool, default False, indexed | |
 
-Движок: `delete_mode="simple"` (физическое удаление, только если нет
-дочерних kit_section), `hierarchy=Hierarchy(child_key="kit_section")`.
+Движок: `delete_mode="soft"`, `enable_search_toggles=True`.
 
-### `kit_section` (2-й уровень)
+### `kit_group` / `kit_section` / `kit` / `kit_item` — дерево комплектов
+Без изменений с v48 по структуре, см. историю в git при необходимости:
+- `kit_group` (1-й уровень): `name`(unique), `sort_order`, `is_deleted`.
+  `delete_mode="simple"`, `hierarchy(child_key="kit_section")`.
+- `kit_section` (2-й уровень): + `kit_group_id`.
+  `delete_mode="simple"`, `hierarchy(parent_field="kit_group_id", child_key="kit")`.
+- `kit` (3-й, нижний уровень): + `kit_section_id`.
+  `delete_mode="soft"` (в отличие от group/section — на kit ссылаются
+  `calculation_item.kit_id`), `edit_mode="items_modal"`,
+  `items_source_table_key="kit_item"`.
+- `kit_item` (состав комплекта): `kit_id`, `material_id`, `quantity`
+  (default 1.0, дробные — метры кабеля/ленты). `delete_mode="hard"`
+  (безусловное) — ничто не ссылается на конкретный `kit_item`,
+  калькуляция хранит только `kit_id` и разворачивает состав live при
+  пересчёте.
+
+### `specification` (спецификация) — снимок по варианту заявки
 | Поле | Тип | Назначение |
 |---|---|---|
 | id | int, PK | |
-| name | str, indexed | |
-| sort_order | int, default 0 | Порядок внутри своей группы |
-| kit_group_id | int, FK→kit_group.id, nullable | |
+| document_number, document_date, document_time | | Номер по счётчику префикса "S" |
+| request_id | int, FK→request.id, nullable | Родитель В ЦЕПОЧКЕ ДОКУМЕНТОВ (не calculation — одна спецификация агрегирует несколько калькуляций сразу) |
+| brand_slot | int, nullable | 1/2/3, какой вариант заявки |
+| client_id | int, FK→client.id, nullable | Снэпшот `Request.client_id` на момент формирования |
+| total_amount | float, default 0.0 | Снэпшот суммы строк |
 | is_deleted | bool, default False, indexed | |
 
-Движок: `delete_mode="simple"`,
-`hierarchy=Hierarchy(parent_field="kit_group_id", parent_key="kit_group", child_key="kit")`.
+Механика (кнопка «Спецификация N» на request): собрать все АКТИВНЫЕ
+(`status="active"`) calculation этого `(request_id, brand_slot)` → для
+каждой — снэпшот `full_name`/`final_total`/`quantity` БЕЗ
+предварительного пересчёта калькуляций → **update in place** если для
+этой пары уже существовала спецификация (тот же id/номер, только
+даты обновляются) + каскад на привязанный invoice, иначе создать
+новую. Каждая калькуляция — всегда отдельная строка, без схлопывания
+одинаковых `product_name`.
 
-### `kit` (3-й, нижний уровень дерева)
+### `specification_item` (строки спецификации)
 | Поле | Тип | Назначение |
 |---|---|---|
 | id | int, PK | |
-| name | str, indexed | |
-| sort_order | int, default 0 | |
-| kit_section_id | int, FK→kit_section.id, nullable | |
+| specification_id | int, FK→specification.id, nullable | |
+| calculation_id | int, FK→calculation.id, nullable | НЕ для live-подтяжки — только трассировка/повторное формирование |
+| product_name | str, default "" | СНЭПШОТ ← `Calculation.full_name` |
+| unit_price | float, default 0.0 | СНЭПШОТ ← `Calculation.final_total` |
+| quantity | float, default 1.0 | СНЭПШОТ ← `Calculation.quantity` |
+| line_total | float, default 0.0 | = unit_price × quantity |
+
+Нет собственного поля единицы измерения — при необходимости (печатные
+формы, `invoice_item.unit_name`) unit подтягивается по цепочке через
+`calculation_id → Calculation.unit_id → Unit.name`, каждое звено
+nullable, при обрыве — пустая строка без падения. Нет soft-delete —
+строки полностью пересоздаются при каждом формировании (delete-all+
+create-all).
+
+### `firm` (справочник фирм-поставщиков — "Постачальник" в счёте)
+| Поле | Тип | Назначение |
+|---|---|---|
+| id | int, PK | |
+| full_name | str, default "" | |
+| is_default | bool, default False, indexed | Управляется ТОЛЬКО через action-кнопку "Сделать по умолчанию", НЕ через обычное поле формы — Postgres отвергает пустую строку для boolean, отправляемую HTML-формой при unchecked чекбоксе |
+| egrpou_code, tax_id, vat_certificate_number | str, default "" | ЄДРПОУ / ІПН / № свідоцтва платника ПДВ |
+| bank_account, bank_name, bank_mfo | str, default "" | Р/р (IBAN) / Банк / МФО |
+| phone, address | str, default "" | |
 | is_deleted | bool, default False, indexed | |
 
-Движок: `delete_mode="soft"` (в отличие от group/section — на kit в
-будущем ссылаются `calculation_item`, нужен purge с пометкой, не
-безусловное physical-if-no-children), `edit_mode="items_modal"`,
-`items_source_table_key="kit_item"`,
-`hierarchy=Hierarchy(parent_field="kit_section_id", parent_key="kit_section")`
-(без `child_key` — это последний уровень дерева; состав — не дочерний
-уровень, а модалка).
-
-Открытие карточки: клик по строке → модалка просмотра состава →
-кнопка «Редактировать» → полноэкранный **MaterialPicker** (черновик
-состава, сохранение — `PUT /api/kit/{id}/items`, полная замена).
-Переименование — отдельная иконка ✎ в строке дерева. Поддерживает
-выделение чекбоксом + групповые операции (пометка/снятие, копирование
-одного выделенного комплекта со всем составом через
-`POST /api/kit/{id}/copy`).
-
-### `kit_item` (состав комплекта)
+### `invoice` (счёт-фактура)
 | Поле | Тип | Назначение |
 |---|---|---|
 | id | int, PK | |
-| kit_id | int, FK→kit.id, nullable | |
-| material_id | int, FK→material.id, nullable | |
-| quantity | float, default 1.0 | Не int — дробные количества (метры кабеля/ленты) |
+| document_number, document_date, document_time | | Номер по счётчику префикса "I" |
+| request_id | int, FK→request.id, nullable | |
+| specification_id | int, FK→specification.id, nullable | NULL после "Отвязать" — счёт остаётся как есть, просто больше не обновляется каскадом |
+| firm_id | int, FK→firm.id, nullable | При создании — дефолтная Firm (`is_default=True`) |
+| client_id | int, FK→client.id, nullable | Заказчик — снэпшот `Request.client_id` |
+| client_invoice_id | int, FK→client.id, nullable | Плательщик; пусто → печатается "той самий" |
+| total_excl_vat, vat_amount, total_incl_vat | float, default 0.0 | Пересчитываются по сумме `InvoiceItem.line_total` и ставке `constant.vat_rate` |
+| is_deleted | bool, default False, indexed | |
 
-Движок: `delete_mode` не указан → дефолт `"hard"` (безусловное
-немедленное физическое удаление, без пометки — обосновано тем, что
-ничто не ссылается на конкретный `kit_item` напрямую: калькуляция
-хранит ссылку только на `kit_id` и разворачивает состав live).
-`hierarchy=Hierarchy(parent_field="kit_id", parent_key="kit")` — без
-`child_key`, используется исключительно ради `parent_id`-фильтра в
-`GET /api/kit_item?parent_id={kit_id}`. Не отдельная страница/пункт
-меню — доступна только через модалку/MaterialPicker таблицы `kit`.
-Дубликаты `material_id` в рамках одного kit допустимы (не суммируются).
+Движок: `own_page_url="/invoice-v2"`, `invoice_items_tab` (построчная
+таблица с редактируемой скидкой). Кнопки: «Обновить» (пересобрать
+позиции из спецификации), «Отвязать от спецификации», «Скачать PDF»,
+«Скачать Excel» (обе `client_side=True`, открывают
+`/invoice-print/{id}/pdf|xlsx`), «Дать скидку» (bulk через
+`window.prompt()`, применяет один `discount_percent` на все строки).
+
+### `invoice_item` (строки счёта)
+| Поле | Тип | Назначение |
+|---|---|---|
+| id | int, PK | |
+| invoice_id | int, FK→invoice.id, nullable | |
+| specification_item_id | int, FK→specificationitem.id, nullable | Только трассировка |
+| product_name | str, default "" | СНЭПШОТ ← `SpecificationItem.product_name` |
+| unit_name | str, default "" | СНЭПШОТ единицы измерения. Добавлено v94 ПОСЛЕ первого деплоя таблицы — заполняется по цепочке `spec_item.calculation_id → Calculation.unit_id → Unit.name` при сборке/пересборке счёта. Существующие строки (созданные до v94) имеют `unit_name=""` — не тронуты, backfill не делался |
+| quantity | float, default 1.0 | СНЭПШОТ |
+| unit_price | float, default 0.0 | СНЭПШОТ, цена БЕЗ скидки |
+| discount_percent | float, default 0.0 | ЕДИНСТВЕННОЕ редактируемое человеком поле строки. Знак: отрицательное = скидка, положительное = наценка |
+| unit_price_after_discount | float, default 0.0 | РАСЧЁТНОЕ: `unit_price × (1 + discount_percent/100)` |
+| line_total | float, default 0.0 | РАСЧЁТНОЕ: `unit_price_after_discount × quantity` |
+
+Пересчёт `unit_price_after_discount`/`line_total` — на бэкенде при
+каждом сохранении строки (`before_update_hook`), сервер — финальный
+источник истины. Нет soft-delete — строки пересоздаются вместе со
+всем счётом при пересборке (delete-all+create-all).
+
+### `constant` (справочник констант)
+| Поле | Тип | Назначение |
+|---|---|---|
+| id | int, PK | |
+| key | str, unique, indexed | readonly в UI/API |
+| value | str | Хранится строкой, тип приводится в коде использования |
+| description | str, default "" | readonly |
+
+Seed (`seed_constants()`, идемпотентен, `app/database.py`,
+on_startup) включает как минимум: `vat_rate`, `default_page_size`,
+`calculation_name_template`. Движок: `allow_create=False`,
+`allow_delete=False` — только редактирование `value`.
+
+### `document_counter` (служебная — общий счётчик номеров документов)
+| Поле | Тип | Назначение |
+|---|---|---|
+| id | int, PK | |
+| prefix | str, unique, indexed | "R" / "S" / "I" и т.п. |
+| last_number | int, default 0 | |
+
+Не в `ALL_TABLES` — нет своей страницы движка, используется только
+внутри `document_numbering.py::next_document_number()`. Ручная правка
+номера документа на бо́льшее значение подтягивает счётчик вверх.
 
 ---
 
-## 3. Известные расхождения код ↔ спека / прочий техдолг
+## 3. Известные расхождения код ↔ спека / технический долг
 
 | Что | В коде | Примечание |
 |---|---|---|
-| `app/models/__init__.py` | Экспортирует только `Brand`, `Material` (`__all__ = ["Brand", "Material"]`) | Kit/KitGroup/KitSection/KitItem/Constant не добавлены в `__init__.py`, хотя используются в движке напрямую через собственные модули — работает, но неполный `__all__` может путать при будущих импортах «одной строкой». Не блокирует ничего, править по мере необходимости |
-| Имя поля артикула | `sku_article` | Спека когда-то предлагала `sku` — решено в пользу кода как более читабельного (зафиксировано ранее) |
-| Структура моделей | `models/` — папка, файл на класс | Читабельнее на текущем масштабе (7 таблиц), решено ранее |
-| `Brand.is_universal` | Отсутствует в коде | Было в исходной спеке материалов, не реализовано, не поднималось с тех пор |
-| `Material.vat_rate` (колонка в БД, Railway) | Поле удалено из модели (v28), но физическая колонка в БД Railway ещё не дропнута | Ждёт ручного `ALTER TABLE material DROP COLUMN vat_rate;` от Вахтанга после проверки пересчёта реальных данных |
-| `purge_kit` | Не проверяет зависимости перед физическим удалением | См. раздел 1 «Processors» выше — актуально пересмотреть с появлением `calculation_item` |
+| `app/models/__init__.py` | Не экспортирует все модели через `__all__` | Работает (движок импортирует напрямую из модулей), но неполный `__all__` может путать при будущих импортах "одной строкой" |
+| `Brand.is_universal` | Отсутствует | Было в исходной спеке материалов (флаг спецбренда "Universal"), не реализовано, не поднималось с v48 |
+| Старые `calculation`/`invoice_item` без `unit_id`/`unit_name` | `unit_id=NULL` / `unit_name=""` для записей, созданных до v91/v94 | Backfill сознательно не делался — Вахтанг пересоздаёт нужные документы вручную по необходимости |
+| `purge_kit`/остальные `purge_*` | Не проверяют зависимости перед физическим удалением | Актуально пересмотреть при первом реальном инциденте с оборванной ссылкой |
+| specification_item | Нет собственного поля unit | Решение: unit не дублируется на каждом уровне снимка, подтягивается по цепочке до `Calculation` только там, где реально нужен (invoice_item, печатные формы) |
 
 Критерий принятия решения при расхождении код/спека (согласовано с
 Вахтангом): приоритет — чистый, читаемый, универсальный, легко
 расширяемый код; спецификация может быть неполной и подлежит правке,
 если код лучше. Каждый случай обсуждается отдельно, не подгоняется
-автоматически.
+автоматически. Названия таблиц/полей/функций согласовываются с
+Вахтангом до фиксации в коде — особенно когда английские термины
+могут быть неоднозначны.
 
 ---
 
 ## 4. Статус реестра
 
-Актуализирован по факту кода v48 (2026-08-19), перед стартом работы над
-`zayavka`/`calculation` (см. `docs/HANDOFF_kits_and_calculation.md`,
-раздел 2). Следующее обновление — по факту кодирования `zayavka` (шаг 1
-из раздела 2.1 того файла), тем же шагом, где будет меняться код —
-пункт, который в прошлый раз выпал из процесса и привёл к сильному
-устареванию; держать этот файл в ногу с каждым значимым архивом.
+Актуализирован по факту кода v94 (2026-08-31), в рамках наведения
+порядка в документации проекта — этот файл теперь единственный
+подробный технический реестр (файл `docs/HANDOFF_kits_and_calculation.md`
+с историей проектирования удалён — весь спроектированный там
+документооборот уже полностью закодирован, актуальные детали
+перенесены сюда). `docs/HANDOFF.md` остаётся отдельным, короче и
+живёт своей ролью — передача контекста между сессиями (что сделано в
+последнем шаге, что открыто), не полный реестр сущностей.
+
+Следующее обновление — тем же шагом, где меняется структура таблиц
+или конфигурация движка (новое поле, новая таблица, новый
+`TableConfig`-примитив) — не откладывать до отдельной "уборки", это и
+привело к разрыву v48→v94.

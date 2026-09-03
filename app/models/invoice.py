@@ -49,6 +49,26 @@
 # нумерации, что и у request/calculation/specification, свой
 # префикс "I" (см. app/engine/document_numbering.py — единственный
 # ещё не занятый однобуквенный префикс из R/C/S).
+#
+# is_frozen — добавлено v96 (план "Перепроведение", см.
+# docs/HANDOFF_reprovodenie.md). Заменяет собой смысл кнопки
+# "Отвязать" (specification_id -> NULL) в НОВОЙ схеме, где счёт
+# создаётся напрямую из отмеченных калькуляций заявки, минуя
+# спецификацию. False по умолчанию — обычный счёт.
+#
+# Переключается вручную человеком (кнопка "Заморозить" на форме
+# счёта, точное место в UI — сессия 5), НЕ автоматически по событию
+# типа печати PDF (решение Вахтанга 2026-09-03).
+#
+# Логика при "Создать счёт" по набору отмеченных калькуляций (см.
+# handler в сессии 4):
+#   - is_frozen=False (обычный, или ранее уже существующий для
+#     этого набора) -> обновляется НА МЕСТЕ (merge по
+#     InvoiceItem.calculation_id, discount_percent на совпавших
+#     позициях сохраняется);
+#   - is_frozen=True, или счёта для этого набора ещё нет ->
+#     создаётся НОВЫЙ документ Invoice (is_frozen=False по
+#     умолчанию для нового).
 # ============================================================
 
 from datetime import date, time, datetime
@@ -76,6 +96,8 @@ class Invoice(SQLModel, table=True):
     total_excl_vat: float = Field(default=0.0)
     vat_amount: float = Field(default=0.0)
     total_incl_vat: float = Field(default=0.0)
+
+    is_frozen: bool = Field(default=False)
 
     # is_deleted — визуальная пометка "к удалению" (soft-delete),
     # НЕ фильтрация — см. комментарий в app/models/material.py.

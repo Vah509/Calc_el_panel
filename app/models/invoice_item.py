@@ -56,6 +56,32 @@
 # счётом при повторном формировании из спецификации (тот же принцип,
 # что у CalculationItem/SpecificationItem), отдельного ручного
 # удаления одной строки в этом шаге нет.
+#
+# calculation_id — FK на Calculation, добавлено v96 (план
+# "Перепроведение", см. docs/HANDOFF_reprovodenie.md) — НОВАЯ прямая
+# трассировка строки счёта на калькуляцию, взамен пути через
+# specification_item_id -> SpecificationItem -> calculation_id.
+# Причина: спецификация как документ-прослойка выводится из цепочки
+# (Request -> вкладки по брендам с чекбоксами калькуляций -> Invoice
+# напрямую), specification_item_id сохранён только для СТАРЫХ строк
+# и печатных форм, дальше не используется для новых.
+#
+# Nullable, СТРОГО не бэкфиллится сейчас — старые строки (созданные
+# через путь Specification, есть в проде) остаются с
+# calculation_id=NULL, ничего не трогаем. НОВЫЕ строки (создаваемые
+# в обход спецификации, см. план "Сессия 4") будут заполнять это
+# поле сразу при создании. Задача связать старые строки с
+# calculation_id задним числом (через
+# specification_item_id -> SpecificationItem.calculation_id)
+# сознательно отложена до финального удаления таблиц
+# Specification/SpecificationItem (последний пункт плана) — решение
+# Вахтанга 2026-09-03, чтобы не рисковать существующими данными
+# раньше времени.
+#
+# Используется как ключ merge-логики при обновлении незамороженного
+# счёта (см. Invoice.is_frozen) — искать существующую InvoiceItem по
+# calculation_id, чтобы сохранить discount_percent на совпавших
+# позициях вместо текущего delete-all+create-all.
 # ============================================================
 
 from typing import Optional
@@ -66,6 +92,7 @@ class InvoiceItem(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     invoice_id: Optional[int] = Field(default=None, foreign_key="invoice.id")
     specification_item_id: Optional[int] = Field(default=None, foreign_key="specificationitem.id")
+    calculation_id: Optional[int] = Field(default=None, foreign_key="calculation.id")
 
     product_name: str = Field(default="")
     unit_name: str = Field(default="")

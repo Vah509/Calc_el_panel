@@ -1,13 +1,12 @@
 # Реестр сущностей — ЭлектроЩит
 
 Единый источник правды по факту реального кода (не по плану/спеке).
-Актуализирован под **v94** (2026-08-31) — полная переработка версии
-v48: за это время закодированы `request`, `calculation` +
-`calculation_item`, `specification` + `specification_item`, `firm`,
-`invoice` + `invoice_item`, печатные формы (PDF/Excel), цепочка
-документов и справочник `unit`. Обновляется тем же шагом, где
+Актуализирован под **v96** (2026-09-03) — точечное обновление после
+полной переработки v94: добавлены `invoice_item.calculation_id` и
+`invoice.is_frozen` (первый шаг плана "Перепроведение", см.
+docs/HANDOFF_reprovodenie.md). Обновляется тем же шагом, где
 меняется код (то, что это правило выпадало из процесса раньше и
-привело к сильному устареванию v48→v94 — сама причина этой ревизии).
+привело к сильному устареванию v48→v94 — сама причина ревизии v95).
 
 Формат: сначала общая инфраструктура (движок, документооборот,
 процессоры, печатные формы), затем каждая таблица — поля / движок /
@@ -374,6 +373,7 @@ create-all).
 | client_id | int, FK→client.id, nullable | Заказчик — снэпшот `Request.client_id` |
 | client_invoice_id | int, FK→client.id, nullable | Плательщик; пусто → печатается "той самий" |
 | total_excl_vat, vat_amount, total_incl_vat | float, default 0.0 | Пересчитываются по сумме `InvoiceItem.line_total` и ставке `constant.vat_rate` |
+| is_frozen | bool, default False | Добавлено v96 (план "Перепроведение"). Переключается вручную кнопкой "Заморозить" (НЕ автоматически). Пока False — счёт при повторном "Создать счёт" на том же наборе калькуляций обновляется на месте; True — создаётся новый документ |
 | is_deleted | bool, default False, indexed | |
 
 Движок: `own_page_url="/invoice-v2"`, `invoice_items_tab` (построчная
@@ -388,7 +388,8 @@ create-all).
 |---|---|---|
 | id | int, PK | |
 | invoice_id | int, FK→invoice.id, nullable | |
-| specification_item_id | int, FK→specificationitem.id, nullable | Только трассировка |
+| specification_item_id | int, FK→specificationitem.id, nullable | Только трассировка, ПУТЬ ЧЕРЕЗ СПЕЦИФИКАЦИЮ (уходящий) |
+| calculation_id | int, FK→calculation.id, nullable | Добавлено v96 (план "Перепроведение"). НОВАЯ прямая трассировка, взамен пути через specification_item_id. Nullable, НЕ бэкфиллится — старые строки (созданные до v96 через Specification) остаются NULL, новые строки (создаваемые напрямую из отмеченных калькуляций заявки, минуя спецификацию) заполняют его при создании. Задача связать старые строки задним числом отложена до финального удаления Specification/SpecificationItem. Используется как ключ merge-логики при обновлении незамороженного счёта (сохранение discount_percent на совпавших позициях) |
 | product_name | str, default "" | СНЭПШОТ ← `SpecificationItem.product_name` |
 | unit_name | str, default "" | СНЭПШОТ единицы измерения. Добавлено v94 ПОСЛЕ первого деплоя таблицы — заполняется по цепочке `spec_item.calculation_id → Calculation.unit_id → Unit.name` при сборке/пересборке счёта. Существующие строки (созданные до v94) имеют `unit_name=""` — не тронуты, backfill не делался |
 | quantity | float, default 1.0 | СНЭПШОТ |

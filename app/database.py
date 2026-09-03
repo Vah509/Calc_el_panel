@@ -143,6 +143,22 @@ def _ensure_is_deleted_columns() -> None:
         # что старые счета пересоздаст вручную — не нужно back-fill'ить
         # существующие строки отдельным скриптом.
         ("invoiceitem", "unit_name", "VARCHAR NOT NULL DEFAULT ''"),
+        # v96: calculation_id добавлено в модель InvoiceItem ПОСЛЕ того,
+        # как таблица invoiceitem уже существует на Postgres — та же
+        # ловушка, см. комментарии выше. NULL по умолчанию (не бэкфиллим
+        # старые строки сейчас — решение Вахтанга 2026-09-03, см.
+        # app/models/invoice_item.py и docs/HANDOFF_reprovodenie.md) —
+        # существующие строки счетов получают calculation_id=NULL, новые
+        # строки (создаваемые напрямую из калькуляций, минуя
+        # спецификацию, план "Сессия 4") заполняют его сразу.
+        ("invoiceitem", "calculation_id", "INTEGER NULL"),
+        # v96: is_frozen добавлено в модель Invoice ПОСЛЕ того, как
+        # таблица invoice уже существует на Postgres — та же ловушка,
+        # см. комментарии выше. DEFAULT false совпадает с default= в
+        # модели Python (см. app/models/invoice.py) — существующие счета
+        # трактуются как обычные (не замороженные), пока человек не
+        # заморозит вручную.
+        ("invoice", "is_frozen", "BOOLEAN NOT NULL DEFAULT false"),
     ]
     with engine.connect() as conn:
         for table, column, ddl_type in tables_columns:

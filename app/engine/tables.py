@@ -321,6 +321,60 @@ def _build_specification_handler(brand_slot: int):
     return handler
 
 
+def _refresh_brand_calculations_handler(instance: Request, session) -> dict:
+    """Обработчик кнопки «Обновить список» на КАЖДОЙ из трёх вкладок
+    бренда заявки (см. TableConfig.brand_slot_calc_refresh_action,
+    сессия 2 плана "Перепроведение", docs/HANDOFF_reprovodenie.md) — а
+    также подключён как open_edit_action, значит вызывается ЕЩЁ И
+    автоматически при каждом открытии формы редактирования заявки
+    (openEdit() -> runAction() в page.py, тот же принцип, что и
+    brand_slot_labels у calculation), чтобы человек сразу видел
+    актуальный список калькуляций, не кликая специально.
+
+    Собирает АКТИВНЫЕ (status="active") калькуляции этой заявки
+    ОТДЕЛЬНО для каждого из трёх brand_slot (1/2/3) разом — один
+    обработчик на все три вкладки, а не три отдельных action, т.к. все
+    три списка нужны сразу, как только открыта форма заявки. Сортировка
+    — по document_date, потом document_time, оба по убыванию (новые
+    сверху), согласовано с Вахтангом 2026-09-04 вместе с составом
+    колонок (номер/название/сумма/дата — см. brand_slot_calc_columns
+    в request_table ниже).
+
+    ВАЖНО: это ЧИСТО read-only список для сессии 2 — чекбоксы отмечены
+    полем "checked" только НА КЛИЕНТЕ (см. render в page.py), сюда
+    ничего не сохраняется и это поле сервер не читает и не пишет.
+    Отмеченный набор калькуляций начнёт на что-то влиять (создание
+    счёта, точечный пересчёт цен) только в следующих сессиях плана.
+
+    Возвращает {"brand_slot_1_calcs": [...], "brand_slot_2_calcs": [...],
+    "brand_slot_3_calcs": [...]} — по одному списку словарей на слот,
+    каждый словарь: id, document_number, full_name, final_total,
+    document_date (все значения уже в JSON-совместимом виде, дата как
+    ISO-строка — это plain dict, не ORM-объект, isoformat() нужен явно).
+    Пустая заявка (ещё не сохранена, instance.id нет) сюда не попадает —
+    runAction() на фронте не вызывает action без editing.id вообще."""
+    result: dict[str, list[dict]] = {}
+    for slot in (1, 2, 3):
+        calcs = session.exec(
+            select(Calculation)
+            .where(Calculation.request_id == instance.id)
+            .where(Calculation.brand_slot == slot)
+            .where(Calculation.status == "active")
+            .order_by(Calculation.document_date.desc(), Calculation.document_time.desc())
+        ).all()
+        result[f"brand_slot_{slot}_calcs"] = [
+            {
+                "id": c.id,
+                "document_number": c.document_number,
+                "full_name": c.full_name,
+                "final_total": c.final_total,
+                "document_date": c.document_date.isoformat() if c.document_date else "",
+            }
+            for c in calcs
+        ]
+    return result
+
+
 request_table = TableConfig(
     key="request",
     model=Request,
@@ -337,6 +391,28 @@ request_table = TableConfig(
     own_page_url="/request-v2",
     default_sort_field="document_date",
     default_sort_dir="desc",
+    # form_tabs (2026-09-04, сессия 2 плана "Перепроведение") — первая
+    # вкладка "Основное" несёт все поля, что были раньше в единой форме
+    # (номер/дата/клиенты/заметка), три следующие — по одной на каждый
+    # брендовый слот, каждая содержит ТОЛЬКО свой FieldConfig
+    # brand_slot_N_id (с прежними row_actions "Спецификация"/
+    # "Пересчитать" — путь через спецификацию пока НЕ убирается, см.
+    # сессию 6 плана) плюс, ниже поля, отдельный блок движка со списком
+    # калькуляций этого слота и чекбоксами (см. brand_slot_calc_tabs).
+    form_tabs=["Основное", "Вариант 1", "Вариант 2", "Вариант 3"],
+    brand_slot_calc_tabs=[
+        ("Вариант 1", 1, "brand_slot_1_calcs"),
+        ("Вариант 2", 2, "brand_slot_2_calcs"),
+        ("Вариант 3", 3, "brand_slot_3_calcs"),
+    ],
+    brand_slot_calc_refresh_action="refresh_brand_calculations",
+    brand_slot_calc_columns=[
+        ("document_number", "Номер", "text"),
+        ("full_name", "Название", "text"),
+        ("final_total", "Сума", "money"),
+        ("document_date", "Дата", "text"),
+    ],
+    open_edit_action="refresh_brand_calculations",
     action_handlers={
         # build_specification_1/2/3 (2026-08-27) — один обработчик на
         # слот (см. обоснование в _build_specification_handler выше:
@@ -345,32 +421,46 @@ request_table = TableConfig(
         # "Спецификация" через FieldConfig.row_action_names у
         # соответствующего brand_slot_N_id ниже. НЕ через
         # TableConfig.action_buttons — кнопка рендерится рядом с полем
-        # (row_actions), не отдельным блоком под вкладкой формы, и
-        # у request сейчас вообще нет вкладок формы (form_tabs пуст).
+        # (row_actions), не отдельным блоком под вкладкой формы.
         "build_specification_1": _build_specification_handler(1),
         "build_specification_2": _build_specification_handler(2),
         "build_specification_3": _build_specification_handler(3),
+        # refresh_brand_calculations (2026-09-04) — см.
+        # _refresh_brand_calculations_handler выше: один обработчик,
+        # используется и как open_edit_action (автозагрузка при
+        # открытии формы), и как явное действие кнопки "Обновить
+        # список" на каждой из трёх вкладок бренда (одна и та же
+        # кнопка/action на всех трёх — обработчик и так собирает все
+        # три слота разом за один вызов).
+        "refresh_brand_calculations": _refresh_brand_calculations_handler,
     },
     fields=[
-        FieldConfig(name="document_number", label="Номер", list_width="90px"),
-        FieldConfig(name="document_date", label="Дата", widget="date", list_width="110px"),
-        FieldConfig(name="client_id", label="Клиент (заказчик)", widget="select", required=True, list_width="22%"),
-        FieldConfig(name="client_invoice_id", label="Клиент (для счёта)", widget="select", list_width="22%"),
+        FieldConfig(name="document_number", label="Номер", list_width="90px", tab="Основное"),
+        FieldConfig(name="document_date", label="Дата", widget="date", list_width="110px", tab="Основное"),
+        FieldConfig(name="client_id", label="Клиент (заказчик)", widget="select", required=True, list_width="22%", tab="Основное"),
+        FieldConfig(name="client_invoice_id", label="Клиент (для счёта)", widget="select", list_width="22%", tab="Основное"),
         # in_list=False у брендовых слотов (v56, по решению Вахтанга) —
         # список заявок должен быть компактным (номер/дата/оба клиента),
         # бренд варианта — деталь формы, не нужна для быстрого обзора
         # журнала. in_form не трогаем (default True) — в форме видны
-        # как прежде, вместе со своими row_actions.
+        # как прежде, вместе со своими row_actions. tab (2026-09-04) —
+        # каждый слот переехал на свою отдельную вкладку формы (см.
+        # form_tabs/brand_slot_calc_tabs выше), список калькуляций этого
+        # слота рендерится ПОД полем на той же вкладке — движком, не
+        # отдельным FieldConfig.
         FieldConfig(name="brand_slot_1_id", label="Вариант 1 — бренд", widget="select", in_list=False,
+                    tab="Вариант 1",
                     row_actions=["Спецификация", "Пересчитать"],
                     row_action_names=["build_specification_1", None]),
         FieldConfig(name="brand_slot_2_id", label="Вариант 2 — бренд", widget="select", in_list=False,
+                    tab="Вариант 2",
                     row_actions=["Спецификация", "Пересчитать"],
                     row_action_names=["build_specification_2", None]),
         FieldConfig(name="brand_slot_3_id", label="Вариант 3 — бренд", widget="select", in_list=False,
+                    tab="Вариант 3",
                     row_actions=["Спецификация", "Пересчитать"],
                     row_action_names=["build_specification_3", None]),
-        FieldConfig(name="note", label="Заметка", widget="textarea", in_list=False, placeholder="К чему относится эта заявка…"),
+        FieldConfig(name="note", label="Заметка", widget="textarea", in_list=False, placeholder="К чему относится эта заявка…", tab="Основное"),
     ],
     relations=[
         Relation(field="client_id", target_table="client", display_field="short_name", label="Клиент (заказчик)",

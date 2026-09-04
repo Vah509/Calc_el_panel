@@ -527,6 +527,50 @@ _PAGE_TEMPLATE_SOURCE = r"""
           {% if loop.first and config.computed_pairs %}
           <div class="vat-note">↻ Пересчитывается автоматически при изменении одного из полей — можно переопределить вручную.</div>
           {% endif %}
+          {% for bsc_tab, bsc_slot, bsc_field in config.brand_slot_calc_tabs %}
+          {% if bsc_tab == tab %}
+          <!-- Вкладка бренда — список калькуляций слота {{ bsc_slot }} с
+               чекбоксами (TableConfig.brand_slot_calc_tabs, request,
+               2026-09-04, сессия 2 плана "Перепроведение" — см.
+               docs/HANDOFF_reprovodenie.md). Read-only список (кроме
+               самого чекбокса — тот живёт только в браузере, ничего не
+               сохраняет, см. brandCalcToggle()), не показывается для
+               ещё не сохранённой заявки: калькуляции физически не
+               могут существовать без request_id. -->
+          <div x-show="!editing.id" class="materials-tab-hint">Список калькуляций появится после сохранения заявки.</div>
+          <div x-show="editing.id" x-cloak class="readonly-items-block">
+            <div class="materials-toolbar">
+              <button type="button" class="btn btn-ghost"
+                      @click="runAction('{{ config.brand_slot_calc_refresh_action }}')">Обновить список</button>
+            </div>
+            <table class="readonly-items-table brand-calc-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  {% for field_name, col_label, col_format in config.brand_slot_calc_columns %}
+                  <th>{{ col_label }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="row in (editing.{{ bsc_field }} || [])" :key="row.id">
+                  <tr>
+                    <td><input type="checkbox" :checked="brandCalcChecked({{ bsc_slot }}, row.id)" @change="brandCalcToggle({{ bsc_slot }}, row.id)"></td>
+                    {% for field_name, col_label, col_format in config.brand_slot_calc_columns %}
+                    {% if col_format == 'money' %}
+                    <td x-text="Number(row['{{ field_name }}'] ?? 0).toFixed(2)"></td>
+                    {% else %}
+                    <td x-text="row['{{ field_name }}'] ?? ''"></td>
+                    {% endif %}
+                    {% endfor %}
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <div class="readonly-items-empty" x-show="(editing.{{ bsc_field }} || []).length === 0">Пока нет калькуляций этого варианта</div>
+          </div>
+          {% endif %}
+          {% endfor %}
           {% if tab == 'Стоимость' and config.materials_recalc_action %}
           <!-- Автопересчёт "Стоимости" (2026-08-28) — x-effect отслеживает
                ВСЕ реактивные зависимости, прочитанные внутри
@@ -1219,6 +1263,29 @@ function enginePage() {
     // каждая позиция хранит СВОЙ снэпшот цены, не replace-all). ---
     materialsItems: [],
     readonlyItems: [],
+    // --- Вкладки бренда заявки, чекбоксы калькуляций
+    // (CONFIG.brandSlotCalcTabs, request, 2026-09-04, сессия 2 плана
+    // "Перепроведение") — набор отмеченных id калькуляций, ОТДЕЛЬНО по
+    // каждому слоту (ключ — номер слота 1/2/3, значение — Set id).
+    // Живёт ТОЛЬКО в браузере, сбрасывается при каждом openEdit()/
+    // openCreate() (см. ниже) — ничего не сохраняется на сервер в этой
+    // сессии; сами данные калькуляций (номер/название/сумма/дата)
+    // приходят отдельно через editing.brand_slot_N_calcs (см.
+    // runAction('refresh_brand_calculations')). Реализовано как {1:
+    // Set, 2: Set, 3: Set} (не единый плоский Set) — id калькуляций из
+    // разных заявок/слотов не пересекаются на практике, но разделение
+    // по слоту делает намерение явным и защищает от случайного
+    // "перетекания" отметки, если один и тот же id почему-то встретится
+    // в двух списках одновременно.
+    brandCalcSelected: { 1: new Set(), 2: new Set(), 3: new Set() },
+    brandCalcChecked(slot, calcId) {
+      return this.brandCalcSelected[slot] instanceof Set && this.brandCalcSelected[slot].has(calcId);
+    },
+    brandCalcToggle(slot, calcId) {
+      const set = this.brandCalcSelected[slot];
+      if (!(set instanceof Set)) { this.brandCalcSelected[slot] = new Set([calcId]); return; }
+      if (set.has(calcId)) { set.delete(calcId); } else { set.add(calcId); }
+    },
     materialsSelectedIds: [],
     materialsMaterialOptions: [],
     materialsUnitOptions: [],
@@ -1838,6 +1905,7 @@ function enginePage() {
         this.editing = blank;
         this.modalOpen = true;
         this.activeFormTab = 0;
+        this.brandCalcSelected = { 1: new Set(), 2: new Set(), 3: new Set() };
         if (lvl.documentNumberField) {
           // Показываем человеку номер СРАЗУ при открытии формы, а не
           // только после сохранения — иначе поле выглядит "сломанным"
@@ -1861,6 +1929,7 @@ function enginePage() {
         this.editing = { ...item };
         this.modalOpen = true;
         this.activeFormTab = 0;
+        this.brandCalcSelected = { 1: new Set(), 2: new Set(), 3: new Set() };
         if (this.isItemsModal()) {
           this.loadKitItems();
         }

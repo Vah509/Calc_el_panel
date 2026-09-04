@@ -789,3 +789,16 @@ footer.hint { padding: 10px 20px 30px; font-size: 12px; color: var(--ink-soft); 
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
+
+/* Список калькуляций с чекбоксами на вкладке бренда заявки
+   (TableConfig.brand_slot_calc_tabs, request, 2026-09-04) —
+   переиспользует .readonly-items-table целиком, добавляет только
+   узкую первую колонку под чекбокс (тот же принцип, что и колонка
+   скидки счёта выше). */
+.brand-calc-table th:first-child,
+.brand-calc-table td:first-child {
+  width: 34px;
+  text-align: center;
+  padding-left: 8px;
+  padding-right: 8px;
+}

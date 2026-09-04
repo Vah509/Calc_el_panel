@@ -355,13 +355,7 @@ def _refresh_brand_calculations_handler(instance: Request, session) -> dict:
     runAction() на фронте не вызывает action без editing.id вообще."""
     result: dict[str, list[dict]] = {}
     for slot in (1, 2, 3):
-        calcs = session.exec(
-            select(Calculation)
-            .where(Calculation.request_id == instance.id)
-            .where(Calculation.brand_slot == slot)
-            .where(Calculation.status == "active")
-            .order_by(Calculation.document_date.desc(), Calculation.document_time.desc())
-        ).all()
+        calcs = _active_brand_slot_calculations(instance, slot, session)
         result[f"brand_slot_{slot}_calcs"] = [
             {
                 "id": c.id,
@@ -373,6 +367,57 @@ def _refresh_brand_calculations_handler(instance: Request, session) -> dict:
             for c in calcs
         ]
     return result
+
+
+def _active_brand_slot_calculations(request_instance: Request, slot: int, session) -> list:
+    """Общий запрос "активные калькуляции заявки для данного
+    brand_slot", выделен из _refresh_brand_calculations_handler
+    (2026-09-04, сессия 3 плана "Перепроведение") — тот же фильтр и
+    сортировка нужны ЕЩЁ И обработчику кнопки "Обновить цены"
+    (_recalc_brand_calculations_handler ниже), чтобы оба места не
+    расходились в критерии "что считать активными калькуляциями
+    слота", если он когда-нибудь изменится."""
+    return session.exec(
+        select(Calculation)
+        .where(Calculation.request_id == request_instance.id)
+        .where(Calculation.brand_slot == slot)
+        .where(Calculation.status == "active")
+        .order_by(Calculation.document_date.desc(), Calculation.document_time.desc())
+    ).all()
+
+
+def _recalc_brand_calculations_handler(instance: Request, session) -> dict:
+    """Кнопка "Обновить цены" на КАЖДОЙ из трёх вкладок бренда заявки
+    (2026-09-04, сессия 3 плана "Перепроведение", см.
+    docs/HANDOFF_reprovodenie.md) — обёртка над
+    _recalc_calculation_prices (тем же, что и кнопка "Пересчитать" на
+    самой калькуляции), применённая ко ВСЕМ активным калькуляциям
+    бренда сразу (решено с Вахтангом заранее: не только к отмеченным
+    чекбоксом — чекбоксы в этой сессии по-прежнему ни на что не
+    влияют).
+
+    Состав материалов/комплектов и способ ценообразования
+    (cost_method, markup_percent, insurance_markup) НЕ меняются —
+    только цены строк и производные суммы вкладки "Стоимость"
+    (перезапись на месте, не пересоздание) — ровно как у обычного
+    "Пересчитать" на калькуляции, просто применено к набору сразу.
+
+    Один обработчик на все три вкладки (как и
+    refresh_brand_calculations) — коммитит один раз в конце на весь
+    набор калькуляций всех трёх слотов, а не по одному commit на
+    каждую калькуляцию, чтобы не оставлять слот частично
+    пересчитанным при ошибке где-то в середине списка.
+
+    После пересчёта возвращает ТЕ ЖЕ ключи, что и
+    refresh_brand_calculations (brand_slot_1_calcs/2/3, уже с новыми
+    суммами) — фронт после клика вызывает runAction() с одним и тем
+    же ожидаемым форматом ответа, дополнительного "Обновить список"
+    не требуется (см. brandCalc-обвязку в page.py)."""
+    for slot in (1, 2, 3):
+        for calc in _active_brand_slot_calculations(instance, slot, session):
+            _recalc_calculation_prices(calc, session)
+    session.commit()
+    return _refresh_brand_calculations_handler(instance, session)
 
 
 request_table = TableConfig(
@@ -433,6 +478,18 @@ request_table = TableConfig(
         # кнопка/action на всех трёх — обработчик и так собирает все
         # три слота разом за один вызов).
         "refresh_brand_calculations": _refresh_brand_calculations_handler,
+        # recalc_brand_calculations (2026-09-04, сессия 3 плана
+        # "Перепроведение") — кнопка "Обновить цены" на каждой из трёх
+        # вкладок бренда (см. action_buttons ниже: три ActionButton,
+        # по одному на вкладку, все три указывают на ОДИН И ТОТ ЖЕ
+        # action — обработчик и так всегда пересчитывает ВСЕ три слота
+        # разом, независимо от того, с какой вкладки был клик, ровно
+        # как refresh_brand_calculations выше). Обёртка над
+        # _recalc_calculation_prices — той же логикой, что у кнопки
+        # "Пересчитать" на самой калькуляции — применённая ко ВСЕМ
+        # активным калькуляциям всех трёх слотов сразу (см.
+        # _recalc_brand_calculations_handler выше).
+        "recalc_brand_calculations": _recalc_brand_calculations_handler,
     },
     fields=[
         FieldConfig(name="document_number", label="Номер", list_width="90px", tab="Основное"),
@@ -482,6 +539,22 @@ request_table = TableConfig(
     # бывают с длинными названиями, в два столбца не помещались), брендовые
     # слоты тоже по одному в ряд, т.к. у каждого теперь своя пара кнопок
     # рядом (row_actions) — в общем ряду на троих было бы тесно.
+    # action_buttons (2026-09-04, сессия 3 плана "Перепроведение") —
+    # кнопка "Обновить цены", по одной ActionButton на каждую из трёх
+    # вкладок бренда (generic-механизм, а не отдельное поле
+    # TableConfig вроде brand_slot_calc_refresh_action — решено с
+    # Вахтангом: три готовые кнопки проще одного нового примитива).
+    # Рендерится в теле вкладки рядом с "Обновить список" (см.
+    # render_action_buttons в page.py), не требует нового поля в
+    # config.py. Все три указывают на один и тот же action
+    # (recalc_brand_calculations) — обработчик и так пересчитывает все
+    # три слота разом за один вызов, см. комментарий в action_handlers
+    # выше.
+    action_buttons=[
+        ActionButton(action="recalc_brand_calculations", label="Обновить цены", tab="Вариант 1"),
+        ActionButton(action="recalc_brand_calculations", label="Обновить цены", tab="Вариант 2"),
+        ActionButton(action="recalc_brand_calculations", label="Обновить цены", tab="Вариант 3"),
+    ],
 )
 
 
@@ -557,13 +630,20 @@ def _sync_final_total_before_save(instance: Calculation, session) -> None:
     )
 
 
-def _recalc_material_prices_handler(instance: Calculation, session) -> dict:
-    """Кнопка "Пересчитать", показанная И на вкладке "Материалы", И на
-    вкладке "Комплекты" (2026-08-23) — по прямой просьбе Вахтанга
-    ЛЮБАЯ кнопка пересчёта внутри калькуляции пересчитывает калькуляцию
-    ЦЕЛИКОМ, материалы и комплекты разом, не только позиции своей
-    вкладки. Поэтому один обработчик, а не два отдельных под каждую
-    вкладку.
+def _recalc_calculation_prices(instance: Calculation, session) -> dict:
+    """Тело пересчёта ОДНОЙ калькуляции — выделено из
+    _recalc_material_prices_handler (2026-09-04, сессия 3 плана
+    "Перепроведение") в отдельную функцию, чтобы её можно было
+    переиспользовать в цикле по НАБОРУ калькуляций (см.
+    _recalc_brand_calculations_handler ниже, кнопка "Обновить цены" на
+    вкладке бренда заявки) без дублирования логики построчного
+    пересчёта.
+
+    НЕ делает commit сама — коммитит и рефрешит instance вызывающая
+    сторона (единый обработчик кнопки "Пересчитать" на калькуляции
+    коммитит один раз на одну калькуляцию; батчевый обработчик на
+    заявке — либо коммитит после каждой калькуляции цикла, либо один
+    раз на весь набор, решает вызывающая сторона).
 
     Для позиции-материала (material_id заполнен): переписывает
     price_excl_vat текущим Material.price_excl_vat из справочника.
@@ -583,11 +663,10 @@ def _recalc_material_prices_handler(instance: Calculation, session) -> dict:
     снэпшот (см. обоснование в app/models/calculation_item.py), даже
     если материал/состав комплекта изменился за это время.
 
-    С 2026-08-26 та же кнопка ЕЩЁ И пересчитывает вкладку "Стоимость"
-    (см. _recalc_cost_totals ниже) — сначала обновляются цены строк
-    (это), потом на их основе — итоговая стоимость изделия. Один
-    обработчик на оба действия, по тому же принципу "одна кнопка
-    пересчитывает калькуляцию целиком"."""
+    Также пересчитывает вкладку "Стоимость" (_recalc_cost_totals) —
+    сначала обновляются цены строк (это), потом на их основе —
+    итоговая стоимость изделия. Возвращает {"recalculated": N,
+    **cost_fields} — как и раньше."""
     from app.models.material import Material
     from app.models.kit_item import KitItem
     items = session.exec(
@@ -615,10 +694,26 @@ def _recalc_material_prices_handler(instance: Calculation, session) -> dict:
             item.price_excl_vat = round(kit_total, 2)
             session.add(item)
             updated += 1
-    session.commit()
-    session.refresh(instance)
     cost_fields = _recalc_cost_totals(instance, session)
     return {"recalculated": updated, **cost_fields}
+
+
+def _recalc_material_prices_handler(instance: Calculation, session) -> dict:
+    """Кнопка "Пересчитать", показанная И на вкладке "Материалы", И на
+    вкладке "Комплекты" (2026-08-23) — по прямой просьбе Вахтанга
+    ЛЮБАЯ кнопка пересчёта внутри калькуляции пересчитывает калькуляцию
+    ЦЕЛИКОМ, материалы и комплекты разом, не только позиции своей
+    вкладки. Поэтому один обработчик, а не два отдельных под каждую
+    вкладку.
+
+    С 2026-09-04 (сессия 3 плана "Перепроведение") — тонкая обёртка
+    над _recalc_calculation_prices (см. выше): вся построчная логика
+    переехала туда, здесь остался только commit/refresh ОДНОЙ
+    калькуляции — поведение кнопки не изменилось."""
+    result = _recalc_calculation_prices(instance, session)
+    session.commit()
+    session.refresh(instance)
+    return result
 
 
 def _recalc_cost_totals(instance: Calculation, session) -> dict:

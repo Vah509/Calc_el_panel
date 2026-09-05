@@ -20,10 +20,23 @@
 # purge_soft_deleted — простой обработчик физического удаления:
 # для каждой soft_delete-таблицы движка (app/engine/tables.py)
 # генерируется свой Processor с ключом "purge_<table_key>" —
-# без ручного перечисления вручную здесь. Пока БЕЗ проверки
-# зависимостей (на что позиция ссылается) — это сознательно
-# отложено на следующий шаг; сейчас просто DELETE всех строк
-# с is_deleted=True в выбранной таблице.
+# без ручного перечисления вручную здесь.
+#
+# Каскад по дочерним таблицам (2026-09-05, решение Вахтанга: "если
+# документ удаляется, то все записи автоматически удаляются — шапка
+# документа и все подчинённые, то есть начинка тоже"): перед
+# удалением строки родительской таблицы обработчик находит все
+# TableConfig, у которых Hierarchy.parent_key указывает на текущую
+# таблицу (например invoice_item.hierarchy.parent_key == "invoice"),
+# и удаляет ИХ строки с этим parent_id первыми — рекурсивно, на
+# случай многоуровневой вложенности (kit_group -> kit_section ->
+# kit). Работает даже если у дочерней записи не выставлен
+# is_deleted=True — она удаляется как часть родителя, а не как
+# самостоятельно помеченная запись (тот же принцип "начинка следует
+# за шапкой"). Дочерние строки удаляются напрямую по FK-полю
+# (Hierarchy.parent_field), без проверки их собственного
+# is_deleted — если родитель помечен на удаление, дочерние строки
+# удаляются вне зависимости от их пометки.
 # ============================================================
 
 from dataclasses import dataclass
@@ -84,23 +97,70 @@ def recalc_material_vat(session: Session) -> ProcessorResult:
     )
 
 
+def _delete_children_recursive(session: Session, table_key: str, parent_ids: list) -> int:
+    """Рекурсивно удаляет все дочерние строки (по Hierarchy.parent_key
+    в app/engine/tables.py) для заданных id родительской таблицы
+    table_key. Возвращает количество физически удалённых дочерних
+    строк (на всех уровнях вложенности). Идёт вглубь ДО удаления
+    строк текущего уровня — сначала внуки, потом дети, тот же
+    порядок, что требует FK (нельзя удалить строку, пока на неё
+    ссылается ещё не удалённая дочерняя)."""
+    from app.engine.tables import ALL_TABLES
+
+    if not parent_ids:
+        return 0
+
+    deleted_count = 0
+    for child_table in ALL_TABLES:
+        hierarchy = getattr(child_table, "hierarchy", None)
+        if hierarchy is None or hierarchy.parent_key != table_key:
+            continue
+
+        child_model = child_table.model
+        parent_field = getattr(child_model, hierarchy.parent_field)
+        child_rows = session.exec(
+            select(child_model).where(parent_field.in_(parent_ids))
+        ).all()
+        child_ids = [row.id for row in child_rows]
+
+        # Сначала внуки (если у этой дочерней таблицы тоже есть свои дети).
+        deleted_count += _delete_children_recursive(session, child_table.key, child_ids)
+
+        for row in child_rows:
+            session.delete(row)
+        deleted_count += len(child_rows)
+
+    return deleted_count
+
+
 def _make_purge_processor(table_key: str, model: type, title: str) -> Processor:
-    """Строит простой обработчик физического удаления для одной
-    soft_delete-таблицы движка. Без проверки зависимостей — просто
-    удаляет все строки с is_deleted=True. Более сложную проверку
-    (на что позиция ссылается перед физическим удалением) допишем
-    отдельным шагом, когда появится реальная потребность."""
+    """Строит обработчик физического удаления для одной
+    soft_delete-таблицы движка. Удаляет все строки с
+    is_deleted=True ВМЕСТЕ со всеми их дочерними записями (см.
+    _delete_children_recursive) — шапка документа и вся её начинка
+    удаляются как единое целое. Без проверки зависимостей ВНЕ
+    дерева иерархии (например, ссылается ли что-то постороннее на
+    удаляемую запись) — это сознательно отложено на следующий шаг,
+    когда появится реальная потребность."""
 
     def run(session: Session) -> ProcessorResult:
         rows = session.exec(select(model).where(model.is_deleted == True)).all()  # noqa: E712
         processed = len(rows)
+        parent_ids = [row.id for row in rows]
+
+        children_deleted = _delete_children_recursive(session, table_key, parent_ids)
+
         for row in rows:
             session.delete(row)
         session.commit()
+
+        message = f"Физически удалено {processed} записей из «{title}»."
+        if children_deleted:
+            message += f" Вместе с ними удалено {children_deleted} подчинённых записей."
         return ProcessorResult(
             processed=processed,
-            updated=processed,
-            message=f"Физически удалено {processed} записей из «{title}».",
+            updated=processed + children_deleted,
+            message=message,
         )
 
     return Processor(

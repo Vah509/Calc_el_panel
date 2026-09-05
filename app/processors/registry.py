@@ -149,6 +149,16 @@ def _make_purge_processor(table_key: str, model: type, title: str) -> Processor:
         parent_ids = [row.id for row in rows]
 
         children_deleted = _delete_children_recursive(session, table_key, parent_ids)
+        # flush ЗДЕСЬ обязателен (2026-09-05, исправление после ошибки
+        # на проде): без него SQLAlchemy решает порядок DELETE внутри
+        # unit-of-work сам, по своим правилам, а НЕ по порядку наших
+        # вызовов session.delete() — и может отправить в Postgres
+        # DELETE FROM invoice раньше DELETE FROM invoiceitem, что
+        # ловит psycopg2.errors.ForeignKeyViolation, даже если в
+        # коде дети удалены первыми. Явный flush фиксирует удаление
+        # детей отдельной операцией ДО того, как мы добавим в сессию
+        # удаление родителей.
+        session.flush()
 
         for row in rows:
             session.delete(row)

@@ -420,6 +420,186 @@ def _recalc_brand_calculations_handler(instance: Request, session) -> dict:
     return _refresh_brand_calculations_handler(instance, session)
 
 
+def _build_invoice_from_slot_handler(brand_slot: int):
+    """Фабрика обработчика кнопки «Створити рахунок» слота brand_slot
+    (1/2/3) — сессия 4 плана "Перепроведение" (см.
+    docs/HANDOFF_reprovodenie.md). Один обработчик на слот, тот же
+    приём, что у _build_specification_handler (номер слота зашит в
+    имени action: "build_invoice_slot_1" и т.д.) — action_handlers
+    плоский словарь по имени action.
+
+    В отличие от build_specification_N, этой кнопке НУЖНЫ доп. данные
+    от человека — id ОТМЕЧЕННЫХ чекбоксом калькуляций (чекбоксы
+    чисто клиентские, brandCalcSelected в page.py, сервер о них не
+    знает без payload) — поэтому сигнатура handler(instance, session,
+    payload) с ТРЕМЯ параметрами (см. run_action в app/engine/api.py:
+    вызывается с payload только если объявлен с co_argcount >= 3, тот
+    же контракт, что уже введён для "Дать скидку" у invoice).
+    payload = {"calculation_ids": [1, 2, 3]}.
+
+    instance здесь — Request (кнопка зарегистрирована в
+    action_handlers request_table, не specification_table/
+    invoice_table).
+
+    Правила (решено с Вахтангом 2026-09-04, см. HANDOFF_reprovodenie.md,
+    пункт 6 сессии 4 + техническое уточнение под ним):
+      1. Пустой payload (ничего не отмечено) — по идее недостижимо
+         (кнопка disabled на фронте при пустом выборе, см. page.py),
+         но на бэкенде тоже не считается ошибкой — просто ничего не
+         делаем, отвечаем понятным сообщением через HTTPException 422
+         (свой текст, вторая линия защиты, если фронт почему-то всё
+         же прислал пустой список).
+      2. Ищем "активные счета этого слота" — Invoice с этой же
+         request_id, этим же brand_slot, is_frozen=False (см.
+         Invoice.brand_slot — новое snapshot-поле v99, заведено
+         именно для этого запроса, т.к. счета новой цепочки больше
+         не проходят через Specification).
+      3. 0 активных счетов слота → создаём НОВЫЙ Invoice (firm_id =
+         дефолтная фирма, client_id/client_invoice_id — снэпшот с
+         request, тот же принцип, что в _build_invoice_handler для
+         старой цепочки; specification_id остаётся NULL — эта
+         цепочка минует спецификацию).
+      4. Ровно 1 активный счёт слота → счёт ПЕРЕСОЗДАЁТСЯ НА МЕСТЕ:
+         шапка (id/document_number/firm_id/client_id/
+         client_invoice_id/document_date/document_time) НЕ трогается
+         — правится только состав InvoiceItem, MERGE по
+         calculation_id (см. app/models/invoice_item.py: "Merge по
+         calculation_id" — решение 2026-09-04, замещающее более
+         раннюю формулировку "все удаляются и создаются заново" в
+         плане): позиции калькуляций, оставшихся отмеченными —
+         обновляются на месте (discount_percent, редактируемый
+         человеком, СОХРАНЯЕТСЯ); позиции калькуляций, которые сняли
+         с отметки — удаляются; новые отмеченные калькуляции —
+         создаются как новые строки (discount_percent=0).
+      5. 2+ активных счёта слота → действие заблокировано, отвечаем
+         HTTPException 422 с текстом для человека — на фронте это
+         покажется через showJsError (тот же путь, что и остальные
+         ошибки action, см. buildInvoiceFromSlot в page.py).
+
+    Возвращает {"redirect_url": "/invoice-v2/{id}"} — та же механика,
+    что у build_specification_N (см. runAction()/buildInvoiceFromSlot
+    в page.py — редирект на страницу созданного/обновлённого
+    документа, а не подмешивание в форму заявки)."""
+
+    def handler(instance: Request, session, payload: dict) -> dict:
+        from app.engine.document_numbering import next_document_number
+
+        calculation_ids = payload.get("calculation_ids") or []
+        calculation_ids = [int(cid) for cid in calculation_ids]
+        if not calculation_ids:
+            raise HTTPException(
+                status_code=422,
+                detail="Не відмічено жодної калькуляції — нема з чого створювати рахунок.",
+            )
+
+        calculations = session.exec(
+            select(Calculation).where(Calculation.id.in_(calculation_ids))
+        ).all()
+        # Защита от чужих/несовпадающих id (слот другой заявки и т.п.)
+        # — берём только то, что реально принадлежит ЭТОЙ заявке и
+        # ЭТОМУ слоту, остальное молча игнорируем (тот же дух, что
+        # "не ошибка, а просто пустой список", см. правило 1 выше).
+        calculations = [
+            c for c in calculations
+            if c.request_id == instance.id and c.brand_slot == brand_slot
+        ]
+        if not calculations:
+            raise HTTPException(
+                status_code=422,
+                detail="Не відмічено жодної калькуляції — нема з чого створювати рахунок.",
+            )
+
+        active_invoices = session.exec(
+            select(Invoice).where(
+                Invoice.request_id == instance.id,
+                Invoice.brand_slot == brand_slot,
+                Invoice.is_frozen == False,  # noqa: E712
+            )
+        ).all()
+
+        if len(active_invoices) >= 2:
+            raise HTTPException(
+                status_code=422,
+                detail="По цьому слоту є декілька активних рахунків — заморозьте або видаліть один з них.",
+            )
+
+        if len(active_invoices) == 1:
+            invoice = active_invoices[0]
+        else:
+            client_invoice_id = instance.client_invoice_id or instance.client_id
+            firm = session.exec(select(Firm).where(Firm.is_default == True)).first()  # noqa: E712
+            invoice = Invoice(
+                request_id=instance.id,
+                specification_id=None,
+                brand_slot=brand_slot,
+                firm_id=firm.id if firm else None,
+                client_id=instance.client_id,
+                client_invoice_id=client_invoice_id,
+                document_number=next_document_number(session, "I"),
+            )
+            session.add(invoice)
+            session.flush()
+
+        # MERGE по calculation_id (2026-09-04, см. обоснование в
+        # app/models/invoice_item.py и в docstring выше) — строим
+        # индекс уже существующих строк ЭТОГО счёта по calculation_id,
+        # чтобы не заменять их полностью, а точечно обновлять/удалять/
+        # добавлять.
+        existing_items = session.exec(
+            select(InvoiceItem).where(InvoiceItem.invoice_id == invoice.id)
+        ).all()
+        existing_by_calc_id = {
+            item.calculation_id: item for item in existing_items if item.calculation_id is not None
+        }
+        selected_calc_ids = {c.id for c in calculations}
+
+        # Строки калькуляций, которые больше не отмечены — удаляем.
+        for calc_id, item in existing_by_calc_id.items():
+            if calc_id not in selected_calc_ids:
+                session.delete(item)
+        session.flush()
+
+        for calc in calculations:
+            unit_name = ""
+            if calc.unit_id:
+                unit = session.get(Unit, calc.unit_id)
+                if unit:
+                    unit_name = unit.name
+            quantity = calc.quantity or 0.0
+            unit_price = calc.final_total or 0.0
+
+            item = existing_by_calc_id.get(calc.id)
+            if item is not None:
+                # Обновляется на месте — discount_percent (единственное
+                # поле, которое реально правит человек) СОХРАНЯЕТСЯ.
+                item.product_name = calc.full_name
+                item.unit_name = unit_name
+                item.quantity = quantity
+                item.unit_price = unit_price
+            else:
+                item = InvoiceItem(
+                    invoice_id=invoice.id,
+                    calculation_id=calc.id,
+                    product_name=calc.full_name,
+                    unit_name=unit_name,
+                    quantity=quantity,
+                    unit_price=unit_price,
+                    discount_percent=0.0,
+                )
+            item.unit_price_after_discount = item.unit_price * (1 + item.discount_percent / 100.0)
+            item.line_total = item.unit_price_after_discount * item.quantity
+            session.add(item)
+        session.flush()
+
+        _recalculate_invoice_totals(invoice, session)
+        session.commit()
+        session.refresh(invoice)
+
+        return {"redirect_url": f"/invoice-v2/{invoice.id}"}
+
+    return handler
+
+
 request_table = TableConfig(
     key="request",
     model=Request,
@@ -490,6 +670,19 @@ request_table = TableConfig(
         # активным калькуляциям всех трёх слотов сразу (см.
         # _recalc_brand_calculations_handler выше).
         "recalc_brand_calculations": _recalc_brand_calculations_handler,
+        # build_invoice_slot_1/2/3 (2026-09-04, сессия 4 плана
+        # "Перепроведение") — кнопка "Створити рахунок" на каждой из
+        # трёх вкладок бренда. НЕ вызывается через runAction()/
+        # ActionButton (в отличие от build_specification_N выше) —
+        # нужен payload с id отмеченных калькуляций, которого
+        # универсальный runAction() не передаёт; кнопка на фронте
+        # использует свою функцию buildInvoiceFromSlot(slot), см.
+        # page.py. Три отдельных обработчика (не один параметризованный)
+        # по той же причине, что и build_specification_N: номер слота
+        # зашит в имени action, action_handlers — плоский словарь.
+        "build_invoice_slot_1": _build_invoice_from_slot_handler(1),
+        "build_invoice_slot_2": _build_invoice_from_slot_handler(2),
+        "build_invoice_slot_3": _build_invoice_from_slot_handler(3),
     },
     fields=[
         FieldConfig(name="document_number", label="Номер", list_width="90px", tab="Основное"),
@@ -1791,6 +1984,25 @@ invoice_table = TableConfig(
                     is_numeric=True, list_width="90px", readonly=True),
         FieldConfig(name="total_incl_vat", label="Всього з ПДВ", widget="number",
                     is_numeric=True, list_width="110px", readonly=True),
+        # is_frozen — добавлено в модель Invoice в v96 (план
+        # "Перепроведение"), но НЕ было добавлено сюда в FieldConfig
+        # тогда — обнаружено при реализации сессии 4 (2026-09-04):
+        # без FieldConfig поле отсутствует в field_names() и потому не
+        # сериализуется в ответах API и не принимается через
+        # PUT/PATCH — кнопка "Заморозить" (сессия 5) физически не
+        # смогла бы его переключить. Добавлено сейчас, а не отложено
+        # до сессии 5, т.к. это уже блокирует сессию 4 (обработчик
+        # build_invoice_slot_N читает is_frozen, чтобы отличать
+        # активные счета слота от замороженных). Сама кнопка
+        # "Заморозить"/её точное место в форме — по-прежнему
+        # предмет сессии 5, не добавляется здесь.
+        FieldConfig(name="is_frozen", label="Заморожений", widget="checkbox", list_width="90px"),
+        # brand_slot — снэпшот номера слота, добавлено v99 (сессия 4,
+        # см. app/models/invoice.py) — readonly в форме (проставляется
+        # ТОЛЬКО обработчиком build_invoice_slot_N при создании счёта,
+        # человек его не редактирует вручную).
+        FieldConfig(name="brand_slot", label="Слот заявки", widget="number", is_numeric=True,
+                    list_width="90px", readonly=True),
     ],
     relations=[
         Relation(field="request_id", target_table="request", display_field="document_number", label="Заявка",
@@ -1836,6 +2048,16 @@ invoice_item_table = TableConfig(
     fields=[
         FieldConfig(name="invoice_id", label="Счёт", widget="select", in_list=False, in_form=False),
         FieldConfig(name="specification_item_id", label="Строка спецификации", widget="select",
+                    in_list=False, in_form=False),
+        # calculation_id — добавлено в модель InvoiceItem в v96 (план
+        # "Перепроведение"), не было добавлено сюда в FieldConfig
+        # тогда — та же ловушка, что у Invoice.is_frozen выше:
+        # обнаружено и исправлено при реализации сессии 4 (2026-09-04),
+        # т.к. обработчик build_invoice_slot_N читает и пишет это поле
+        # через обычный движковый путь (сериализация/создание строки).
+        # in_form=False — трассировочное поле, человек его не
+        # редактирует вручную, только видно программно.
+        FieldConfig(name="calculation_id", label="Калькуляция", widget="select",
                     in_list=False, in_form=False),
         FieldConfig(name="product_name", label="Изделие", list_width="26%"),
         FieldConfig(name="unit_name", label="Од.", list_width="60px", readonly=True),

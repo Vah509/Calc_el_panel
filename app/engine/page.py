@@ -542,6 +542,13 @@ _PAGE_TEMPLATE_SOURCE = r"""
             <div class="materials-toolbar">
               <button type="button" class="btn btn-ghost"
                       @click="runAction('{{ config.brand_slot_calc_refresh_action }}')">Обновить список</button>
+              <button type="button" class="btn btn-ghost"
+                      @click="runAction('mark_all_brand_calc_{{ bsc_slot }}')"
+                      :disabled="(editing.{{ bsc_field }} || []).length === 0">Відмітити всі</button>
+              <button type="button" class="btn btn-primary"
+                      @click="buildInvoiceFromSlot({{ bsc_slot }})"
+                      :disabled="brandCalcSelectedCount({{ bsc_slot }}) === 0"
+                      :title="brandCalcSelectedCount({{ bsc_slot }}) === 0 ? 'Відмітьте хоча б одну калькуляцію' : ''">Створити рахунок</button>
             </div>
             <table class="readonly-items-table brand-calc-table">
               <thead>
@@ -1226,7 +1233,30 @@ const CLIENT_ACTIONS = {
       : Number(editing.markup_total ?? 0);
     return { final_total };
   },
+
+  // mark_all_brand_calc_1/2/3 (2026-09-04, сессия 4 плана
+  // "Перепроведение") — кнопка "Відмітити всі" рядом со списком
+  // калькуляций слота на вкладке бренда заявки: чисто клиентское
+  // действие (та же природа, что и brandCalcSelected — ничего не
+  // сохраняется на сервере), отмечает чекбоксом ВСЕ калькуляции
+  // ТЕКУЩЕГО списка этого слота разом, чтобы не кликать по одной
+  // перед "Створити рахунок". Три отдельных action по той же причине,
+  // что и mark_all_brand_calc не параметризован слотом через payload
+  // — CLIENT_ACTIONS плоский словарь по имени action, тот же приём,
+  // что build_specification_1/2/3 на бэкенде. Не возвращает патч
+  // editing (только меняет appState.brandCalcSelected напрямую) —
+  // список калькуляций слота не является полем формы, которое нужно
+  // подмешивать.
+  mark_all_brand_calc_1(editing, appState) { _markAllBrandCalc(1, editing, appState); return null; },
+  mark_all_brand_calc_2(editing, appState) { _markAllBrandCalc(2, editing, appState); return null; },
+  mark_all_brand_calc_3(editing, appState) { _markAllBrandCalc(3, editing, appState); return null; },
 };
+
+function _markAllBrandCalc(slot, editing, appState) {
+  if (!appState) return;
+  const calcs = editing['brand_slot_' + slot + '_calcs'] || [];
+  appState.brandCalcSelected[slot] = new Set(calcs.map((c) => c.id));
+}
 
 function enginePage() {
   const CONFIG = {{ config_json | safe }};
@@ -2489,6 +2519,51 @@ function enginePage() {
         this.editing = { ...this.editing, ...data };
         await this.loadReadonlyItems();
       } catch (err) { showJsError(err); }
+    },
+
+    async buildInvoiceFromSlot(slot) {
+      // Кнопка "Створити рахунок" на вкладке бренда заявки
+      // (2026-09-04, сессия 4 плана "Перепроведение", см.
+      // docs/HANDOFF_reprovodenie.md) — та же природа вызова, что
+      // invoiceItemsApplyBulkDiscount() выше (свой fetch с JSON body,
+      // а не универсальный runAction() — нужно передать id
+      // отмеченных калькуляций, которых runAction() не несёт), но с
+      // ДРУГИМ откликом на результат: сервер создаёт/обновляет ДРУГОЙ
+      // документ (Invoice), не правит текущую заявку — обрабатываем
+      // redirect_url так же, как это делает runAction() для
+      // build_specification_N (см. её комментарий выше).
+      //
+      // Кнопка на разметке уже disabled при пустом brandCalcSelected
+      // (см. brandCalcSelectedCount() ниже) — проверка здесь вторым
+      // рубежом на случай прямого вызова.
+      const set = this.brandCalcSelected[slot];
+      const calculationIds = set instanceof Set ? Array.from(set) : [];
+      if (calculationIds.length === 0) return;
+      try {
+        hideJsError();
+        const action = `build_invoice_slot_${slot}`;
+        const res = await fetch(`/api/${this.currentLevel().key}/${this.editing.id}/actions/${action}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ calculation_ids: calculationIds }),
+        });
+        if (!res.ok) { showJsError(await res.text()); return; }
+        const data = await res.json();
+        if (data && data.redirect_url) {
+          window.location.href = data.redirect_url;
+          return;
+        }
+        this.editing = { ...this.editing, ...data };
+      } catch (err) { showJsError(err); }
+    },
+
+    brandCalcSelectedCount(slot) {
+      // Используется в разметке для :disabled кнопки "Створити
+      // рахунок" (см. request_table в page.py — правило 4 сессии 4:
+      // пустой список калькуляций ИЛИ ничего не отмечено -> кнопка
+      // неактивна, без отдельного сообщения об ошибке).
+      const set = this.brandCalcSelected[slot];
+      return set instanceof Set ? set.size : 0;
     },
 
     readonlyItemsColumnValue(row, fieldName, format) {

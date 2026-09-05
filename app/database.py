@@ -159,6 +159,15 @@ def _ensure_is_deleted_columns() -> None:
         # трактуются как обычные (не замороженные), пока человек не
         # заморозит вручную.
         ("invoice", "is_frozen", "BOOLEAN NOT NULL DEFAULT false"),
+        # v99: brand_slot добавлено в модель Invoice ПОСЛЕ того, как
+        # таблица invoice уже существует на Postgres — та же ловушка,
+        # см. комментарии выше. NULL по умолчанию (не бэкфиллим старые
+        # счета — они собраны через спецификацию и понятия "свой слот"
+        # не имеют) — см. app/models/invoice.py и
+        # docs/HANDOFF_reprovodenie.md, сессия 4. Новые счета новой
+        # цепочки (build_invoice_slot_1/2/3, app/engine/tables.py)
+        # заполняют его сразу при создании.
+        ("invoice", "brand_slot", "INTEGER NULL"),
     ]
     with engine.connect() as conn:
         for table, column, ddl_type in tables_columns:

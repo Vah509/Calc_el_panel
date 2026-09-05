@@ -69,6 +69,18 @@
 #   - is_frozen=True, или счёта для этого набора ещё нет ->
 #     создаётся НОВЫЙ документ Invoice (is_frozen=False по
 #     умолчанию для нового).
+#
+# brand_slot — добавлено v99 (сессия 4 плана "Перепроведение", см.
+# docs/HANDOFF_reprovodenie.md, пункт 6 + техническое уточнение под
+# ним) — СНЭПШОТ номера слота (1/2/3) заявки, с которого кнопка
+# "Створити рахунок" собрала этот счёт (тот же принцип, что
+# Specification.brand_slot). Нужен, чтобы находить "активные счета
+# ЭТОГО слота ЭТОЙ заявки" — счёт больше не связан со спецификацией
+# (specification_id остаётся NULL для счетов новой цепочки), поэтому
+# без собственного brand_slot не было бы способа отличить, с какого
+# именно слота заявки взялся конкретный Invoice. NULL для счетов
+# старой цепочки (собранных из спецификации), заполняется только
+# новым обработчиком build_invoice_slot_N.
 # ============================================================
 
 from datetime import date, time, datetime
@@ -88,6 +100,7 @@ class Invoice(SQLModel, table=True):
 
     request_id: Optional[int] = Field(default=None, foreign_key="request.id")
     specification_id: Optional[int] = Field(default=None, foreign_key="specification.id")
+    brand_slot: Optional[int] = Field(default=None)
 
     firm_id: Optional[int] = Field(default=None, foreign_key="firm.id")
     client_id: Optional[int] = Field(default=None, foreign_key="client.id")

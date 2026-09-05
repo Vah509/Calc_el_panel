@@ -2,50 +2,86 @@
 
 ## Состояние
 
-**v104 — исправление FK-ошибки в каскадном удалении (v103 упал на проде).**
+**v105 — второй проход зачистки Specification: физическое удаление
+(за один шаг, без бэкфилла).**
 
-v103 добавил каскадное удаление дочерних записей в `purge_*`
-обработчиках (см. предыдущую запись ниже), но на Postgres (проде)
-упал с `psycopg2.errors.ForeignKeyViolation` при попытке
-`purge_invoice`: `update or delete on table "invoice" violates
-foreign key constraint "invoiceitem_invoice_id_fkey"`. Причина —
-без явного `session.flush()` между удалением детей и родителей
-SQLAlchemy сам решает порядок DELETE-операций внутри unit-of-work
-(не по порядку вызовов `session.delete()` в коде) и мог отправить
-`DELETE FROM invoice` раньше `DELETE FROM invoiceitem`. SQLite по
-умолчанию не проверяет FK (`PRAGMA foreign_keys` выключен), поэтому
-локальный тест в v103 прошёл, а на строгом Postgres — упал.
+Вахтанг подтвердил, что в БД на момент этой сессии не было ни одного
+`Invoice` — бэкфилл `InvoiceItem.calculation_id` и осторожная
+миграция старых строк, которые планировались в
+`docs/HANDOFF_specification_cleanup.md`, оказались не нужны. Сделано
+сразу и полностью: код, модели, поля и сами таблицы Specification/
+SpecificationItem удалены в одну сессию.
+
+Активная и единственная цепочка документов: `request → calculation →
+invoice`.
 
 ## Сделано в этой сессии
 
-1. **`app/processors/registry.py`** — в `_make_purge_processor.run()`
-   добавлен `session.flush()` сразу после
-   `_delete_children_recursive()`, ДО добавления в сессию удаления
-   родительских строк. Это фиксирует удаление детей отдельной
-   операцией и гарантирует правильный порядок DELETE на Postgres.
-2. **`app/version.py`** — `APP_VERSION` v103 → v104.
-3. Проверено локально с включённым `PRAGMA foreign_keys=ON` (эмуляция
-   строгости Postgres на SQLite, через `event.listens_for(engine,
-   "connect")`):
-   - Счёт с 2 строками, `is_deleted=True` → `purge_invoice` успешно
-     удаляет и счёт, и обе строки, без ошибки FK.
-   - Два помеченных счёта (2 и 1 строка соответственно) + один
-     непомеченный (1 строка) → оба помеченных удалены вместе со
-     своими строками (итог: "удалено 2... вместе с ними 3
-     подчинённых"), непомеченный и его строка остались нетронуты.
+1. **`app/invoice_print/data.py`** — убран fallback-путь через
+   Specification (`InvoiceItem.specification_item_id →
+   SpecificationItem → Calculation.unit_id → Unit.name`). Единица
+   измерения строки теперь читается напрямую из уже готового поля
+   `InvoiceItem.unit_name` (снэпшот, заполняется из
+   `Calculation.unit_id → Unit.name` при создании строки в
+   `_build_invoice_from_slot_handler`). Убран импорт
+   `SpecificationItem`/`Calculation`/`Unit` — они здесь больше не
+   нужны.
+2. **`app/models/invoice.py`** — поле `specification_id` удалено из
+   модели. Шапка комментария переписана под единственную актуальную
+   цепочку (упоминания Specification убраны).
+3. **`app/models/invoice_item.py`** — поле `specification_item_id`
+   удалено из модели. Комментарии переписаны: `calculation_id` теперь
+   описан как единственная и живая трассировка строки счёта.
+4. **`app/engine/tables.py`**:
+   - `specification_table`/`specification_item_table` (оба
+     `TableConfig`) удалены целиком.
+   - Импорты `Specification`/`SpecificationItem` убраны.
+   - `FieldConfig(name="specification_id", ...)` убран из
+     `invoice_table`, `FieldConfig(name="specification_item_id", ...)`
+     убран из `invoice_item_table`.
+   - `specification_id=None` убран из создания `Invoice` в
+     `_build_invoice_from_slot_handler`.
+   - Оба ключа убраны из `ALL_TABLES`.
+5. **`app/engine/document_chain.py`** — комментарии над `CHAIN_LINKS`
+   обновлены (сама логика уже не содержала Specification с v102).
+6. **`app/database.py`**:
+   - `_drop_obsolete_columns()` — добавлены
+     `("invoice", "specification_id")` и
+     `("invoiceitem", "specification_item_id")`.
+   - Новая функция `_drop_obsolete_tables()` — `DROP TABLE IF EXISTS
+     specificationitem CASCADE`, затем `DROP TABLE IF EXISTS
+     specification CASCADE` (дочерняя первая, из-за FK). Вызывается
+     из `init_db()` после `_drop_obsolete_columns()`.
+7. **Удалены файлы** `app/models/specification.py`,
+   `app/models/specification_item.py`.
+8. **`app/version.py`** — `APP_VERSION` v104 → v105.
+9. **`entity_registry.md`** — разделы "Документооборот", "delete_mode",
+   "Processors", "Печатные формы счёта" переписаны под финальное
+   состояние (Specification нигде не упоминается как существующая
+   сущность, только в истории).
+10. Проверено локально (SQLite, `TestClient` context manager):
+    - `/invoice-v2/new`, `/request-v2/new`, `/calculation-v2/new`,
+      `/documents-chain`, `/processors` — все 200.
+    - `/specification-v2/new` — теперь корректно 404 (таблица больше
+      не зарегистрирована в `ALL_TABLES`).
+    - Полный сквозной сценарий: создание `Request` + `Calculation` с
+      `unit_id` → `POST /api/request/{id}/actions/build_invoice_slot_1`
+      → `Invoice` создан, `InvoiceItem.unit_name` корректно заполнен
+      напрямую из калькуляции, `calculation_id` заполнен → `GET
+      /invoice-print/{id}/pdf` — 200, без исключений.
+    - Импорты моделей `Specification`/`SpecificationItem` нигде в
+      коде больше не встречаются (проверено `grep` по всему `app/`).
 
 ## Открыто
 
-- На проде остались 3 счёта, помеченных на удаление (Вахтанг пометил
-  их для проверки v103, попытка упала). После деплоя v104 можно
-  повторно нажать "Физически удалить помеченные (Счета)" в разделе
-  Обработки — теперь должно пройти без ошибки.
-- Второй проход зачистки Specification (DROP таблиц/полей) — весь
-  чек-лист и открытые вопросы в `docs/HANDOFF_specification_cleanup.md`.
-  Ключевой вопрос: что делать с 3-4 старыми счетами, у которых
-  `specification_id` заполнен, прежде чем можно будет убрать таблицы.
+- `ENGINE.md` — НЕ обновлялся (там ещё старые упоминания
+  `specification` в примерах) — по правилу проекта обновляется
+  только по явному запросу "свести документацию", не входит в эту
+  сессию.
 - Рефакторинг `enginePage()` — отдельная будущая сессия, не входит
   сюда.
 - Обработчики `purge_*` пока без проверки зависимостей ВНЕ дерева
-  иерархии (например, ссылается ли что-то постороннее на удаляемую
-  запись, не через `Hierarchy`) — отложено до реальной потребности.
+  иерархии — отложено до реальной потребности.
+- `docs/HANDOFF_specification_cleanup.md` теперь полностью закрыт
+  (весь чек-лист выполнен) — можно удалить файл в следующую сессию,
+  если Вахтанг подтвердит, что он больше не нужен как история.

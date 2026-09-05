@@ -200,6 +200,14 @@ def _drop_obsolete_columns() -> None:
     любой INSERT через ORM (который про неё не знает и не передаёт
     значение) падал с NotNullViolation. Дропаем колонку явно.
 
+    v105 (второй проход зачистки Specification, см.
+    docs/HANDOFF_specification_cleanup.md): invoice.specification_id,
+    invoiceitem.specification_item_id — убраны из моделей вместе с
+    самими таблицами specification/specificationitem (см. DROP TABLE
+    ниже). На момент удаления в БД не было ни одной живой ссылки
+    (Вахтанг подтвердил: "инвойс в базе вообще нет"), поэтому
+    бэкфилл/миграция данных не потребовались — сразу чистое удаление.
+
     Идемпотентно: IF EXISTS — повторный вызов при следующих стартах
     ничего не делает, если колонка уже удалена.
     """
@@ -209,10 +217,50 @@ def _drop_obsolete_columns() -> None:
 
     obsolete = [
         ("material", "vat_rate"),
+        ("invoice", "specification_id"),
+        ("invoiceitem", "specification_item_id"),
     ]
     with engine.connect() as conn:
         for table, column in obsolete:
             conn.execute(text(f"ALTER TABLE {table} DROP COLUMN IF EXISTS {column}"))
+            conn.commit()
+
+
+def _drop_obsolete_tables() -> None:
+    """
+    Дропает таблицы, полностью выведенные из модели/кода в одной из
+    прошлых версий. SQLModel.metadata.create_all() их не трогает —
+    только создаёт отсутствующие, лишние оставляет как есть.
+
+    v105 (второй проход зачистки Specification, см.
+    docs/HANDOFF_specification_cleanup.md): specification/
+    specificationitem — таблицы документа "Спецификация", выведенного
+    из цепочки request -> calculation -> invoice ещё в v102 (первый
+    проход). Модели app/models/specification.py и
+    specification_item.py удалены из кода в этой же сессии (v105).
+    Вахтанг подтвердил на момент дропа, что живых Invoice в БД нет —
+    бэкфилл/проверка старых счетов перед дропом не потребовались.
+
+    Порядок важен: specificationitem (дочерняя, ссылается на
+    specification через FK) дропается ПЕРВОЙ, иначе Postgres
+    откажет по внешнему ключу — тот же принцип, что у каскадного
+    purge в app/processors/registry.py.
+
+    Идемпотентно: IF EXISTS CASCADE — повторный вызов ничего не
+    делает, если таблицы уже удалены. CASCADE подчищает любые
+    оставшиеся зависимости (индексы/constraints) на этой таблице,
+    но не трогает другие таблицы, если ничто больше на неё не
+    ссылается (invoice.specification_id/invoiceitem.
+    specification_item_id к этому моменту уже дропнуты выше).
+    """
+    if not DATABASE_URL.startswith("postgres"):
+        return
+    from sqlalchemy import text
+
+    obsolete_tables = ["specificationitem", "specification"]
+    with engine.connect() as conn:
+        for table in obsolete_tables:
+            conn.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))
             conn.commit()
 
 
@@ -222,6 +270,7 @@ def init_db() -> None:
     SQLModel.metadata.create_all(engine)
     _ensure_is_deleted_columns()
     _drop_obsolete_columns()
+    _drop_obsolete_tables()
 
 
 def get_session():

@@ -9,15 +9,16 @@
 # ЗДЕСЬ, а builder'ы принимают уже готовый InvoicePrintData и просто
 # рисуют.
 #
-# Единица измерения строки (InvoiceItem) берётся ИЗ КАЛЬКУЛЯЦИИ, не
-# из материалов её состава (обсуждение 2026-08-31: "будет изделие,
-# то по идее в изделие тоже должно быть позиция единицы... это
-# нужно указывать непосредственно в калькуляции") — путь
-# InvoiceItem.specification_item_id -> SpecificationItem.calculation_id
-# -> Calculation.unit_id -> Unit.name. Каждое звено nullable
-# (документы могут быть отвязаны/удалены, см. комментарии в
-# invoice.py/specification_item.py) — при обрыве цепочки просто
-# показываем пустую строку в колонке "Од.", без падения.
+# Единица измерения строки (InvoiceItem.unit_name) — СНЭПШОТ,
+# заполняется напрямую из Calculation.unit_id при создании/
+# обновлении строки счёта (см. _build_invoice_from_slot_handler,
+# app/engine/tables.py) — печать просто читает готовое поле, без
+# дополнительных join'ов. До v105 здесь был обходной путь через
+# InvoiceItem.specification_item_id -> SpecificationItem ->
+# Calculation (Specification выведена из цепочки документов, см.
+# docs/HANDOFF_specification_cleanup.md) — убран, т.к. новая
+# архитектура ("Перепроведение") всегда заполняет unit_name сама,
+# а старых строк, созданных через Specification, в БД не осталось.
 # ============================================================
 
 from dataclasses import dataclass, field
@@ -29,9 +30,6 @@ from app.models.invoice import Invoice
 from app.models.invoice_item import InvoiceItem
 from app.models.firm import Firm
 from app.models.client import Client
-from app.models.specification_item import SpecificationItem
-from app.models.calculation import Calculation
-from app.models.unit import Unit
 
 
 @dataclass
@@ -107,19 +105,10 @@ def build_invoice_print_data(invoice_id: int, session: Session) -> Optional[Invo
 
     lines: list[InvoicePrintLine] = []
     for idx, item in enumerate(items, start=1):
-        unit_name = ""
-        if item.specification_item_id:
-            spec_item = session.get(SpecificationItem, item.specification_item_id)
-            if spec_item and spec_item.calculation_id:
-                calc = session.get(Calculation, spec_item.calculation_id)
-                if calc and calc.unit_id:
-                    unit = session.get(Unit, calc.unit_id)
-                    if unit:
-                        unit_name = unit.name
         lines.append(InvoicePrintLine(
             position=idx,
             name=item.product_name,
-            unit=unit_name,
+            unit=item.unit_name,
             quantity=item.quantity,
             unit_price=item.unit_price_after_discount,
             line_total=item.line_total,

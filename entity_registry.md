@@ -96,48 +96,40 @@ HTML-страница: `GET {url_path}` (например `/material-v2`,
 
 ### `delete_mode` — три режима (`TableConfig.delete_mode`)
 
-| Режим | Поведение DELETE | Таблицы (v94) |
+| Режим | Поведение DELETE | Таблицы (v105) |
 |---|---|---|
-| `"soft"` | Пометка `is_deleted=True`; физическое удаление — только через purge-processor | material, brand, kit, client, request, calculation, specification, firm, invoice |
+| `"soft"` | Пометка `is_deleted=True`; физическое удаление — только через purge-processor (каскадно удаляет и дочерние строки, см. ниже) | material, brand, kit, client, request, calculation, firm, invoice |
 | `"simple"` | Физическое удаление, но только если нет дочерних записей | kit_group, kit_section |
-| `"hard"` (дефолт) | Безусловное немедленное физическое удаление | kit_item, calculation_item, specification_item, invoice_item, unit, product_type_rate, constant (allow_delete=False на деле блокирует) |
+| `"hard"` (дефолт) | Безусловное немедленное физическое удаление | kit_item, calculation_item, invoice_item, unit, product_type_rate, constant (allow_delete=False на деле блокирует) |
 
 ### Документооборот: request → calculation → invoice
 
-**2026-09-05 (первый проход зачистки Specification, см.
-`docs/HANDOFF_specification_cleanup.md` — второй проход планируется
-отдельной сессией):** активная цепочка сокращена до `request →
-calculation → invoice`. Invoice создаётся напрямую из отмеченных
-калькуляций заявки (`_build_invoice_from_slot_handler`), минуя
-Specification. Кнопка "Спецификация" на заявке и кнопка "Обновить" на
-счёте (для счетов, привязанных к спецификации) — убраны из UI и
-движка. Таблицы `specification`/`specification_item`, поле
-`Invoice.specification_id`/`InvoiceItem.specification_item_id` в БД
-**остаются нетронутыми** — нужны для 3-4 старых счетов, у которых
-`specification_id` заполнен (архив, не мигрируется). Страницы
-`/specification-v2/*` по-прежнему доступны напрямую по URL, но пункта
-меню и связей из UI заявки/счёта на них больше нет.
+**2026-09-05 — Specification полностью удалена (два прохода в один
+день).** Первый проход (v102) убрал участие Specification из UI и
+активной логики движка. Второй проход (v105, см.
+`docs/HANDOFF_specification_cleanup.md`) — физическое удаление:
+модели `app/models/specification.py`/`specification_item.py`,
+таблицы `specification`/`specificationitem` в БД (DROP TABLE),
+поля `Invoice.specification_id`/`InvoiceItem.specification_item_id`.
+На момент второго прохода в БД не было ни одного `Invoice` — бэкфилл
+или миграция данных не потребовались, удаление прошло сразу и
+полностью, без промежуточного архивного состояния.
+
+Активная и единственная цепочка теперь: `request → calculation →
+invoice`. Invoice создаётся напрямую из отмеченных калькуляций заявки
+(`_build_invoice_from_slot_handler`).
 
 Каждый документ имеет собственную нумерацию по префиксу через
 `document_numbering.py` + `DocumentCounter` (одна строка на префикс:
-R/calculation-без-префикса.../S/I — префикс "S" для Specification
-больше не используется новыми документами, но зарезервирован).
+R/calculation-без-префикса.../I; префикс "S" (Specification) больше
+не используется и не зарезервирован).
 
-Построчные дочерние таблицы (`calculation_item`, `specification_item`,
-`invoice_item`) — каждая своя философия снэпшота/live-ссылки, см.
-таблицу ниже:
+Построчные дочерние таблицы:
 
 | Дочерняя таблица | Родитель | Модель данных |
 |---|---|---|
 | `calculation_item` | calculation | LIVE — хранит `material_id`/`kit_id`, цена подтягивается на пересчёте |
-| `specification_item` | specification | СНЭПШОТ — архивная таблица, новые записи не создаются с 2026-09-05 |
-| `invoice_item` | invoice | СНЭПШОТ — для новых счетов копируется из отмеченных `Calculation` напрямую (`_build_invoice_from_slot_handler`); `discount_percent` — единственное поле, редактируемое человеком напрямую |
-
-**Каскад пересборки через Specification** (`_sync_invoice_items_from_
-specification` + `_refresh_invoice_items_handler`) — УДАЛЁН
-2026-09-05. Актуален был только для старых счетов, привязанных к
-specification_id; для них кнопка "Обновить" на карточке счёта больше
-не работает (ожидаемо, см. HANDOFF_specification_cleanup.md).
+| `invoice_item` | invoice | СНЭПШОТ — копируется из отмеченных `Calculation` напрямую (`_build_invoice_from_slot_handler`); `discount_percent` — единственное поле, редактируемое человеком напрямую; `calculation_id` — живая трассировка, ключ merge-логики |
 
 ### `document_chain.py` — реестр цепочки документов
 
@@ -146,12 +138,10 @@ specification_id; для них кнопка "Обновить" на карто�
 calculation → request  (request_id)
 invoice     → request  (request_id)
 ```
-`specification` убрана из реестра 2026-09-05 — `/documents-chain`
-больше не показывает уровень "Спецификации" у заявки. Используется
-ТОЛЬКО страницей "Цепочка документов" (кнопка на списке request →
-`/documents-chain?request_id=`), обходит граф рекурсивно от корня
-(`request`). Добавление нового типа документа — одна новая строка в
-`CHAIN_LINKS`, без изменения кода страницы.
+Используется ТОЛЬКО страницей "Цепочка документов" (кнопка на списке
+request → `/documents-chain?request_id=`), обходит граф рекурсивно от
+корня (`request`). Добавление нового типа документа — одна новая
+строка в `CHAIN_LINKS`, без изменения кода страницы.
 
 ### Печатные формы счёта (`app/invoice_print/`)
 
@@ -160,13 +150,10 @@ invoice     → request  (request_id)
 построчные `InvoicePrintLine`, итоги. И `pdf_builder.py` (reportlab), и
 `xlsx_builder.py` (openpyxl) принимают уже готовый `InvoicePrintData` и
 только рисуют — расчёт сумм/прописи не дублируется между форматами.
-Единица измерения строки берётся из `InvoiceItem.unit_name` — для
-новых счетов копируется напрямую из `Calculation.unit_id → Unit.name`
-при создании. Для СТАРЫХ счетов (собранных через Specification, до
-2026-09-05) в `data.py` остаётся fallback-путь через
-`InvoiceItem.specification_item_id → SpecificationItem →
-Calculation.unit_id → Unit.name` — намеренно НЕ удалён в первом
-проходе зачистки Specification, см. `docs/HANDOFF_specification_cleanup.md`.
+Единица измерения строки читается напрямую из `InvoiceItem.unit_name`
+(снэпшот, заполняется из `Calculation.unit_id → Unit.name` при
+создании строки) — до v105 здесь был fallback-путь через
+Specification для старых счетов, убран за ненадобностью (см. выше).
 
 Роуты: `GET /invoice-print/{id}/pdf`, `GET /invoice-print/{id}/xlsx` —
 прямые ссылки для браузера (кнопки «Скачать PDF»/«Скачать Excel» на
@@ -179,9 +166,12 @@ URL в новой вкладке).
   текущей ставке из `constant.vat_rate`.
 - `purge_{table_key}` — автогенерируется для КАЖДОЙ таблицы с
   `delete_mode == "soft"` (material, brand, kit, client, request,
-  calculation, specification, firm, invoice). Физически удаляет все
-  строки с `is_deleted=True`, **без проверки зависимостей** — известное
-  упрощение, актуально пересмотреть при первом реальном инциденте.
+  calculation, firm, invoice). Физически удаляет все строки с
+  `is_deleted=True` ВМЕСТЕ со всеми их дочерними записями (рекурсивно
+  по `Hierarchy.parent_key`, см. v104) — шапка документа и вся её
+  начинка удаляются как единое целое. Без проверки зависимостей ВНЕ
+  дерева иерархии — известное упрощение, актуально пересмотреть при
+  первом реальном инциденте.
 
 ---
 

@@ -24,8 +24,6 @@ from app.models.request import Request
 from app.models.calculation import Calculation, DEFAULT_NAME_TEMPLATE, DEFAULT_CALCULATION_UNIT_NAME
 from app.models.calculation_item import CalculationItem
 from app.models.product_type_rate import ProductTypeRate
-from app.models.specification import Specification
-from app.models.specification_item import SpecificationItem
 from app.models.firm import Firm
 from app.models.invoice import Invoice
 from app.models.invoice_item import InvoiceItem
@@ -368,7 +366,6 @@ def _build_invoice_from_slot_handler(brand_slot: int):
             firm = session.exec(select(Firm).where(Firm.is_default == True)).first()  # noqa: E712
             invoice = Invoice(
                 request_id=instance.id,
-                specification_id=None,
                 brand_slot=brand_slot,
                 firm_id=firm.id if firm else None,
                 client_id=instance.client_id,
@@ -1403,105 +1400,6 @@ def _recalc_invoice_item_before_update(instance: InvoiceItem, session) -> None:
             _recalculate_invoice_totals(invoice, session)
 
 
-specification_table = TableConfig(
-    key="specification",
-    model=Specification,
-    title="Спецификации",
-    title_singular="спецификация",
-    search_placeholder="Поиск по номеру…",
-    delete_mode="soft",
-    allow_create=False,
-    allow_delete=False,
-    document_number_field="document_number",
-    document_prefix="S",
-    own_page_url="/specification-v2",
-    default_sort_fields=[("document_date", "desc"), ("document_time", "desc")],
-    extra_lookups=["calculation"],
-    # extra_lookups=["calculation"] — грузит relationOptions['calculation']
-    # ЦЕЛИКОМ на клиенте (см. общий механизм в config.py), нужно только
-    # readonly_items_columns ниже: колонка "calculation_number" достаёт
-    # document_number калькуляции по specification_item.calculation_id
-    # без похода на сервер (см. readonlyItemsColumnValue() в page.py).
-    readonly_items_tab="Позиции",
-    readonly_items_table_key="specification_item",
-    readonly_items_columns=[
-        ("calculation_number", "Калькуляция", "text"),
-        ("product_name", "Изделие", "text"),
-        ("quantity", "Кол-во", "text"),
-        ("unit_price", "Цена за ед.", "money"),
-        ("line_total", "Итого", "money"),
-    ],
-    readonly_items_sum_field="total_amount",
-    # build_invoice (кнопка "Создать счёт" на форме спецификации) —
-    # удалена в сессии 6 плана "Перепроведение" (2026-09-05): старый
-    # путь создания счёта из спецификации больше не используется,
-    # все новые счета идут через _build_invoice_from_slot_handler
-    # (заявка → чекбоксы калькуляций на вкладках брендовых слотов).
-    # Таблицы Specification/SpecificationItem в БД НЕ тронуты —
-    # решение Вахтанга отложить их удаление до исправления документов.
-    fields=[
-        FieldConfig(name="document_number", label="Номер", list_width="90px", form_width="120px"),
-        FieldConfig(name="document_date", label="Дата", widget="date", list_width="110px", form_width="140px"),
-        FieldConfig(name="document_time", label="Время", widget="time", list_width="90px", form_width="110px"),
-        FieldConfig(name="request_id", label="Заявка", widget="select", list_width="18%", form_width="140px"),
-        FieldConfig(name="client_id", label="Заказчик", widget="select", list_width="22%"),
-        FieldConfig(name="brand_slot", label="Вариант (слот бренда)", widget="select",
-                    list_width="90px", readonly=True,
-                    options=[("1", "Вариант 1"), ("2", "Вариант 2"), ("3", "Вариант 3")]),
-        FieldConfig(name="total_amount", label="Сумма по спецификации", widget="number",
-                    is_numeric=True, list_width="120px", readonly=True),
-    ],
-    relations=[
-        Relation(field="request_id", target_table="request", display_field="document_number", label="Заявка",
-                 show_filter_chips=False),
-        Relation(field="client_id", target_table="client", display_field="short_name", label="Заказчик",
-                 show_filter_chips=False),
-    ],
-    form_rows=[
-        FormRow(field_names=["document_number", "document_date", "document_time"]),
-        FormRow(field_names=["client_id", "brand_slot"]),
-    ],
-)
-
-
-
-# specification_item — строки спецификации (см. подробный комментарий
-# механики формирования в app/models/specification.py). НЕ отдельный
-# пункт меню и не drill-down уровень — hierarchy здесь ЧИСТО ради
-# parent_field (тот же приём, что и у kit_item/calculation_item): даёт
-# GET /api/specification_item?parent_id={specification_id} бесплатно
-# через уже существующий универсальный механизм движка. allow_create/
-# allow_delete=False — строки исключительно снэпшот, создаются и
-# удаляются ТОЛЬКО целиком вместе со всей спецификацией (см.
-# _build_specification_handler), отдельное ручное редактирование
-# строки нарушило бы "замороженность" снимка и total_amount шапки.
-specification_item_table = TableConfig(
-    key="specification_item",
-    model=SpecificationItem,
-    title="Позиции спецификации",
-    title_singular="позиция спецификации",
-    search_placeholder="Поиск по названию…",
-    allow_create=False,
-    allow_delete=False,
-    hierarchy=Hierarchy(parent_field="specification_id", parent_key="specification"),
-    fields=[
-        FieldConfig(name="specification_id", label="Спецификация", widget="select", in_list=False, in_form=False),
-        FieldConfig(name="calculation_id", label="Калькуляция", widget="select", in_list=False, in_form=False),
-        FieldConfig(name="product_name", label="Изделие", list_width="30%"),
-        FieldConfig(name="quantity", label="Количество", widget="number",
-                    is_numeric=True, list_width="90px"),
-        FieldConfig(name="unit_price", label="Цена за изделие", widget="number",
-                    is_numeric=True, list_width="120px"),
-        FieldConfig(name="line_total", label="Сумма по строке", widget="number",
-                    is_numeric=True, list_width="120px"),
-    ],
-    relations=[
-        Relation(field="specification_id", target_table="specification", display_field="document_number",
-                 label="Спецификация", show_filter_chips=False),
-        Relation(field="calculation_id", target_table="calculation", display_field="full_name",
-                 label="Калькуляция", show_filter_chips=False),
-    ],
-)
 
 
 # Фирма (firm) — справочник СВОИХ юрлиц-продавцов, см. подробный
@@ -1578,13 +1476,10 @@ firm_table = TableConfig(
 # "Перепроведение" (2026-09-05).
 # refresh_invoice_items/_refresh_invoice_items_handler — УДАЛЕНЫ
 # (2026-09-05, первый проход зачистки Specification, см.
-# HANDOFF_specification_cleanup.md) — кнопка "Обновить" работала
-# только для старых счетов, ещё привязанных к specification_id (по
-# оценке Вахтанга, таких в базе 3-4). Поле Invoice.specification_id
-# в модели и FieldConfig ниже пока оставлено НЕ показываемым в форме
-# (in_form=False) — само поле и данные остаются, просто больше не
-# редактируется/не отображается через UI счёта. Specification/
-# SpecificationItem как таблицы БД ПОКА не тронуты.
+# HANDOFF_specification_cleanup.md). Поле Invoice.specification_id —
+# физически удалено из модели и БД (2026-09-05, второй проход): на
+# момент удаления в базе не было ни одной живой ссылки на
+# Specification, бэкфилл не потребовался.
 # toggle_frozen — кнопка "Заморозити"/"Розморозити" (сессия 5, см.
 # _toggle_invoice_frozen_handler) — переключает Invoice.is_frozen,
 # без confirm, подпись динамическая на фронте.
@@ -1639,13 +1534,6 @@ invoice_table = TableConfig(
         FieldConfig(name="document_date", label="Дата", widget="date", list_width="110px", form_width="140px"),
         FieldConfig(name="document_time", label="Время", widget="time", list_width="90px", form_width="110px"),
         FieldConfig(name="request_id", label="Заявка", widget="select", list_width="16%", form_width="140px"),
-        # specification_id — скрыто из UI (in_list/in_form=False) в
-        # первом проходе зачистки Specification (2026-09-05, см.
-        # HANDOFF_specification_cleanup.md). Поле и данные в БД
-        # остаются нетронутыми (нужны 3-4 старым счетам), просто
-        # больше нигде не отображается и не редактируется человеком.
-        FieldConfig(name="specification_id", label="Спецификация", widget="select",
-                    in_list=False, in_form=False),
         FieldConfig(name="firm_id", label="Постачальник (наша фирма)", widget="select", list_width="20%"),
         FieldConfig(name="client_id", label="Заказчик", widget="select", list_width="18%"),
         FieldConfig(name="client_invoice_id", label="Платник", widget="select", list_width="18%"),
@@ -1716,8 +1604,6 @@ invoice_item_table = TableConfig(
     before_update_hook=_recalc_invoice_item_before_update,
     fields=[
         FieldConfig(name="invoice_id", label="Счёт", widget="select", in_list=False, in_form=False),
-        FieldConfig(name="specification_item_id", label="Строка спецификации", widget="select",
-                    in_list=False, in_form=False),
         # calculation_id — добавлено в модель InvoiceItem в v96 (план
         # "Перепроведение"), не было добавлено сюда в FieldConfig
         # тогда — та же ловушка, что у Invoice.is_frozen выше:
@@ -1771,6 +1657,5 @@ ALL_TABLES = [
     brand_table, unit_table, material_table, kit_group_table, kit_section_table,
     kit_table, kit_item_table, constant_table, client_table, request_table,
     calculation_table, calculation_item_table, product_type_rate_table,
-    specification_table, specification_item_table, firm_table, invoice_table,
-    invoice_item_table,
+    firm_table, invoice_table, invoice_item_table,
 ]

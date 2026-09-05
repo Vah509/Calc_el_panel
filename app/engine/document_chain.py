@@ -45,21 +45,15 @@ class ChainLink:
 
 
 # specification — УБРАНО из реестра (2026-09-05, план "Перепроведение",
-# первый проход зачистки UI/движка после сессии 6). Specification/
-# SpecificationItem как модели и таблицы БД ПОКА остаются нетронутыми
-# (см. HANDOFF_specification_cleanup.md — второй проход, отдельная
-# сессия) — здесь убрана только видимость в цепочке документов,
-# поэтому /documents-chain больше не показывает уровень "Спецификации"
-# у заявки. Если понадобится восстановить это конкретное место —
-# верните строку ChainLink(child_key="specification",
-# parent_key="request", fk_field="request_id").
+# первый проход зачистки UI/движка после сессии 6). Модели и таблицы
+# БД Specification/SpecificationItem физически удалены во втором
+# проходе (v105, тот же день) — см. HANDOFF_specification_cleanup.md.
+# Восстанавливать эту связь больше некуда — восстановление означало
+# бы заново создавать модели/таблицы с нуля.
 #
 # invoice (2026-08-29) — родитель В ЦЕПОЧКЕ ДОКУМЕНТОВ это request
 # (обоснование см. в app/models/invoice.py: request_id у Invoice
-# ВСЕГДА заполнен и НИКОГДА не сбрасывается). specification_id как
-# отдельная связь СОЗНАТЕЛЬНО НЕ регистрируется здесь отдельным
-# ChainLink — она nullable, и для новых счетов (новая цепочка,
-# минующая спецификацию) всегда NULL.
+# ВСЕГДА заполнен и НИКОГДА не сбрасывается).
 CHAIN_LINKS: list[ChainLink] = [
     ChainLink(child_key="calculation", parent_key="request", fk_field="request_id"),
     ChainLink(child_key="invoice", parent_key="request", fk_field="request_id"),

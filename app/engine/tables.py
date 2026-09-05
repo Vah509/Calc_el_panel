@@ -456,9 +456,8 @@ def _build_invoice_from_slot_handler(brand_slot: int):
          не проходят через Specification).
       3. 0 активных счетов слота → создаём НОВЫЙ Invoice (firm_id =
          дефолтная фирма, client_id/client_invoice_id — снэпшот с
-         request, тот же принцип, что в _build_invoice_handler для
-         старой цепочки; specification_id остаётся NULL — эта
-         цепочка минует спецификацию).
+         request; specification_id остаётся NULL — эта цепочка
+         минует спецификацию).
       4. Ровно 1 активный счёт слота → счёт ПЕРЕСОЗДАЁТСЯ НА МЕСТЕ:
          шапка (id/document_number/firm_id/client_id/
          client_invoice_id/document_date/document_time) НЕ трогается
@@ -1581,75 +1580,6 @@ def _recalculate_invoice_totals(invoice: Invoice, session) -> None:
     session.add(invoice)
 
 
-def _build_invoice_handler(instance: Specification, session) -> dict:
-    """Обработчик кнопки «Создать счёт» на спецификации (см.
-    обоснование механики выше). instance здесь — Specification (не
-    Request), т.к. кнопка зарегистрирована в action_handlers
-    specification_table, не request_table."""
-    from app.engine.document_numbering import next_document_number
-
-    request = session.get(Request, instance.request_id)
-
-    existing = session.exec(
-        select(Invoice).where(Invoice.specification_id == instance.id)
-    ).first()
-
-    if existing is not None:
-        invoice = existing
-        # (2026-08-30) — если у уже существующего счёта firm_id пуст
-        # (например, счёт создавался ДО того, как в справочнике
-        # появилась хоть одна фирма/фирма с is_default=True), при
-        # каждом повторном "обновлении на месте" пробуем подставить
-        # дефолтную фирму заново — человек не должен обязательно лезть
-        # в форму счёта вручную только потому, что фирму завели уже
-        # ПОСЛЕ первого создания счёта. Если firm_id уже заполнен
-        # (человек либо оставил дефолтный выбор, либо поменял вручную)
-        # — НЕ трогаем, это уже осознанный выбор на конкретном
-        # документе, а не пустое место.
-        if not invoice.firm_id:
-            firm = session.exec(select(Firm).where(Firm.is_default == True)).first()  # noqa: E712
-            if firm:
-                invoice.firm_id = firm.id
-                session.add(invoice)
-    else:
-        client_invoice_id = (request.client_invoice_id if request else None) or (
-            request.client_id if request else None
-        )
-        firm = session.exec(select(Firm).where(Firm.is_default == True)).first()  # noqa: E712
-        invoice = Invoice(
-            request_id=instance.request_id,
-            specification_id=instance.id,
-            firm_id=firm.id if firm else None,
-            client_id=request.client_id if request else None,
-            client_invoice_id=client_invoice_id,
-            document_number=next_document_number(session, "I"),
-        )
-        session.add(invoice)
-        session.flush()
-
-    _sync_invoice_items_from_specification(invoice, instance, session)
-    _recalculate_invoice_totals(invoice, session)
-    session.commit()
-    session.refresh(invoice)
-
-    return {"redirect_url": f"/invoice-v2/{invoice.id}"}
-
-
-def _unlink_invoice_handler(instance: Invoice, session) -> dict:
-    """Кнопка «Отвязать» на счёте (2026-08-29) — сбрасывает ТОЛЬКО
-    specification_id в NULL, request_id и все позиции/поля счёта
-    остаются как есть (решение Вахтанга: "счёт остаётся как есть,
-    всё редактируется, просто мы не обновляем его"). После этого
-    повторное «Создать счёт» с ТОЙ ЖЕ спецификации ищет Invoice с
-    specification_id == этой спецификации, не находит (он уже NULL)
-    и создаёт НОВЫЙ документ — см. _build_invoice_handler выше."""
-    instance.specification_id = None
-    session.add(instance)
-    session.commit()
-    session.refresh(instance)
-    return {"specification_id": None}
-
-
 def _toggle_invoice_frozen_handler(instance: Invoice, session) -> dict:
     """Кнопка «Заморозити»/«Розморозити» на форме счёта (сессия 5
     плана "Перепроведение", см. docs/HANDOFF_reprovodenie.md) —
@@ -1670,9 +1600,9 @@ def _refresh_invoice_items_handler(instance: Invoice, session) -> dict:
     """Кнопка «Обновить» на счёте, пока он ЕЩЁ привязан к
     спецификации (specification_id заполнен) — перечитывает позиции
     заново (см. _sync_invoice_items_from_specification), скидки
-    построчно сбрасываются в 0 (та же оговорка, что в комментарии
-    у _build_invoice_handler). Если specification_id уже NULL
-    (счёт отвязан) — ничего не делает, кнопка на фронте в этом
+    построчно сбрасываются в 0. Актуально только для старых счетов
+    старой цепочки — новые счета specification_id не имеют. Если
+    specification_id пуст — ничего не делает, кнопка на фронте в этом
     состоянии должна быть скрыта/неактивна, но обработчик всё равно
     защищается на случай прямого вызова API."""
     if not instance.specification_id:
@@ -1791,16 +1721,13 @@ specification_table = TableConfig(
         ("line_total", "Итого", "money"),
     ],
     readonly_items_sum_field="total_amount",
-    # build_invoice (2026-08-29) — кнопка "Создать счёт" (см.
-    # _build_invoice_handler выше). tab=None — specification не имеет
-    # form_tabs (как и request), рендерится тем же способом, что
-    # у request'овских кнопок build_specification_N.
-    action_buttons=[
-        ActionButton(action="build_invoice", label="Создать счёт", tab=None),
-    ],
-    action_handlers={
-        "build_invoice": _build_invoice_handler,
-    },
+    # build_invoice (кнопка "Создать счёт" на форме спецификации) —
+    # удалена в сессии 6 плана "Перепроведение" (2026-09-05): старый
+    # путь создания счёта из спецификации больше не используется,
+    # все новые счета идут через _build_invoice_from_slot_handler
+    # (заявка → чекбоксы калькуляций на вкладках брендовых слотов).
+    # Таблицы Specification/SpecificationItem в БД НЕ тронуты —
+    # решение Вахтанга отложить их удаление до исправления документов.
     fields=[
         FieldConfig(name="document_number", label="Номер", list_width="90px", form_width="120px"),
         FieldConfig(name="document_date", label="Дата", widget="date", list_width="110px", form_width="140px"),
@@ -1872,8 +1799,8 @@ specification_item_table = TableConfig(
 # фирма может быть отмечена как фирма "по умолчанию" (простой
 # checkbox, без constraint в БД — при создании нового Invoice
 # берётся ПЕРВАЯ найденная is_default=True, см.
-# _build_invoice_handler; если их случайно несколько — Вахтанг сам
-# поправит вручную, это не автоматизируется).
+# _build_invoice_from_slot_handler; если их случайно несколько —
+# Вахтанг сам поправит вручную, это не автоматизируется).
 # _set_default_firm_handler — кнопка "Сделать по умолчанию" (см.
 # firm_table ниже). is_default НЕ обычное FieldConfig-поле (та же
 # логика, что и is_deleted — см. app/models/material.py): движок не
@@ -1933,19 +1860,15 @@ firm_table = TableConfig(
 
 
 # Счёт (invoice) — см. подробный комментарий механики в
-# app/models/invoice.py и обработчики выше (_build_invoice_handler и
-# соседние). own_page_url — та же логика, что у specification: кнопка
-# "Создать счёт" делает redirect на "/invoice-v2/{id}".
+# app/models/invoice.py. own_page_url — редирект на "/invoice-v2/{id}"
+# после создания через _build_invoice_from_slot_handler.
 #
-# unlink_invoice — кнопка "Отвязать" (см. _unlink_invoice_handler)
-# показывается ТОЛЬКО пока specification_id заполнен (проверка на
-# фронте — CONFIG-driven x-show, см. page.py); после отвязки вместо
-# неё показывается заглушка "Отвязан от спецификации".
-# ПОМЕЧЕНО НА УДАЛЕНИЕ (решение Вахтанга 2026-09-05, сессия 5): для
-# счетов НОВОЙ цепочки specification_id и так NULL — кнопка теряет
-# смысл. Удаление самой кнопки/обработчика — задача сессии 6 (полная
-# зачистка старого пути через спецификацию), НЕ этой сессии — здесь
-# только зафиксировано в docs/HANDOFF_reprovodenie.md.
+# unlink_invoice/_unlink_invoice_handler — УДАЛЕНЫ в сессии 6 плана
+# "Перепроведение" (2026-09-05): для счетов новой цепочки
+# specification_id и так NULL, кнопка потеряла смысл. Поле
+# Invoice.specification_id в модели пока оставлено (решение
+# Вахтанга — старые счета с заполненным specification_id остаются
+# архивом как есть, ничего не мигрируется).
 # refresh_invoice_items — кнопка "Обновить", тоже только пока
 # привязан (см. _refresh_invoice_items_handler).
 # toggle_frozen — кнопка "Заморозити"/"Розморозити" (сессия 5, см.
@@ -1979,7 +1902,6 @@ invoice_table = TableConfig(
     invoice_items_bulk_discount_action="apply_bulk_discount",
     action_buttons=[
         ActionButton(action="refresh_invoice_items", label="Обновить", tab=None),
-        ActionButton(action="unlink_invoice", label="Отвязать от спецификации", tab=None),
         # toggle_frozen — кнопка "Заморозити"/"Розморозити" (сессия 5
         # плана "Перепроведение", см. docs/HANDOFF_reprovodenie.md).
         # Подпись динамическая (не через ActionButton.label — тот
@@ -1998,7 +1920,6 @@ invoice_table = TableConfig(
     action_handlers={
         "apply_bulk_discount": _apply_bulk_discount_handler,
         "refresh_invoice_items": _refresh_invoice_items_handler,
-        "unlink_invoice": _unlink_invoice_handler,
         "toggle_frozen": _toggle_invoice_frozen_handler,
     },
     fields=[
@@ -2062,8 +1983,8 @@ invoice_table = TableConfig(
 # invoice_item — строки счёта (см. подробный комментарий механики в
 # app/models/invoice_item.py). allow_create/allow_delete=False —
 # строки создаются/пересоздаются ТОЛЬКО вместе со всем счётом (см.
-# _build_invoice_handler/_refresh_invoice_items_handler), но, В
-# ОТЛИЧИЕ от specification_item, discount_percent КАЖДОЙ отдельной
+# _build_invoice_from_slot_handler/_refresh_invoice_items_handler), но,
+# В ОТЛИЧИЕ от specification_item, discount_percent КАЖДОЙ отдельной
 # строки редактируется человеком напрямую — через обычный
 # PUT /api/invoice_item/{id} движка (см. invoice_items_tab на
 # invoice_table и рендер в page.py), не только целиком через

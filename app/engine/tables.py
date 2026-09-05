@@ -1650,6 +1650,22 @@ def _unlink_invoice_handler(instance: Invoice, session) -> dict:
     return {"specification_id": None}
 
 
+def _toggle_invoice_frozen_handler(instance: Invoice, session) -> dict:
+    """Кнопка «Заморозити»/«Розморозити» на форме счёта (сессия 5
+    плана "Перепроведение", см. docs/HANDOFF_reprovodenie.md) —
+    простой toggle Invoice.is_frozen. Без подтверждения (решение
+    Вахтанга 2026-09-05: переключать сразу по клику), несмотря на то,
+    что поле участвует в бизнес-логике _build_invoice_from_slot_handler
+    (см. app/models/invoice.py, комментарий над is_frozen) — замороженный
+    счёт слота больше не обновляется на месте кнопкой "Створити рахунок",
+    вместо него при следующем клике создаётся новый Invoice."""
+    instance.is_frozen = not instance.is_frozen
+    session.add(instance)
+    session.commit()
+    session.refresh(instance)
+    return {"is_frozen": instance.is_frozen}
+
+
 def _refresh_invoice_items_handler(instance: Invoice, session) -> dict:
     """Кнопка «Обновить» на счёте, пока он ЕЩЁ привязан к
     спецификации (specification_id заполнен) — перечитывает позиции
@@ -1925,8 +1941,16 @@ firm_table = TableConfig(
 # показывается ТОЛЬКО пока specification_id заполнен (проверка на
 # фронте — CONFIG-driven x-show, см. page.py); после отвязки вместо
 # неё показывается заглушка "Отвязан от спецификации".
+# ПОМЕЧЕНО НА УДАЛЕНИЕ (решение Вахтанга 2026-09-05, сессия 5): для
+# счетов НОВОЙ цепочки specification_id и так NULL — кнопка теряет
+# смысл. Удаление самой кнопки/обработчика — задача сессии 6 (полная
+# зачистка старого пути через спецификацию), НЕ этой сессии — здесь
+# только зафиксировано в docs/HANDOFF_reprovodenie.md.
 # refresh_invoice_items — кнопка "Обновить", тоже только пока
 # привязан (см. _refresh_invoice_items_handler).
+# toggle_frozen — кнопка "Заморозити"/"Розморозити" (сессия 5, см.
+# _toggle_invoice_frozen_handler) — переключает Invoice.is_frozen,
+# без confirm, подпись динамическая на фронте.
 invoice_table = TableConfig(
     key="invoice",
     model=Invoice,
@@ -1956,6 +1980,14 @@ invoice_table = TableConfig(
     action_buttons=[
         ActionButton(action="refresh_invoice_items", label="Обновить", tab=None),
         ActionButton(action="unlink_invoice", label="Отвязать от спецификации", tab=None),
+        # toggle_frozen — кнопка "Заморозити"/"Розморозити" (сессия 5
+        # плана "Перепроведение", см. docs/HANDOFF_reprovodenie.md).
+        # Подпись динамическая (не через ActionButton.label — тот
+        # статичен, см. config.py) — переключается на фронте через
+        # x-text по editing.is_frozen, см. render_action_buttons в
+        # page.py. label здесь используется только как фолбэк/подпись
+        # по умолчанию для не-JS случаев.
+        ActionButton(action="toggle_frozen", label="Заморозити", tab=None),
         # download_invoice_pdf / download_invoice_xlsx — client_side=True,
         # см. CLIENT_ACTIONS в app/engine/page.py и GET
         # /invoice-print/{id}/pdf|xlsx (app/invoice_print/router.py).
@@ -1967,6 +1999,7 @@ invoice_table = TableConfig(
         "apply_bulk_discount": _apply_bulk_discount_handler,
         "refresh_invoice_items": _refresh_invoice_items_handler,
         "unlink_invoice": _unlink_invoice_handler,
+        "toggle_frozen": _toggle_invoice_frozen_handler,
     },
     fields=[
         FieldConfig(name="document_number", label="Номер", list_width="90px", form_width="120px"),

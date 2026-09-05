@@ -382,7 +382,16 @@ _PAGE_TEMPLATE_SOURCE = r"""
         {% if standalone %}
         <div class="extra-actions">
           {% for btn in standalone %}
+          {% if btn.action == 'toggle_frozen' %}
+          {# Подпись зависит от editing.is_frozen (сессия 5 плана
+             "Перепроведение") — единственная кнопка с динамической
+             подписью, поэтому обрабатывается точечно по имени action,
+             а не через общее свойство ActionButton (см. config.py —
+             ActionButton.label статичен для всех остальных кнопок). #}
+          <button type="button" class="btn btn-ghost" @click="runAction('{{ btn.action }}')" x-show="editing.id" x-text="editing.is_frozen ? 'Розморозити' : 'Заморозити'"></button>
+          {% else %}
           <button type="button" class="btn btn-ghost" @click="runAction('{{ btn.action }}')"{% if not btn.client_side %} x-show="editing.id"{% endif %}>{{ btn.label }}</button>
+          {% endif %}
           {% endfor %}
         </div>
         {% endif %}

@@ -143,6 +143,48 @@
   необязательный `payload` (введено для "Дать скидку" — обработчик с
   3 позиционными параметрами получает его, остальные — по-старому).
 
+## Сессия 5 (v100) — кнопка «Заморозити» на форме счёта
+
+### Решено (Вахтанг, 2026-09-05)
+
+1. **Отдельная кнопка**, не переиспользование чекбокса `is_frozen`
+   как обычного поля формы — `ActionButton(action="toggle_frozen")`
+   рядом с «Обновить»/«Отвязать» (`action_buttons`, `tab=None`).
+2. **Toggle с динамической подписью**: «Заморозити», когда
+   `is_frozen=False`; «Розморозити», когда `is_frozen=True`. Одна
+   кнопка на оба направления, не две разные.
+3. **Без confirm** — переключение сразу по клику в обе стороны,
+   несмотря на влияние на `_build_invoice_from_slot_handler`.
+4. **Кнопка «Відв'язати від специфікації» (`unlink_invoice`) —
+   помечена на удаление, но НЕ удаляется в сессии 5.** Для счетов
+   новой цепочки `specification_id` и так `NULL`, кнопка не имеет
+   смысла. Полное удаление (кнопка + `_unlink_invoice_handler`) —
+   задача **сессии 6** вместе с остальной зачисткой старого пути.
+
+### Реализация (v100)
+
+- `_toggle_invoice_frozen_handler(instance, session)` в
+  `app/engine/tables.py` — простой toggle `instance.is_frozen`,
+  возвращает `{"is_frozen": ...}` (мержится в `editing` через
+  стандартный `runAction()`, отдельный JS не понадобился).
+- `ActionButton(action="toggle_frozen", label="Заморозити", tab=None)`
+  в `invoice_table.action_buttons` + регистрация в
+  `action_handlers["toggle_frozen"]`.
+- `app/engine/page.py`, макрос `render_action_buttons` — точечная
+  ветка по `btn.action == 'toggle_frozen'`: рендерит кнопку с
+  `x-text="editing.is_frozen ? 'Розморозити' : 'Заморозити'"` вместо
+  статичного `{{ btn.label }}`. Единственная кнопка с динамической
+  подписью в проекте — `ActionButton.label` для остальных кнопок
+  остаётся статичным, схема намеренно не обобщена под один случай.
+- Никаких изменений в модели/БД — `Invoice.is_frozen` и колонка в
+  БД существуют с v96, `FieldConfig` — с v99 (сессия 4).
+- Протестировано локально (SQLite, `TestClient`): toggle
+  false→true→false через `POST /api/invoice/{id}/actions/
+  toggle_frozen`, значение сохраняется в БД; рендер `/invoice-v2/
+  {id}` содержит кнопку и обе возможные подписи; регрессия —
+  `/request-v2/new` и `/invoice-v2/new` рендерятся без ошибок,
+  `unlink_invoice` не тронут и присутствует как раньше.
+
 ## Технический ориентир для реализации сессии 4 (для Claude, не для Вахтанга)
 
 - Смотреть `_build_specification_handler` и

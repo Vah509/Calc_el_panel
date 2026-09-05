@@ -2,68 +2,71 @@
 
 ## Состояние
 
-**v101 — Сессия 6 плана "Перепроведение" (частичная зачистка старого
-пути; DROP таблиц Specification отложен).**
+**v102 — первый проход зачистки Specification (после формального
+завершения плана "Перепроведение" на v101).**
 
-По итогам обсуждения с Вахтангом сессия 6 выполнена **не полностью**
-по исходному плану — только код-уровневая часть, без изменений в БД:
-
-- Удалены кнопка "Відв'язати від специфікації" (`unlink_invoice`) на
-  форме счёта и кнопка "Создать счёт" (`build_invoice`) на форме
-  спецификации, вместе с обработчиками `_unlink_invoice_handler` и
-  `_build_invoice_handler` — обе уже не использовались для новых
-  документов.
-- **Specification/SpecificationItem в БД не тронуты** — таблицы,
-  модели, `/specification-v2/*`, пункт "Спецификации" в меню и в
-  `/documents-chain`, поле `Invoice.specification_id` — всё остаётся
-  как есть. Решение отложено до исправления документов в базе
-  (явное решение Вахтанга, DROP TABLE необратим).
-- Старые счета с заполненным `specification_id` остаются архивом,
-  ничего не мигрируется.
-- Рефакторинг `enginePage()` — отдельной будущей сессией, не входит
-  в сессию 6.
-
-Подробности решений и разбор — `docs/HANDOFF_reprovodenie.md`,
-раздел "Сессия 6".
+Активная цепочка документов сокращена до `request → calculation →
+invoice`. Кнопка "Спецификация" на заявке и кнопка "Обновить" на
+старых счетах — убраны из UI и движка. Таблицы `specification`/
+`specification_item` в БД, поля `Invoice.specification_id`/
+`InvoiceItem.specification_item_id` — намеренно НЕ тронуты (решение
+Вахтанга: DROP откладывается до отдельного решения по 3-4 старым
+счетам). Подробности и открытые вопросы — `docs/HANDOFF_specification_
+cleanup.md` (файл для второго прохода).
 
 ## Сделано в этой сессии
 
 1. **`app/engine/tables.py`**:
-   - Удалены `_build_invoice_handler` и `_unlink_invoice_handler`
-     целиком.
-   - `specification_table` — `action_buttons`/`action_handlers` с
-     `build_invoice` убраны.
-   - `invoice_table.action_buttons`/`action_handlers` — запись
-     `unlink_invoice` убрана; `refresh_invoice_items` и
-     `toggle_frozen` не тронуты.
-   - Поправлены комментарии-ссылки на удалённые обработчики в
-     `_build_invoice_from_slot_handler`, `_refresh_invoice_items_handler`,
-     `firm_table`, `invoice_item_table` (указывали на удалённый
-     `_build_invoice_handler`).
-2. **`app/version.py`** — `APP_VERSION` v100 → v101. `NAV_MENU` не
-   менялся (пункт "Спецификации" остаётся).
-3. **`docs/HANDOFF_reprovodenie.md`** — добавлен раздел "Сессия 6" с
-   решениями Вахтанга (что удалено, что отложено и почему) и разбором
-   реализации.
-4. Изменений в модели/БД нет — `_ensure_is_deleted_columns()` и
+   - Удалён `_build_specification_handler` целиком.
+   - Убраны `build_specification_1/2/3` из `action_handlers`
+     request_table; кнопка "Спецификация" убрана из
+     `row_actions`/`row_action_names` у `brand_slot_1/2/3_id` (осталась
+     только "Пересчитать").
+   - Удалены `_sync_invoice_items_from_specification` и
+     `_refresh_invoice_items_handler`.
+   - Убрана кнопка/handler `refresh_invoice_items` из
+     `action_buttons`/`action_handlers` invoice_table.
+   - `Invoice.specification_id` — `FieldConfig` теперь
+     `in_list=False, in_form=False`, убран из `Relation`/`FormRow`.
+   - `specification_table`/`specification_item_table` оставлены как
+     есть (роуты `/specification-v2/*` продолжают работать напрямую).
+   - Обновлены комментарии, описывавшие трёхзвенную цепочку.
+2. **`app/engine/document_chain.py`** — убран
+   `ChainLink(child_key="specification", ...)` из `CHAIN_LINKS`.
+   `/documents-chain` больше не показывает уровень "Спецификации".
+3. **`app/version.py`** — `APP_VERSION` v101 → v102; пункт меню
+   "Спецификации" убран из `NAV_MENU`.
+4. **`docs/HANDOFF_specification_cleanup.md`** — создан, чек-лист для
+   второго прохода (DROP таблиц/полей, судьба 3-4 старых счетов,
+   fallback в `invoice_print/data.py`).
+5. **`entity_registry.md`** — раздел "Документооборот" переписан под
+   новую цепочку, отмечено, что оставлено намеренно и почему.
+6. Изменений в схеме БД нет — `_ensure_is_deleted_columns()` и
    `_drop_obsolete_columns()` не трогались.
-5. Проверено локально (SQLite, `TestClient` context manager):
-   - `/invoice-v2/new`, `/specification-v2/new`, `/request-v2/new`,
-     `/calculation-v2/new`, `/documents-chain` — рендерятся без
-     ошибок (200, без Jinja-исключений);
-   - HTML `/invoice-v2/new` не содержит `unlink_invoice` и подписи
-     "Отвязать от спецификации"; `toggle_frozen` и
-     `refresh_invoice_items` присутствуют как раньше;
-   - HTML `/specification-v2/new` не содержит action `build_invoice`
-     и кнопки "Создать счёт" (`build_invoice_slot_N` новой цепочки —
-     не затронут, отдельная строка).
+7. Проверено локально (SQLite, `TestClient` context manager):
+   - `/invoice-v2/new`, `/request-v2/new`, `/calculation-v2/new`,
+     `/specification-v2/new`, `/documents-chain` — 200, без исключений;
+   - HTML `/request-v2/new` не содержит рендер кнопки "Спецификация"
+     (`>Спецификация<` отсутствует), POST на `build_specification_1`
+     напрямую → 422 (не 500);
+   - HTML `/invoice-v2/new` не содержит рендер кнопки "Обновить"
+     (`refresh_invoice_items` нет среди `runAction()`), POST на
+     `refresh_invoice_items` напрямую → 422 (не 500);
+   - `toggle_frozen` по-прежнему работает (200);
+   - создан тестовый СТАРЫЙ счёт (с заполненным `specification_id`,
+     как в проде) — открывается на `/invoice-v2/{id}` без ошибок;
+   - PDF и Excel печать этого старого счёта отрабатывают без ошибок
+     (fallback через Specification в `invoice_print/data.py` не
+     тронут и продолжает работать);
+   - `/api/documents-chain/{request_id}` для заявки с этим старым
+     invoice — группы `['request', 'calculation', 'invoice']`, без
+     `specification`.
 
 ## Открыто
 
-- Дальнейшая судьба Specification/SpecificationItem (DROP таблиц,
-  поле `Invoice.specification_id`, пункт в documents-chain) —
-  вопрос открыт, отложен до отдельного явного решения Вахтанга после
-  исправления документов в базе.
-- Рефакторинг `enginePage()` — отдельная будущая сессия.
-- План "Перепроведение" (6 сессий) на этом формально завершён, за
-  вычетом отложенных выше пунктов.
+- Второй проход зачистки Specification (DROP таблиц/полей) — весь
+  чек-лист и открытые вопросы в `docs/HANDOFF_specification_cleanup.md`.
+  Ключевой вопрос: что делать с 3-4 старыми счетами, у которых
+  `specification_id` заполнен, прежде чем можно будет убрать таблицы.
+- Рефакторинг `enginePage()` — отдельная будущая сессия, не входит
+  сюда.

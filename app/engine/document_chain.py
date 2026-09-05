@@ -44,38 +44,24 @@ class ChainLink:
     fk_field: str
 
 
-# specification (2026-08-27) — родитель В ЦЕПОЧКЕ ДОКУМЕНТОВ это
-# request, НЕ calculation, хотя по смыслу спецификация формируется
-# ИЗ калькуляций — одна спецификация агрегирует НЕСКОЛЬКО калькуляций
-# сразу (все активные калькуляции заявки с данным brand_slot), а
-# ChainLink моделирует связь 1:N через один FK, что не подходит для
-# N:1 "калькуляции -> спецификация". Вместо этого specification и
-# calculation — ДВА СОСЕДНИХ дочерних уровня request одновременно
-# (обе ссылки ниже имеют parent_key="request") — обход в
-# document_chain_children()/build_chain() группирует их в один общий
-# "уровень" BFS, что и нужно: в цепочке заявки видно калькуляции И
-# спецификации рядом, каждая ссылается на свою заявку напрямую.
-# Трассировка конкретных калькуляций внутри спецификации — через
-# specification_item.calculation_id (см. app/models/specification.py),
-# не через этот реестр документов.
+# specification — УБРАНО из реестра (2026-09-05, план "Перепроведение",
+# первый проход зачистки UI/движка после сессии 6). Specification/
+# SpecificationItem как модели и таблицы БД ПОКА остаются нетронутыми
+# (см. HANDOFF_specification_cleanup.md — второй проход, отдельная
+# сессия) — здесь убрана только видимость в цепочке документов,
+# поэтому /documents-chain больше не показывает уровень "Спецификации"
+# у заявки. Если понадобится восстановить это конкретное место —
+# верните строку ChainLink(child_key="specification",
+# parent_key="request", fk_field="request_id").
 #
-# invoice (2026-08-29) реализован — см. ChainLink ниже.
 # invoice (2026-08-29) — родитель В ЦЕПОЧКЕ ДОКУМЕНТОВ это request
-# (тот же принцип, что и у specification выше, обоснование см. в
-# app/models/invoice.py: request_id у Invoice ВСЕГДА заполнен и
-# НИКОГДА не сбрасывается, даже когда specification_id отвязан
-# кнопкой «Отвязать» — значит invoice должен продолжать быть виден
-# в цепочке заявки независимо от текущего состояния привязки к
-# спецификации). specification_id как отдельная связь СОЗНАТЕЛЬНО
-# НЕ регистрируется здесь отдельным ChainLink — она nullable и
-# может быть сброшена человеком, а обход цепочки документов должен
-# оставаться стабильным независимо от этого практического решения
-# (то же рассуждение, что у specification -> calculation:
-# трассировка через конкретное поле модели, не через реестр
-# документов).
+# (обоснование см. в app/models/invoice.py: request_id у Invoice
+# ВСЕГДА заполнен и НИКОГДА не сбрасывается). specification_id как
+# отдельная связь СОЗНАТЕЛЬНО НЕ регистрируется здесь отдельным
+# ChainLink — она nullable, и для новых счетов (новая цепочка,
+# минующая спецификацию) всегда NULL.
 CHAIN_LINKS: list[ChainLink] = [
     ChainLink(child_key="calculation", parent_key="request", fk_field="request_id"),
-    ChainLink(child_key="specification", parent_key="request", fk_field="request_id"),
     ChainLink(child_key="invoice", parent_key="request", fk_field="request_id"),
 ]
 

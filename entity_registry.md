@@ -102,16 +102,26 @@ HTML-страница: `GET {url_path}` (например `/material-v2`,
 | `"simple"` | Физическое удаление, но только если нет дочерних записей | kit_group, kit_section |
 | `"hard"` (дефолт) | Безусловное немедленное физическое удаление | kit_item, calculation_item, specification_item, invoice_item, unit, product_type_rate, constant (allow_delete=False на деле блокирует) |
 
-### Документооборот: request → calculation → specification → invoice
+### Документооборот: request → calculation → invoice
 
-Цепочка составных документов, каждый — своя страница движка
-(`own_page_url`), связанные FK на `request_id` (не друг на друга
-напрямую — `specification`/`invoice` оба ссылаются на `request`, т.к.
-одна спецификация агрегирует НЕСКОЛЬКО калькуляций сразу, N:1 не
-вписывается в единственный FK). Каждый документ имеет собственную
-нумерацию по префиксу через `document_numbering.py` +
-`DocumentCounter` (одна строка на префикс: R/calculation-без-префикса.../S/I —
-см. таблицу `document_counter` в разделе 2).
+**2026-09-05 (первый проход зачистки Specification, см.
+`docs/HANDOFF_specification_cleanup.md` — второй проход планируется
+отдельной сессией):** активная цепочка сокращена до `request →
+calculation → invoice`. Invoice создаётся напрямую из отмеченных
+калькуляций заявки (`_build_invoice_from_slot_handler`), минуя
+Specification. Кнопка "Спецификация" на заявке и кнопка "Обновить" на
+счёте (для счетов, привязанных к спецификации) — убраны из UI и
+движка. Таблицы `specification`/`specification_item`, поле
+`Invoice.specification_id`/`InvoiceItem.specification_item_id` в БД
+**остаются нетронутыми** — нужны для 3-4 старых счетов, у которых
+`specification_id` заполнен (архив, не мигрируется). Страницы
+`/specification-v2/*` по-прежнему доступны напрямую по URL, но пункта
+меню и связей из UI заявки/счёта на них больше нет.
+
+Каждый документ имеет собственную нумерацию по префиксу через
+`document_numbering.py` + `DocumentCounter` (одна строка на префикс:
+R/calculation-без-префикса.../S/I — префикс "S" для Specification
+больше не используется новыми документами, но зарезервирован).
 
 Построчные дочерние таблицы (`calculation_item`, `specification_item`,
 `invoice_item`) — каждая своя философия снэпшота/live-ссылки, см.
@@ -120,30 +130,28 @@ HTML-страница: `GET {url_path}` (например `/material-v2`,
 | Дочерняя таблица | Родитель | Модель данных |
 |---|---|---|
 | `calculation_item` | calculation | LIVE — хранит `material_id`/`kit_id`, цена подтягивается на пересчёте |
-| `specification_item` | specification | СНЭПШОТ — `product_name`/`unit_price`/`quantity`/`line_total` копируются с `Calculation` один раз при формировании, между формированиями не "плывут" |
-| `invoice_item` | invoice | СНЭПШОТ — копируется со `SpecificationItem` при создании/пересборке счёта, `discount_percent` — единственное поле, редактируемое человеком напрямую (не пересоздаётся) |
+| `specification_item` | specification | СНЭПШОТ — архивная таблица, новые записи не создаются с 2026-09-05 |
+| `invoice_item` | invoice | СНЭПШОТ — для новых счетов копируется из отмеченных `Calculation` напрямую (`_build_invoice_from_slot_handler`); `discount_percent` — единственное поле, редактируемое человеком напрямую |
 
-**Каскад пересборки** (2026-08-30/31): специфика "update in place" —
-при повторном формировании specification (кнопка «Спека N» на
-request) документ **обновляется на месте** (тот же id/номер, только
-`document_date`/`document_time` обновляются), и если у него уже есть
-привязанный invoice — тот пересобирается автоматически следом
-(`_sync_invoice_items_from_specification` + `_recalculate_invoice_totals`,
-см. `app/engine/tables.py`), без отдельного захода человека на
-карточку счёта.
+**Каскад пересборки через Specification** (`_sync_invoice_items_from_
+specification` + `_refresh_invoice_items_handler`) — УДАЛЁН
+2026-09-05. Актуален был только для старых счетов, привязанных к
+specification_id; для них кнопка "Обновить" на карточке счёта больше
+не работает (ожидаемо, см. HANDOFF_specification_cleanup.md).
 
 ### `document_chain.py` — реестр цепочки документов
 
 `CHAIN_LINKS` (плоский список `ChainLink(child_key, parent_key, fk_field)`):
 ```
-calculation   → request  (request_id)
-specification → request  (request_id)
-invoice       → request  (request_id)
+calculation → request  (request_id)
+invoice     → request  (request_id)
 ```
-Используется ТОЛЬКО страницей "Цепочка документов" (кнопка на списке
-request → `/documents-chain?request_id=`), обходит граф рекурсивно от
-корня (`request`). Добавление нового типа документа — одна новая
-строка в `CHAIN_LINKS`, без изменения кода страницы.
+`specification` убрана из реестра 2026-09-05 — `/documents-chain`
+больше не показывает уровень "Спецификации" у заявки. Используется
+ТОЛЬКО страницей "Цепочка документов" (кнопка на списке request →
+`/documents-chain?request_id=`), обходит граф рекурсивно от корня
+(`request`). Добавление нового типа документа — одна новая строка в
+`CHAIN_LINKS`, без изменения кода страницы.
 
 ### Печатные формы счёта (`app/invoice_print/`)
 
@@ -152,9 +160,13 @@ request → `/documents-chain?request_id=`), обходит граф рекур�
 построчные `InvoicePrintLine`, итоги. И `pdf_builder.py` (reportlab), и
 `xlsx_builder.py` (openpyxl) принимают уже готовый `InvoicePrintData` и
 только рисуют — расчёт сумм/прописи не дублируется между форматами.
-Единица измерения строки берётся из `InvoiceItem.unit_name` — снэпшот
-цепочки `SpecificationItem.calculation_id → Calculation.unit_id →
-Unit.name`, заполняется один раз при сборке счёта (v94).
+Единица измерения строки берётся из `InvoiceItem.unit_name` — для
+новых счетов копируется напрямую из `Calculation.unit_id → Unit.name`
+при создании. Для СТАРЫХ счетов (собранных через Specification, до
+2026-09-05) в `data.py` остаётся fallback-путь через
+`InvoiceItem.specification_item_id → SpecificationItem →
+Calculation.unit_id → Unit.name` — намеренно НЕ удалён в первом
+проходе зачистки Specification, см. `docs/HANDOFF_specification_cleanup.md`.
 
 Роуты: `GET /invoice-print/{id}/pdf`, `GET /invoice-print/{id}/xlsx` —
 прямые ссылки для браузера (кнопки «Скачать PDF»/«Скачать Excel» на

@@ -122,22 +122,22 @@ client_table = TableConfig(
 
 
 # Заявка (request) — первый документ цепочки zayavka -> calculation ->
-# specification -> invoice (docs/HANDOFF_kits_and_calculation.md, раздел 2).
+# invoice (спецификация выведена из активной цепочки в первом проходе
+# зачистки Specification, 2026-09-05, см.
+# HANDOFF_specification_cleanup.md; docs/HANDOFF_kits_and_calculation.md,
+# раздел 2 — устаревшее описание с трёхзвенной цепочкой).
 # document_number/document_date — номер и дата документа, оба
 # редактируются вручную; номер при создании автогенерируется по
 # счётчику префикса "R" (document_prefix), если не введён явно —
 # см. app/engine/document_numbering.py. Три слота бренда — три
 # независимых варианта расчёта, всегда видны в форме, каждый может
-# быть пустым. У каждого слота — своя пара кнопок «Спецификация»/
-# «Пересчитать» рядом с выбором бренда (FieldConfig.row_actions).
-# «Спецификация» (2026-08-27) — реальный обработчик, см.
-# _build_specification_handler ниже, по одному на слот
-# (build_specification_1/2/3 в action_handlers, номер слота зашит в
-# имени action). «Пересчитать» — по-прежнему заглушка (row_action_names
-# на этой позиции = None), своей логики ещё нет. Общей кнопки
-# "Пересчитать всё" сознательно нет — по прямому решению Вахтанга
-# (2026-08-19): пересчёт всегда по одному варианту, так проще уследить,
-# что где пересчиталось.
+# быть пустым. У каждого слота — своя кнопка «Пересчитать» рядом с
+# выбором бренда (FieldConfig.row_actions) — по-прежнему заглушка
+# (row_action_names = [None]), своей логики ещё нет. Кнопка
+# «Спецификация» убрана вместе с _build_specification_handler. Общей
+# кнопки "Пересчитать всё" сознательно нет — по прямому решению
+# Вахтанга (2026-08-19): пересчёт всегда по одному варианту, так проще
+# уследить, что где пересчиталось.
 #
 # Поиск (v52, по фидбеку с реального устройства): у документа 5
 # relation-полей (2 клиента + 3 бренда) — стандартный ряд чипов-фильтров
@@ -148,177 +148,16 @@ client_table = TableConfig(
 # ЧЕРЕЗ join/подзапрос на client (Relation.searchable_fields), с
 # переключаемыми чекбоксами "заказчик"/"для счёта" (enable_search_toggles,
 # тот же паттерн, что и у client_table для собственных текстовых полей).
-def _build_specification_handler(brand_slot: int):
-    """Фабрика обработчика кнопки «Спецификация» слота brand_slot
-    (1/2/3) — один обработчик на слот, а НЕ один параметризованный
-    action на все три: action_handlers — плоский словарь по имени
-    action (см. TableConfig.action_handlers), и текущий движок
-    (runAction()/POST /api/{key}/{id}/actions/{action}) не передаёт
-    никаких доп. параметров кроме имени действия — значит номер слота
-    должен быть зашит в САМО имя action ("build_specification_1" и
-    т.д.), а не передаваться отдельно. Фабрика просто убирает
-    дублирование тела функции между тремя слотами.
-
-    Механика (переработано 2026-08-30 — решение Вахтанга: подчинённый
-    документ при повторном формировании ОБНОВЛЯЕТСЯ НА МЕСТЕ, а не
-    удаляется и создаётся заново — то же поведение, что уже было у
-    счёта, теперь и у спецификации):
-      1. Собрать активные (status="active") калькуляции этой заявки
-         с данным brand_slot.
-      2. Если для (request_id, brand_slot) уже есть Specification —
-         ОБНОВИТЬ ЕЁ НА МЕСТЕ: id и document_number (номер) НЕ
-         меняются, привязки (в т.ч. уже созданный из неё Invoice —
-         через specification_id) НЕ рвутся; document_date/
-         document_time выставляются на текущий момент (проще и
-         единообразнее, чем оставлять исходную дату — решение
-         Вахтанга: "думаю для реализации это будет проще"). Позиции
-         (SpecificationItem) при этом всё равно полностью
-         пересобираются (delete+create) — сами строки меняют id,
-         поэтому ссылка InvoiceItem.specification_item_id (трассировка)
-         обнуляется у уже существующих строк счёта перед удалением
-         старых SpecificationItem (см. комментарий у orphaned_invoice_
-         items ниже) — это НЕ отвязка счёта, Invoice.specification_id
-         остаётся как был.
-      2а. ВАЖНО: если для этой спецификации уже есть привязанный
-          (specification_id заполнен) Invoice — он должен быть
-          обновлён СРАЗУ ЖЕ следом (тот самый "следующий документ",
-          который тоже нужно обновить, по прямому указанию Вахтанга)
-          — вызывается тот же код, что и у кнопки «Обновить» на
-          счёте (_sync_invoice_items_from_specification +
-          _recalculate_invoice_totals), а не оставляется до
-          следующего ручного нажатия человеком.
-      3. Если Specification для этого слота ещё не было — создаём
-         новую (client_id = request.client_id, номер по счётчику
-         префикса "S"), как и раньше.
-      4. По одной SpecificationItem на калькуляцию (БЕЗ схлопывания
-         повторяющихся названий — каждая калькуляция своя строка),
-         line_total = final_total * quantity.
-      5. total_amount = Σ line_total.
-    НЕ пересчитывает сами калькуляции перед сборкой — берёт
-    final_total как есть на момент нажатия (решение Вахтанга:
-    "кнопка только собирает и показывает спеку").
-
-    Возвращает {"redirect_url": "/specification-v2/{id}"} — НЕ патч
-    полей текущей заявки (в отличие от большинства action_handlers):
-    кнопка создаёт (или обновляет) ДРУГОЙ документ, а не правит
-    instance, поэтому фронт (runAction() в page.py) при виде
-    redirect_url переходит на страницу спецификации вместо
-    подмешивания результата в открытую форму заявки.
-    """
-
-    def handler(instance: Request, session) -> dict:
-        from app.engine.document_numbering import next_document_number
-        from datetime import date as _date, datetime as _datetime
-
-        calculations = session.exec(
-            select(Calculation).where(
-                Calculation.request_id == instance.id,
-                Calculation.brand_slot == brand_slot,
-                Calculation.status == "active",
-            )
-        ).all()
-
-        existing = session.exec(
-            select(Specification).where(
-                Specification.request_id == instance.id,
-                Specification.brand_slot == brand_slot,
-            )
-        ).first()
-
-        if existing is not None:
-            # ОБНОВЛЕНИЕ НА МЕСТЕ (2026-08-30) — id/document_number
-            # сохраняются, дата/время формирования обновляются на
-            # текущие. Позиции (SpecificationItem) всё равно
-            # полностью пересобираются ниже (проще, чем построчно
-            # сверять состав калькуляций), поэтому их СОБСТВЕННЫЕ id
-            # всё равно меняются — отсюда необходимость обнулить
-            # трассировочную ссылку у InvoiceItem (см. ниже), даже
-            # притом что сама Specification и сам Invoice.
-            # specification_id теперь остаются нетронутыми.
-            existing.document_date = _date.today()
-            existing.document_time = _datetime.now().time().replace(microsecond=0)
-            session.add(existing)
-            session.flush()
-            spec = existing
-
-            # ForeignKeyViolation на Postgres (обнаружено 2026-08-28
-            # для самих Specification/SpecificationItem, повторно
-            # 2026-08-30 через InvoiceItem): SpecificationItem всё
-            # равно удаляются и пересоздаются при каждом формировании
-            # (позиции могли измениться — калькуляции добавили/убрали/
-            # поменяли), а у InvoiceItem есть FK specification_item_id
-            # -> specificationitem.id (см. app/models/invoice_item.py —
-            # намеренно ТОЛЬКО для трассировки, "снэпшот", НЕ для
-            # live-обновления). Обнуляем эту ссылку у уже существующих
-            # строк счёта ПЕРЕД удалением старых SpecificationItem —
-            # сам InvoiceItem и его данные (цена/скидка/сумма) не
-            # трогаем, только снимаем ссылку на исчезающую строку.
-            # Specification/Invoice.specification_id при этом НЕ
-            # трогаются вообще — счёт остаётся привязан к этой же
-            # спецификации, просто трассировка до конкретной старой
-            # строки прерывается.
-            old_items = session.exec(
-                select(SpecificationItem).where(SpecificationItem.specification_id == existing.id)
-            ).all()
-            old_item_ids = [item.id for item in old_items]
-            if old_item_ids:
-                orphaned_invoice_items = session.exec(
-                    select(InvoiceItem).where(InvoiceItem.specification_item_id.in_(old_item_ids))
-                ).all()
-                for inv_item in orphaned_invoice_items:
-                    inv_item.specification_item_id = None
-                    session.add(inv_item)
-                session.flush()
-
-            for item in old_items:
-                session.delete(item)
-            session.flush()
-        else:
-            spec = Specification(
-                request_id=instance.id,
-                brand_slot=brand_slot,
-                client_id=instance.client_id,
-                document_number=next_document_number(session, "S"),
-            )
-            session.add(spec)
-            session.flush()
-
-        total_amount = 0.0
-        for calc in calculations:
-            line_total = (calc.final_total or 0.0) * (calc.quantity or 0.0)
-            total_amount += line_total
-            session.add(SpecificationItem(
-                specification_id=spec.id,
-                calculation_id=calc.id,
-                product_name=calc.full_name,
-                unit_price=calc.final_total,
-                quantity=calc.quantity,
-                line_total=line_total,
-            ))
-
-        spec.total_amount = total_amount
-        session.add(spec)
-        session.flush()
-
-        # "Следующий документ тоже нужно обновить" (прямое указание
-        # Вахтанга, 2026-08-30): если из ЭТОЙ спецификации уже собран
-        # привязанный (specification_id ещё указывает сюда) Invoice —
-        # обновляем и его сразу же, тем же кодом, что и ручная кнопка
-        # «Обновить» на счёте, а не оставляем рассинхрон до следующего
-        # захода человека на карточку счёта.
-        linked_invoice = session.exec(
-            select(Invoice).where(Invoice.specification_id == spec.id)
-        ).first()
-        if linked_invoice is not None:
-            _sync_invoice_items_from_specification(linked_invoice, spec, session)
-            _recalculate_invoice_totals(linked_invoice, session)
-
-        session.commit()
-        session.refresh(spec)
-
-        return {"redirect_url": f"/specification-v2/{spec.id}"}
-
-    return handler
+# _build_specification_handler (кнопка "Спецификация" на слоте бренда
+# заявки) — УДАЛЕНА (2026-09-05, первый проход зачистки Specification
+# после сессии 6 плана "Перепроведение"). Собирала/обновляла
+# Specification+SpecificationItem по кнопке на request; новая цепочка
+# создаёт Invoice напрямую из отмеченных калькуляций (см.
+# _build_invoice_from_slot_handler ниже), минуя спецификацию — эта
+# кнопка вела в тупик (специфа, из которой нельзя было создать счёт
+# после удаления build_invoice в сессии 6). Specification/
+# SpecificationItem как модели и таблицы БД ПОКА остаются нетронутыми
+# — см. HANDOFF_specification_cleanup.md, второй проход.
 
 
 def _refresh_brand_calculations_handler(instance: Request, session) -> dict:
@@ -619,9 +458,9 @@ request_table = TableConfig(
     # вкладка "Основное" несёт все поля, что были раньше в единой форме
     # (номер/дата/клиенты/заметка), три следующие — по одной на каждый
     # брендовый слот, каждая содержит ТОЛЬКО свой FieldConfig
-    # brand_slot_N_id (с прежними row_actions "Спецификация"/
-    # "Пересчитать" — путь через спецификацию пока НЕ убирается, см.
-    # сессию 6 плана) плюс, ниже поля, отдельный блок движка со списком
+    # brand_slot_N_id (row_actions="Пересчитать" — кнопка "Спецификация"
+    # убрана в первом проходе зачистки Specification, 2026-09-05, см.
+    # HANDOFF_specification_cleanup.md) плюс, ниже поля, отдельный блок движка со списком
     # калькуляций этого слота и чекбоксами (см. brand_slot_calc_tabs).
     form_tabs=["Основное", "Вариант 1", "Вариант 2", "Вариант 3"],
     brand_slot_calc_tabs=[
@@ -638,17 +477,6 @@ request_table = TableConfig(
     ],
     open_edit_action="refresh_brand_calculations",
     action_handlers={
-        # build_specification_1/2/3 (2026-08-27) — один обработчик на
-        # слот (см. обоснование в _build_specification_handler выше:
-        # action_handlers — плоский словарь по имени action, номер
-        # слота зашит в самом имени). Подключены к кнопке
-        # "Спецификация" через FieldConfig.row_action_names у
-        # соответствующего brand_slot_N_id ниже. НЕ через
-        # TableConfig.action_buttons — кнопка рендерится рядом с полем
-        # (row_actions), не отдельным блоком под вкладкой формы.
-        "build_specification_1": _build_specification_handler(1),
-        "build_specification_2": _build_specification_handler(2),
-        "build_specification_3": _build_specification_handler(3),
         # refresh_brand_calculations (2026-09-04) — см.
         # _refresh_brand_calculations_handler выше: один обработчик,
         # используется и как open_edit_action (автозагрузка при
@@ -699,16 +527,16 @@ request_table = TableConfig(
         # отдельным FieldConfig.
         FieldConfig(name="brand_slot_1_id", label="Вариант 1 — бренд", widget="select", in_list=False,
                     tab="Вариант 1",
-                    row_actions=["Спецификация", "Пересчитать"],
-                    row_action_names=["build_specification_1", None]),
+                    row_actions=["Пересчитать"],
+                    row_action_names=[None]),
         FieldConfig(name="brand_slot_2_id", label="Вариант 2 — бренд", widget="select", in_list=False,
                     tab="Вариант 2",
-                    row_actions=["Спецификация", "Пересчитать"],
-                    row_action_names=["build_specification_2", None]),
+                    row_actions=["Пересчитать"],
+                    row_action_names=[None]),
         FieldConfig(name="brand_slot_3_id", label="Вариант 3 — бренд", widget="select", in_list=False,
                     tab="Вариант 3",
-                    row_actions=["Спецификация", "Пересчитать"],
-                    row_action_names=["build_specification_3", None]),
+                    row_actions=["Пересчитать"],
+                    row_action_names=[None]),
         FieldConfig(name="note", label="Заметка", widget="textarea", in_list=False, placeholder="К чему относится эта заявка…", tab="Основное"),
     ],
     relations=[
@@ -1019,8 +847,8 @@ def _brand_slot_labels_handler(instance: Calculation, session) -> dict:
     return {"brand_slot_labels": labels}
 
 
-# Калькуляция (calculation) — второй документ цепочки zayavka ->
-# calculation -> specification -> invoice. Этот шаг — только "шапка"
+# Калькуляция (calculation) — второй документ цепочки request ->
+# calculation -> invoice. Этот шаг — только "шапка"
 # документа, без состава (calculation_item — следующий шаг). См.
 # подробный комментарий в app/models/calculation.py.
 #
@@ -1447,114 +1275,22 @@ calculation_item_table = TableConfig(
 )
 
 
-# Спецификация (specification) — третий документ цепочки zayavka ->
-# calculation -> specification -> invoice. Формируется НЕ через
-# обычную кнопку "+ Добавить" (allow_create=False — создание идёт
-# ТОЛЬКО через кнопку "Спецификация" у нужного брендового слота
-# заявки, см. _build_specification_handler/request_table выше),
-# редактирование строк тоже недоступно человеку напрямую
-# (allow_delete=False — вся запись целиком удаляется и создаётся
-# заново кнопкой "Спецификация", отдельное ручное удаление
-# бессмысленно и могло бы рассинхронизировать total_amount).
-# Единственное действие человека над уже созданной спецификацией в
-# этом шаге — просмотр (список -> клик по строке -> карточка с
-# шапкой; сами позиции — см. specification_item_table ниже, отдельный
-# список, отфильтрованный по specification_id).
+# Счёт (invoice) — второй документ активной цепочки request ->
+# calculation -> invoice (обсуждение 2026-08-29, см. подробный
+# комментарий механики в app/models/invoice.py). Создаётся напрямую из
+# отмеченных калькуляций заявки — см. _build_invoice_from_slot_handler
+# выше — не из спецификации.
 #
-# own_page_url — та же логика, что у request/calculation: кнопка
-# "Спецификация" делает redirect на "/specification-v2/{id}" (см.
-# _build_specification_handler), открывая карточку сразу.
-# Счёт (invoice) — четвёртый документ цепочки zayavka -> calculation
-# -> specification -> invoice (обсуждение 2026-08-29, см. подробный
-# комментарий механики в app/models/invoice.py). Кнопка "Создать
-# счёт" живёт на СПЕЦИФИКАЦИИ (не на заявке — в отличие от
-# "Спецификация" у request), потому что счёт создаётся ИЗ конкретной
-# уже сформированной спецификации, а не из заявки напрямую.
-#
-# Механика (согласовано с Вахтангом 2026-08-29):
-#   1. Ищем уже существующий Invoice с specification_id == этой
-#      спецификации (ещё НЕ отвязанный от неё). Если нашли — это
-#      "Обновить": перечитываем позиции заново (см.
-#      _sync_invoice_items_from_specification ниже), шапку не
-#      трогаем (firm_id/client_invoice_id и т.д. остаются как
-#      человек их поправил).
-#   2. Не нашли (либо потому что счёта ещё не было, либо потому что
-#      единственный существовавший счёт уже ОТВЯЗАН — specification_id
-#      сброшен в NULL) — создаём НОВЫЙ Invoice: request_id из
-#      спецификации, client_id/client_invoice_id — снэпшот из Request
-#      (client_invoice_id пуст -> берём client_id, "плательщик по
-#      умолчанию = заказчик"), firm_id — дефолтная Firm
-#      (is_default=True), номер по счётчику префикса "I".
-#   3. В обоих случаях — построчная синхронизация позиций из
-#      SpecificationItem (см. _sync_invoice_items_from_specification):
-#      полная перезапись (delete-all+create-all), discount_percent
-#      каждой НОВОЙ строки = 0 (Вахтанг: "новая строка без скидки"),
-#      т.к. пересоздание строк не может сохранить прежние построчные
-#      скидки один-в-один при простом delete-all — это ожидаемое
-#      поведение только для явного повторного нажатия "Обновить" на
-#      ещё привязанном счёте (человек видит, что произошло, и может
-#      заново применить скидку кнопкой "Дать скидку").
-#   4. Пересчитываем итоги шапки (см. _recalculate_invoice_totals).
-#
-# НЕ пересчитывает саму спецификацию/калькуляции перед сборкой —
-# берёт SpecificationItem как есть на момент нажатия (тот же принцип,
-# что у _build_specification_handler).
-#
-# Каскад (добавлено 2026-08-30, прямое указание Вахтанга: "следующий
-# документ тоже надо обновить"): с тех пор как спецификация
-# обновляется НА МЕСТЕ (id/номер не меняются, см.
-# _build_specification_handler), при каждом повторном формировании
-# спецификации ЭТИ ЖЕ ДВЕ ФУНКЦИИ (_sync_invoice_items_from_
-# specification + _recalculate_invoice_totals) вызываются автоматически
-# для уже привязанного к ней Invoice — человеку не нужно отдельно
-# заходить на карточку счёта и жать «Обновить» после пересборки
-# спецификации.
-def _sync_invoice_items_from_specification(invoice: Invoice, spec: Specification, session) -> None:
-    """Полная перезапись InvoiceItem по текущим SpecificationItem —
-    используется и при первом создании счёта, и при "Обновить" на
-    ещё привязанном счёте. delete-all+create-all — та же логика, что
-    у _build_specification_handler при повторном формировании
-    спецификации (см. комментарий там про два раздельных flush(),
-    чтобы не словить ForeignKeyViolation на Postgres)."""
-    old_items = session.exec(
-        select(InvoiceItem).where(InvoiceItem.invoice_id == invoice.id)
-    ).all()
-    for item in old_items:
-        session.delete(item)
-    session.flush()
-
-    spec_items = session.exec(
-        select(SpecificationItem).where(SpecificationItem.specification_id == spec.id)
-    ).all()
-    for spec_item in spec_items:
-        # unit_name — снэпшот единицы измерения (добавлено 2026-08-31,
-        # см. подробный комментарий в app/models/invoice_item.py).
-        # SpecificationItem сама не хранит unit — идём по той же цепочке,
-        # что и app/invoice_print/data.py: calculation_id -> Calculation.
-        # unit_id -> Unit.name. Каждое звено nullable, при обрыве просто
-        # оставляем пустую строку, без падения (тот же принцип, что в
-        # data.py).
-        unit_name = ""
-        if spec_item.calculation_id:
-            calc = session.get(Calculation, spec_item.calculation_id)
-            if calc and calc.unit_id:
-                unit = session.get(Unit, calc.unit_id)
-                if unit:
-                    unit_name = unit.name
-        session.add(InvoiceItem(
-            invoice_id=invoice.id,
-            specification_item_id=spec_item.id,
-            product_name=spec_item.product_name,
-            unit_name=unit_name,
-            quantity=spec_item.quantity,
-            unit_price=spec_item.unit_price,
-            discount_percent=0.0,
-            unit_price_after_discount=spec_item.unit_price,
-            line_total=spec_item.unit_price * spec_item.quantity,
-        ))
-    session.flush()
-
-
+# _sync_invoice_items_from_specification / _refresh_invoice_items_handler
+# (кнопка "Обновить" на счёте, пока specification_id ещё заполнен) —
+# УДАЛЕНЫ (2026-09-05, первый проход зачистки Specification, см.
+# HANDOFF_specification_cleanup.md). Актуально было только для СТАРЫХ
+# счетов, собранных из спецификации (specification_id заполнен) — таких
+# в базе, по оценке Вахтанга, 3-4 штуки. Для них кнопка "Обновить" на
+# карточке счёта теперь не работает (обработчик отсутствует в
+# action_handlers) — это ожидаемо, чинится вторым проходом.
+# Specification/SpecificationItem как модели и таблицы БД ПОКА
+# остаются нетронутыми.
 def _recalculate_invoice_totals(invoice: Invoice, session) -> None:
     """Пересчитывает total_excl_vat/vat_amount/total_incl_vat по
     текущим InvoiceItem.line_total (уже с учётом построчной скидки —
@@ -1594,31 +1330,6 @@ def _toggle_invoice_frozen_handler(instance: Invoice, session) -> dict:
     session.commit()
     session.refresh(instance)
     return {"is_frozen": instance.is_frozen}
-
-
-def _refresh_invoice_items_handler(instance: Invoice, session) -> dict:
-    """Кнопка «Обновить» на счёте, пока он ЕЩЁ привязан к
-    спецификации (specification_id заполнен) — перечитывает позиции
-    заново (см. _sync_invoice_items_from_specification), скидки
-    построчно сбрасываются в 0. Актуально только для старых счетов
-    старой цепочки — новые счета specification_id не имеют. Если
-    specification_id пуст — ничего не делает, кнопка на фронте в этом
-    состоянии должна быть скрыта/неактивна, но обработчик всё равно
-    защищается на случай прямого вызова API."""
-    if not instance.specification_id:
-        return {}
-    spec = session.get(Specification, instance.specification_id)
-    if not spec:
-        return {}
-    _sync_invoice_items_from_specification(instance, spec, session)
-    _recalculate_invoice_totals(instance, session)
-    session.commit()
-    session.refresh(instance)
-    return {
-        "total_excl_vat": instance.total_excl_vat,
-        "vat_amount": instance.vat_amount,
-        "total_incl_vat": instance.total_incl_vat,
-    }
 
 
 def _apply_bulk_discount_handler(instance: Invoice, session, payload: dict) -> dict:
@@ -1864,13 +1575,16 @@ firm_table = TableConfig(
 # после создания через _build_invoice_from_slot_handler.
 #
 # unlink_invoice/_unlink_invoice_handler — УДАЛЕНЫ в сессии 6 плана
-# "Перепроведение" (2026-09-05): для счетов новой цепочки
-# specification_id и так NULL, кнопка потеряла смысл. Поле
-# Invoice.specification_id в модели пока оставлено (решение
-# Вахтанга — старые счета с заполненным specification_id остаются
-# архивом как есть, ничего не мигрируется).
-# refresh_invoice_items — кнопка "Обновить", тоже только пока
-# привязан (см. _refresh_invoice_items_handler).
+# "Перепроведение" (2026-09-05).
+# refresh_invoice_items/_refresh_invoice_items_handler — УДАЛЕНЫ
+# (2026-09-05, первый проход зачистки Specification, см.
+# HANDOFF_specification_cleanup.md) — кнопка "Обновить" работала
+# только для старых счетов, ещё привязанных к specification_id (по
+# оценке Вахтанга, таких в базе 3-4). Поле Invoice.specification_id
+# в модели и FieldConfig ниже пока оставлено НЕ показываемым в форме
+# (in_form=False) — само поле и данные остаются, просто больше не
+# редактируется/не отображается через UI счёта. Specification/
+# SpecificationItem как таблицы БД ПОКА не тронуты.
 # toggle_frozen — кнопка "Заморозити"/"Розморозити" (сессия 5, см.
 # _toggle_invoice_frozen_handler) — переключает Invoice.is_frozen,
 # без confirm, подпись динамическая на фронте.
@@ -1901,7 +1615,6 @@ invoice_table = TableConfig(
     invoice_items_sum_field="total_excl_vat",
     invoice_items_bulk_discount_action="apply_bulk_discount",
     action_buttons=[
-        ActionButton(action="refresh_invoice_items", label="Обновить", tab=None),
         # toggle_frozen — кнопка "Заморозити"/"Розморозити" (сессия 5
         # плана "Перепроведение", см. docs/HANDOFF_reprovodenie.md).
         # Подпись динамическая (не через ActionButton.label — тот
@@ -1919,7 +1632,6 @@ invoice_table = TableConfig(
     ],
     action_handlers={
         "apply_bulk_discount": _apply_bulk_discount_handler,
-        "refresh_invoice_items": _refresh_invoice_items_handler,
         "toggle_frozen": _toggle_invoice_frozen_handler,
     },
     fields=[
@@ -1927,8 +1639,13 @@ invoice_table = TableConfig(
         FieldConfig(name="document_date", label="Дата", widget="date", list_width="110px", form_width="140px"),
         FieldConfig(name="document_time", label="Время", widget="time", list_width="90px", form_width="110px"),
         FieldConfig(name="request_id", label="Заявка", widget="select", list_width="16%", form_width="140px"),
-        FieldConfig(name="specification_id", label="Спецификация", widget="select", list_width="16%",
-                    form_width="140px"),
+        # specification_id — скрыто из UI (in_list/in_form=False) в
+        # первом проходе зачистки Specification (2026-09-05, см.
+        # HANDOFF_specification_cleanup.md). Поле и данные в БД
+        # остаются нетронутыми (нужны 3-4 старым счетам), просто
+        # больше нигде не отображается и не редактируется человеком.
+        FieldConfig(name="specification_id", label="Спецификация", widget="select",
+                    in_list=False, in_form=False),
         FieldConfig(name="firm_id", label="Постачальник (наша фирма)", widget="select", list_width="20%"),
         FieldConfig(name="client_id", label="Заказчик", widget="select", list_width="18%"),
         FieldConfig(name="client_invoice_id", label="Платник", widget="select", list_width="18%"),
@@ -1961,8 +1678,6 @@ invoice_table = TableConfig(
     relations=[
         Relation(field="request_id", target_table="request", display_field="document_number", label="Заявка",
                  show_filter_chips=False),
-        Relation(field="specification_id", target_table="specification", display_field="document_number",
-                 label="Спецификация", show_filter_chips=False),
         Relation(field="firm_id", target_table="firm", display_field="full_name", label="Постачальник",
                  show_filter_chips=False),
         Relation(field="client_id", target_table="client", display_field="short_name", label="Заказчик",
@@ -1972,7 +1687,7 @@ invoice_table = TableConfig(
     ],
     form_rows=[
         FormRow(field_names=["document_number", "document_date", "document_time"]),
-        FormRow(field_names=["request_id", "specification_id"]),
+        FormRow(field_names=["request_id"]),
         FormRow(field_names=["firm_id"]),
         FormRow(field_names=["client_id", "client_invoice_id"]),
         FormRow(field_names=["total_excl_vat", "vat_amount", "total_incl_vat"]),
@@ -1983,8 +1698,8 @@ invoice_table = TableConfig(
 # invoice_item — строки счёта (см. подробный комментарий механики в
 # app/models/invoice_item.py). allow_create/allow_delete=False —
 # строки создаются/пересоздаются ТОЛЬКО вместе со всем счётом (см.
-# _build_invoice_from_slot_handler/_refresh_invoice_items_handler), но,
-# В ОТЛИЧИЕ от specification_item, discount_percent КАЖДОЙ отдельной
+# _build_invoice_from_slot_handler), но, В ОТЛИЧИЕ от specification_item,
+# discount_percent КАЖДОЙ отдельной
 # строки редактируется человеком напрямую — через обычный
 # PUT /api/invoice_item/{id} движка (см. invoice_items_tab на
 # invoice_table и рендер в page.py), не только целиком через

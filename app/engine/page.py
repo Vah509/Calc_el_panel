@@ -282,6 +282,16 @@ _PAGE_TEMPLATE_SOURCE = r"""
           <h2 x-show="!isItemsModal() || !editing.id" x-text="editing.id ? 'Редактирование' : 'Новая запись'"></h2>
           <h2 x-show="isItemsModal() && editing.id" x-text="editing.name || ''"></h2>
         </div>
+        {% if not config.hierarchy %}
+        <!-- Индикатор "требует сохранения"/"сохранено" (см. isDirty,
+             formSnapshot в page.py) — только для обычных форм-документов
+             (заявка/калькуляция/счёт и т.п.), не для items_modal-справочников
+             (kit_group/kit_section), у которых своя специфика (config.hierarchy). -->
+        <span class="form-dirty-indicator" :class="isDirty ? 'is-dirty' : 'is-saved'" x-cloak>
+          <span class="dot" x-text="isDirty ? '●' : '✓'"></span>
+          <span x-text="isDirty ? 'Есть несохранённые изменения' : 'Сохранено'"></span>
+        </span>
+        {% endif %}
       </div>
 
       <div id="js-error-banner" style="display:none; background:#f3e6e3; border:1px solid #9c3b2e; color:#9c3b2e; padding:10px 16px; margin:0 20px 14px; border-radius:6px; font-family:monospace; font-size:12px; white-space:pre-wrap;"></div>
@@ -803,6 +813,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
         <span x-show="!editing.id"></span>
         <div class="modal-footer-right">
           <button type="button" class="btn btn-ghost" @click="close()">Закрыть</button>
+          <button type="button" class="btn btn-ghost" @click="saveAndClose()">Сохранить и закрыть</button>
           <button type="button" class="btn btn-primary" @click="save()">Сохранить</button>
         </div>
         {% else %}
@@ -824,6 +835,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
             <span x-show="!editing.id"></span>
             <div class="modal-footer-right">
               <button type="button" class="btn btn-ghost" @click="close()">Закрыть</button>
+              <button type="button" class="btn btn-ghost" @click="saveAndClose()">Сохранить и закрыть</button>
               <button type="button" class="btn btn-primary" @click="save()">Сохранить</button>
             </div>
           </div>
@@ -1290,6 +1302,20 @@ function enginePage() {
                              // "← К цепочке" в topbar не отображается.
     modalOpen: false,
     editing: {},
+    // --- Индикатор "требует сохранения"/"сохранено" (пункт 2 задания
+    // TASK_ui_quick_fixes, 2026-09-22) ---
+    // formSnapshot — JSON.stringify состояния editing на момент открытия
+    // формы (openCreate/openEdit) или последнего успешного save(). isDirty
+    // пересчитывается через $watch на editing (см. init()) при КАЖДОМ
+    // изменении любого поля формы — сравнение полных снимков, а не
+    // точечное отслеживание поля за полем, проще и не требует ручной
+    // правки при каждом новом FieldConfig.
+    formSnapshot: '{}',
+    isDirty: false,
+    takeFormSnapshot() {
+      this.formSnapshot = JSON.stringify(this.editing);
+      this.isDirty = false;
+    },
     // activeFormTab: индекс активной вкладки формы (0-based), только
     // для таблиц с CONFIG.formTabs непустым (см. TableConfig.form_tabs) —
     // сбрасывается на 0 при каждом openCreate()/openEdit(), чтобы форма
@@ -1612,6 +1638,14 @@ function enginePage() {
         // наверх в момент блокировки и роняет её при снятии.
         this.$watch('pickerOpen', open => this.updateBodyScrollLock(open || this.modalOpen));
         this.$watch('modalOpen', open => this.updateBodyScrollLock(open || this.pickerOpen));
+        // Индикатор "требует сохранения" (пункт 2 TASK_ui_quick_fixes) —
+        // Alpine $watch на весь объект editing глубокий по умолчанию,
+        // срабатывает на изменение ЛЮБОГО поля формы. Сравниваем со
+        // снимком, снятым в openCreate()/openEdit()/после save() —
+        // см. takeFormSnapshot().
+        this.$watch('editing', () => {
+          this.isDirty = JSON.stringify(this.editing) !== this.formSnapshot;
+        });
       } catch (err) { showJsError(err); }
     },
 
@@ -1959,6 +1993,7 @@ function enginePage() {
             }
           } catch (e) { /* не критично — поле останется пустым, сервер всё равно сгенерирует номер на save */ }
         }
+        this.takeFormSnapshot();
       } catch (err) { showJsError(err); }
     },
 
@@ -2008,6 +2043,11 @@ function enginePage() {
         if (CONFIG.openEditAction && this.editing.id) {
           await this.runAction(CONFIG.openEditAction);
         }
+        // Снимок берём В САМОМ КОНЦЕ, после radioActions/openEditAction
+        // выше — они через runAction() подмешивают данные в editing как
+        // часть ОТКРЫТИЯ формы, а не правки человеком, и не должны сразу
+        // показывать "есть несохранённые изменения".
+        this.takeFormSnapshot();
       } catch (err) { showJsError(err); }
     },
 
@@ -3264,10 +3304,28 @@ function enginePage() {
       return null;
     },
 
+    // save() — только отправка данных, БЕЗ закрытия формы (пункт 3
+    // TASK_ui_quick_fixes, 2026-09-22). Раньше save() всегда сразу
+    // закрывал форму (closeToList()/modalOpen=false) — теперь это
+    // делает отдельная saveAndClose(), а обычная кнопка "Сохранить"
+    // оставляет форму открытой. Возвращает true/false (успех), чтобы
+    // saveAndClose() могла решить, закрывать форму или нет, не дублируя
+    // запрос.
+    //
+    // ВАЖНО про ответ сервера: раньше при успехе res.json() вообще не
+    // читался — не имело значения, форма всё равно тут же закрывалась.
+    // Теперь, когда "Сохранить" оставляет форму открытой, это стало
+    // критично для СОЗДАНИЯ новой записи (isEdit=false, POST): без id,
+    // присвоенного сервером, повторное "Сохранить" снова ушло бы POST'ом
+    // и создало бы дубликат вместо PUT по уже созданной записи. Поэтому
+    // мерджим ответ сервера в editing так же, как это уже делает
+    // runAction() — сервер может заодно нормализовать другие поля
+    // (например реальный номер документа вместо клиентского
+    // предпросмотра, см. openCreate()/_apply_document_numbering).
     async save() {
       try {
         const validationError = this.validateBeforeSave();
-        if (validationError) { showJsError(validationError); return; }
+        if (validationError) { showJsError(validationError); return false; }
         hideJsError();
 
         const lvlKey = this.currentLevel().key;
@@ -3282,15 +3340,27 @@ function enginePage() {
         });
         if (!res.ok) {
           showJsError(await extractErrorMessage(res));
-          return;
+          return false;
         }
-        if (CONFIG.renderMode === 'form') {
-          this.closeToList();
-        } else {
-          this.modalOpen = false;
-          await this.load();
-        }
-      } catch (err) { showJsError(err); }
+        const data = await res.json();
+        this.editing = { ...this.editing, ...data };
+        this.takeFormSnapshot();
+        return true;
+      } catch (err) { showJsError(err); return false; }
+    },
+
+    // saveAndClose() — кнопка "Сохранить и закрыть" (пункт 3): делает
+    // save(), и только при успехе закрывает форму так же, как раньше
+    // делал старый save() целиком.
+    async saveAndClose() {
+      const ok = await this.save();
+      if (!ok) return;
+      if (CONFIG.renderMode === 'form') {
+        this.closeToList();
+      } else {
+        this.modalOpen = false;
+        await this.load();
+      }
     },
 
     async remove() {

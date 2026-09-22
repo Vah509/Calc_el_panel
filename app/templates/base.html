@@ -15,13 +15,15 @@
     <div class="nav-dropdown">
       <span class="nav-link nav-dropdown-title" tabindex="0">{{ section.title }}</span>
       <div class="nav-dropdown-panel">
-        {% if section.links %}
-          {% for item in section.links %}
-          <a href="{{ item.url }}" class="nav-dropdown-item">{{ item.label }}</a>
-          {% endfor %}
-        {% else %}
-          <span class="nav-dropdown-empty">Пока пусто</span>
-        {% endif %}
+        <div class="nav-dropdown-panel-inner">
+          {% if section.links %}
+            {% for item in section.links %}
+            <a href="{{ item.url }}" class="nav-dropdown-item">{{ item.label }}</a>
+            {% endfor %}
+          {% else %}
+            <span class="nav-dropdown-empty">Пока пусто</span>
+          {% endif %}
+        </div>
       </div>
     </div>
     {% endfor %}

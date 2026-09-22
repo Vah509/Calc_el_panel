@@ -274,6 +274,15 @@ tbody tr:hover { background: #faf9f6; }
 .modal-header { padding: 16px 20px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; }
 .modal-header h2 { font-size: 15px; margin: 0; font-weight: 600; }
 .modal-header .subtitle { font-size: 12px; color: var(--ink-soft); font-family: var(--mono); margin-top: 2px; }
+/* Индикатор состояния формы — "требует сохранения" / "сохранено"
+   (см. isDirty в page.py). Нейтральный серый в сохранённом состоянии
+   (не хочется лишнего зелёного "успеха" на каждый чих), акцентный
+   янтарный, когда есть несохранённые изменения — привлекает внимание,
+   но не выглядит как ошибка (--danger здесь был бы слишком тревожным). */
+.form-dirty-indicator { font-size: 12px; white-space: nowrap; display: flex; align-items: center; gap: 5px; }
+.form-dirty-indicator .dot { font-size: 15px; line-height: 1; }
+.form-dirty-indicator.is-dirty { color: #a06a1f; }
+.form-dirty-indicator.is-saved { color: var(--ink-soft); }
 .modal-body { padding: 20px; display: flex; flex-direction: column; gap: 14px; max-height: 60vh; overflow-y: auto; }
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field label { font-size: 12px; font-weight: 600; color: var(--ink-soft); }
@@ -364,14 +373,27 @@ footer.hint { padding: 10px 20px 30px; font-size: 12px; color: var(--ink-soft); 
   position: absolute;
   top: 100%;
   left: 0;
-  margin-top: 4px;
+  /* Было margin-top: 4px — создавало "мёртвую зону" без hover между
+     заголовком и панелью: курсор, двигаясь по диагонали вниз к пункту
+     меню, на мгновение оказывался вне .nav-dropdown, и панель успевала
+     закрыться (display: none) раньше, чем курсор до неё доходил.
+     Решение: зазор теперь padding-top самой панели (внутри hover-зоны,
+     .nav-dropdown-panel — потомок .nav-dropdown), а box-shadow/border
+     визуально сдвинуты вниз тем же padding, чтобы вид не изменился. */
+  margin-top: 0;
+  padding-top: 4px;
   min-width: 180px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  z-index: 40;
+}
+.nav-dropdown-panel-inner {
   background: white;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.18);
   padding: 6px;
-  z-index: 40;
 }
 .nav-dropdown:hover .nav-dropdown-panel,
 .nav-dropdown:focus-within .nav-dropdown-panel { display: block; }

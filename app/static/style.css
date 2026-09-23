@@ -818,9 +818,38 @@ footer.hint { padding: 10px 20px 30px; font-size: 12px; color: var(--ink-soft); 
    узкую первую колонку под чекбокс (тот же принцип, что и колонка
    скидки счёта выше). */
 .brand-calc-table th:first-child,
-.brand-calc-table td:first-child {
+.brand-calc-table td:first-child,
+.brand-calc-table th:nth-child(2),
+.brand-calc-table td:nth-child(2) {
   width: 34px;
   text-align: center;
   padding-left: 8px;
   padding-right: 8px;
+}
+
+/* Раздел "Счета" на вкладке бренда заявки (2026-09-22, задача
+   "калькуляция+счёт прямо из заявки") — второй read-only список,
+   под списком калькуляций. Переиспользует .readonly-items-block/
+   .readonly-items-table/.materials-toolbar целиком, добавляет только
+   отступ сверху (отделить от блока калькуляций) и узкую radio-колонку
+   (тот же принцип, что .brand-calc-table выше), плюс бейдж
+   "заморожено". */
+.brand-invoice-block { margin-top: 18px; }
+.materials-toolbar-label { align-self: center; font-size: 13.5px; font-weight: 600; color: var(--ink-soft); margin-right: 2px; }
+.brand-invoice-table th:first-child,
+.brand-invoice-table td:first-child {
+  width: 34px;
+  text-align: center;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+.badge-frozen {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b5b00;
+  background: #fff3c4;
+  border-radius: 5px;
+  padding: 2px 7px;
+  white-space: nowrap;
 }

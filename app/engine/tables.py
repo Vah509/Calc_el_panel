@@ -184,10 +184,16 @@ def _refresh_brand_calculations_handler(instance: Request, session) -> dict:
     счёта, точечный пересчёт цен) только в следующих сессиях плана.
 
     Возвращает {"brand_slot_1_calcs": [...], "brand_slot_2_calcs": [...],
-    "brand_slot_3_calcs": [...]} — по одному списку словарей на слот,
-    каждый словарь: id, document_number, full_name, final_total,
-    document_date (все значения уже в JSON-совместимом виде, дата как
-    ISO-строка — это plain dict, не ORM-объект, isoformat() нужен явно).
+    "brand_slot_3_calcs": [...], "brand_slot_1_invoices": [...], ...} —
+    по одному списку словарей калькуляций И по одному списку словарей
+    счетов на слот, каждый словарь калькуляции: id, document_number,
+    full_name, final_total, document_date (все значения уже в
+    JSON-совместимом виде, дата как ISO-строка — это plain dict, не
+    ORM-объект, isoformat() нужен явно); каждый словарь счёта: id,
+    document_number, total_incl_vat, document_date, is_frozen (нужен
+    фронту, чтобы подписать замороженный счёт в списке — см.
+    brand-invoice-table в page.py, добавлено 2026-09-22 вместе со
+    вторым списком на вкладке бренда).
     Пустая заявка (ещё не сохранена, instance.id нет) сюда не попадает —
     runAction() на фронте не вызывает action без editing.id вообще."""
     result: dict[str, list[dict]] = {}
@@ -203,7 +209,37 @@ def _refresh_brand_calculations_handler(instance: Request, session) -> dict:
             }
             for c in calcs
         ]
+        invoices = _brand_slot_invoices(instance, slot, session)
+        result[f"brand_slot_{slot}_invoices"] = [
+            {
+                "id": inv.id,
+                "document_number": inv.document_number,
+                "total_incl_vat": inv.total_incl_vat,
+                "document_date": inv.document_date.isoformat() if inv.document_date else "",
+                "is_frozen": inv.is_frozen,
+            }
+            for inv in invoices
+        ]
     return result
+
+
+def _brand_slot_invoices(request_instance: Request, slot: int, session) -> list:
+    """Список НЕ удалённых счетов этой заявки для данного brand_slot
+    (2026-09-22, задача "калькуляция+счёт прямо из заявки") — второй
+    список на вкладке бренда, рядом со списком калькуляций (см.
+    _active_brand_slot_calculations выше). В отличие от него — не
+    фильтруем по is_frozen, показываем И активный, И замороженные
+    счета слота разом (фронт различает их по бейджу "заморожено",
+    см. brand-invoice-table в page.py), чтобы копировать можно было
+    любой. Сортировка та же — по document_date, потом document_time,
+    оба по убыванию (новые сверху)."""
+    return session.exec(
+        select(Invoice)
+        .where(Invoice.request_id == request_instance.id)
+        .where(Invoice.brand_slot == slot)
+        .where(Invoice.is_deleted == False)  # noqa: E712
+        .order_by(Invoice.document_date.desc(), Invoice.document_time.desc())
+    ).all()
 
 
 def _active_brand_slot_calculations(request_instance: Request, slot: int, session) -> list:
@@ -253,6 +289,206 @@ def _recalc_brand_calculations_handler(instance: Request, session) -> dict:
     for slot in (1, 2, 3):
         for calc in _active_brand_slot_calculations(instance, slot, session):
             _recalc_calculation_prices(calc, session)
+    session.commit()
+    return _refresh_brand_calculations_handler(instance, session)
+
+
+def _create_calculation_in_slot_handler(brand_slot: int):
+    """Фабрика обработчика кнопки «Створити калькуляцію» слота
+    brand_slot (1/2/3) на вкладке бренда заявки (2026-09-22, задача
+    "калькуляция+счёт прямо из заявки" — до сих пор калькуляции
+    заводились ТОЛЬКО отдельным журналом /calculation-v2, эта кнопка
+    даёт создать её прямо из заявки). Тот же приём с зашитым в имя
+    action номером слота, что и build_invoice_slot_N выше — три
+    отдельных обработчика, action_handlers плоский словарь.
+
+    Создаёт ПУСТУЮ калькуляцию (без состава материалов/комплектов,
+    как обычная только что созданная калькуляция из журнала — решено
+    с Вахтангом: копировать состав ниоткуда не нужно), с request_id
+    этой заявки и brand_slot, ЗАРАНЕЕ проставленным по номеру
+    вкладки — человеку не нужно выбирать слот вручную, как пришлось
+    бы при создании через общий журнал калькуляций. Остальные поля —
+    те же дефолты, что и при обычном создании калькуляции (номер
+    документа через next_document_number, unit_id через тот же
+    before_create_hook _default_calculation_unit_id, что использует
+    обычная форма — вызываем его тем же способом, что и универсальный
+    POST /api/calculation, чтобы дефолт не пришлось дублировать).
+
+    Возвращает {"redirect_url": "/calculation-v2/{id}"} — та же
+    механика, что у build_invoice_slot_N (открыть форму созданного
+    документа сразу, а не подмешивать что-то в форму заявки)."""
+
+    def handler(instance: Request, session) -> dict:
+        from app.engine.document_numbering import next_document_number
+
+        data: dict = {}
+        data = _default_calculation_unit_id(data, session)
+        calc = Calculation(
+            request_id=instance.id,
+            brand_slot=brand_slot,
+            document_number=next_document_number(session, "K"),
+            unit_id=data.get("unit_id"),
+        )
+        session.add(calc)
+        session.commit()
+        session.refresh(calc)
+        return {"redirect_url": f"/calculation-v2/{calc.id}"}
+
+    return handler
+
+
+def _copy_calculation_handler(instance: Request, session, payload: dict) -> dict:
+    """Обработчик кнопки «Скопіювати» у отмеченной чекбоксом
+    калькуляции на вкладке бренда заявки (2026-09-22, задача
+    "калькуляция+счёт прямо из заявки"). Один обработчик на все три
+    слота (слот копии берём с ОРИГИНАЛА, не из имени action — в
+    отличие от build_invoice_slot_N/create_calculation_slot_N номер
+    слота здесь не нужно зашивать заранее, payload несёт id
+    оригинала). payload = {"calculation_id": 1} — ровно один id,
+    чекбокс для копирования допускает отметить только одну строку за
+    раз (решено с Вахтангом), сервер тоже проверяет это второй линией
+    защиты.
+
+    Копирует ШАПКУ калькуляции (все поля вкладок "Основное"/
+    "Настройки"/"Стоимость" — client_name, name_template, brand_slot,
+    unit_id, quantity, cost_method, markup_percent, insurance_markup,
+    assembly_hours, product_type_rate_id, все *_total) И состав
+    (CalculationItem — материалы и комплекты, со снэпшот-ценами как
+    есть). Копия — ОБЫЧНАЯ независимая калькуляция: без пометки на
+    удаление (is_deleted=False, даже если у оригинала стояла — решено
+    с Вахтангом), status="active", свой новый document_number/
+    document_date/document_time (см. Calculation.status — "свободные
+    переходы", у калькуляций нет понятия "активна только одна", в
+    отличие от Invoice.is_frozen — копия ничем не ограничена)."""
+    from app.engine.document_numbering import next_document_number
+
+    calculation_ids = payload.get("calculation_id")
+    if calculation_ids is None:
+        raise HTTPException(status_code=422, detail="Не відмічено калькуляцію для копіювання.")
+    if isinstance(calculation_ids, list):
+        if len(calculation_ids) != 1:
+            raise HTTPException(status_code=422, detail="Для копіювання відмітьте рівно одну калькуляцію.")
+        calc_id = int(calculation_ids[0])
+    else:
+        calc_id = int(calculation_ids)
+
+    original = session.get(Calculation, calc_id)
+    if original is None or original.request_id != instance.id:
+        raise HTTPException(status_code=422, detail="Калькуляцію для копіювання не знайдено.")
+
+    copy = Calculation(
+        document_number=next_document_number(session, "K"),
+        request_id=original.request_id,
+        client_name=original.client_name,
+        full_name=original.full_name,
+        name_template=original.name_template,
+        brand_slot=original.brand_slot,
+        unit_id=original.unit_id,
+        quantity=original.quantity,
+        status="active",
+        cost_method=original.cost_method,
+        markup_percent=original.markup_percent,
+        insurance_markup=original.insurance_markup,
+        assembly_hours=original.assembly_hours,
+        product_type_rate_id=original.product_type_rate_id,
+        materials_total=original.materials_total,
+        kits_total=original.kits_total,
+        base_total=original.base_total,
+        insured_total=original.insured_total,
+        markup_total=original.markup_total,
+        hours_total=original.hours_total,
+        final_total=original.final_total,
+        is_deleted=False,
+    )
+    session.add(copy)
+    session.flush()
+
+    original_items = session.exec(
+        select(CalculationItem).where(CalculationItem.calculation_id == original.id)
+    ).all()
+    for item in original_items:
+        session.add(CalculationItem(
+            calculation_id=copy.id,
+            material_id=item.material_id,
+            kit_id=item.kit_id,
+            quantity=item.quantity,
+            price_excl_vat=item.price_excl_vat,
+        ))
+
+    session.commit()
+    return _refresh_brand_calculations_handler(instance, session)
+
+
+def _copy_invoice_handler(instance: Request, session, payload: dict) -> dict:
+    """Обработчик кнопки «Скопіювати» у отмеченного чекбоксом счёта на
+    вкладке бренда заявки (2026-09-22, задача "калькуляция+счёт прямо
+    из заявки"). payload = {"invoice_id": 1} — ровно один id, тот же
+    принцип "один чекбокс за раз", что и у _copy_calculation_handler.
+
+    Копирует ШАПКУ счёта (firm_id/client_id/client_invoice_id/
+    brand_slot/*_total) И состав (InvoiceItem, включая
+    discount_percent/unit_price_after_discount/line_total как есть) —
+    доступно для ЛЮБОГО счёта слота, активного или уже замороженного
+    (решено с Вахтангом). Копия ВСЕГДА создаётся замороженной
+    (is_frozen=True), независимо от статуса оригинала — по правилу
+    "активный счёт слота может быть только один" (см.
+    _build_invoice_from_slot_handler выше): если бы копия активного
+    счёта тоже была активной, на слоте сразу оказалось бы два активных
+    счёта, что заблокировало бы кнопку "Створити рахунок". Копия
+    остаётся привязанной к тем же калькуляциям через
+    InvoiceItem.calculation_id — просто больше не будет обновляться
+    кнопкой "Створити рахунок" (та ищет только НЕ замороженные счета
+    слота), т.е. это снимок на момент копирования. Без пометки на
+    удаление (is_deleted=False), даже если у оригинала стояла — тот
+    же принцип, что и у копии калькуляции."""
+    from app.engine.document_numbering import next_document_number
+
+    invoice_ids = payload.get("invoice_id")
+    if invoice_ids is None:
+        raise HTTPException(status_code=422, detail="Не відмічено рахунок для копіювання.")
+    if isinstance(invoice_ids, list):
+        if len(invoice_ids) != 1:
+            raise HTTPException(status_code=422, detail="Для копіювання відмітьте рівно один рахунок.")
+        inv_id = int(invoice_ids[0])
+    else:
+        inv_id = int(invoice_ids)
+
+    original = session.get(Invoice, inv_id)
+    if original is None or original.request_id != instance.id:
+        raise HTTPException(status_code=422, detail="Рахунок для копіювання не знайдено.")
+
+    copy = Invoice(
+        document_number=next_document_number(session, "I"),
+        request_id=original.request_id,
+        brand_slot=original.brand_slot,
+        firm_id=original.firm_id,
+        client_id=original.client_id,
+        client_invoice_id=original.client_invoice_id,
+        total_excl_vat=original.total_excl_vat,
+        vat_amount=original.vat_amount,
+        total_incl_vat=original.total_incl_vat,
+        is_frozen=True,
+        is_deleted=False,
+    )
+    session.add(copy)
+    session.flush()
+
+    original_items = session.exec(
+        select(InvoiceItem).where(InvoiceItem.invoice_id == original.id)
+    ).all()
+    for item in original_items:
+        session.add(InvoiceItem(
+            invoice_id=copy.id,
+            calculation_id=item.calculation_id,
+            product_name=item.product_name,
+            unit_name=item.unit_name,
+            quantity=item.quantity,
+            unit_price=item.unit_price,
+            discount_percent=item.discount_percent,
+            unit_price_after_discount=item.unit_price_after_discount,
+            line_total=item.line_total,
+        ))
+
     session.commit()
     return _refresh_brand_calculations_handler(instance, session)
 
@@ -472,6 +708,17 @@ request_table = TableConfig(
         ("final_total", "Сума", "money"),
         ("document_date", "Дата", "text"),
     ],
+    # brand_slot_invoice_columns (2026-09-22, задача "калькуляция+счёт
+    # прямо из заявки") — второй read-only список на вкладке бренда,
+    # под списком калькуляций: счета этого слота (см.
+    # _brand_slot_invoices/render в page.py). is_frozen отдельно НЕ
+    # выводим колонкой — фронт показывает его бейджем рядом с номером
+    # (см. brand-invoice-table в page.py).
+    brand_slot_invoice_columns=[
+        ("document_number", "Номер", "text"),
+        ("total_incl_vat", "Сума", "money"),
+        ("document_date", "Дата", "text"),
+    ],
     open_edit_action="refresh_brand_calculations",
     action_handlers={
         # refresh_brand_calculations (2026-09-04) — см.
@@ -507,6 +754,26 @@ request_table = TableConfig(
         "build_invoice_slot_1": _build_invoice_from_slot_handler(1),
         "build_invoice_slot_2": _build_invoice_from_slot_handler(2),
         "build_invoice_slot_3": _build_invoice_from_slot_handler(3),
+        # create_calculation_slot_1/2/3 (2026-09-22, задача "калькуляция+
+        # счёт прямо из заявки") — кнопка "Створити калькуляцію" на
+        # каждой из трёх вкладок бренда. Как и build_invoice_slot_N —
+        # номер слота зашит в имени action; в отличие от него — без
+        # payload (см. _create_calculation_in_slot_handler: сигнатура
+        # handler(instance, session) с ДВУМЯ параметрами — этой кнопке
+        # не нужны данные от человека), поэтому вызывается обычным
+        # runAction(), не отдельной JS-функцией.
+        "create_calculation_slot_1": _create_calculation_in_slot_handler(1),
+        "create_calculation_slot_2": _create_calculation_in_slot_handler(2),
+        "create_calculation_slot_3": _create_calculation_in_slot_handler(3),
+        # copy_brand_calculation/copy_brand_invoice (2026-09-22, та же
+        # задача) — кнопка "Скопіювати" у отмеченной чекбоксом строки в
+        # каждом из двух списков вкладки бренда. Один обработчик на все
+        # три слота (слот копии берём с оригинала по payload, не из
+        # имени action — см. докстринги обработчиков выше). Нужен
+        # payload (id отмеченной строки) — вызывается своей JS-функцией
+        # copyBrandCalculation()/copyBrandInvoice(), не runAction().
+        "copy_brand_calculation": _copy_calculation_handler,
+        "copy_brand_invoice": _copy_invoice_handler,
     },
     fields=[
         FieldConfig(name="document_number", label="Номер", list_width="90px", tab="Основное"),

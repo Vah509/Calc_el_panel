@@ -737,6 +737,21 @@ class TableConfig:
                                     # форма калькуляции показывается на каждом
                                     # слоте). Согласовано с Вахтангом 2026-09-04:
                                     # номер, название, сумма, дата.
+    brand_slot_invoice_columns: list[tuple[str, str, str]] = field(default_factory=list)
+                                    # Колонки ВТОРОГО read-only списка на
+                                    # вкладке бренда — счета этого слота
+                                    # (введено 2026-09-22, request, задача
+                                    # "калькуляция+счёт прямо из заявки").
+                                    # Тот же формат, что и
+                                    # brand_slot_calc_columns. Пусто — блок
+                                    # счетов не рендерится (используется
+                                    # вместе с brand_slot_calc_tabs — те же
+                                    # (tab_name, slot_number, calcs_field)
+                                    # тройки задают и вкладки, и слоты для
+                                    # обоих списков; invoices_field каждого
+                                    # слота собирается автоматически как
+                                    # calcs_field с заменой "_calcs" на
+                                    # "_invoices").
     open_edit_action: Optional[str] = None
                                     # Имя action (ключ в action_handlers), вызываемое
                                     # АВТОМАТИЧЕСКИ при каждом открытии формы

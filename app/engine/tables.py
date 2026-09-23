@@ -359,7 +359,18 @@ def _copy_calculation_handler(instance: Request, session, payload: dict) -> dict
     с Вахтангом), status="active", свой новый document_number/
     document_date/document_time (см. Calculation.status — "свободные
     переходы", у калькуляций нет понятия "активна только одна", в
-    отличие от Invoice.is_frozen — копия ничем не ограничена)."""
+    отличие от Invoice.is_frozen — копия ничем не ограничена).
+
+    Возвращает {"redirect_url": "/calculation-v2/{id}"} — правка
+    2026-09-23 (Вахтанг: "когда документ копируется то он должен
+    сразу открываться чтобы можно было отредактировать и сохранить").
+    Раньше возвращал обновлённые brand_slot_N_calcs/_invoices на
+    место (без перехода) — тем же путём, что refresh; из-за этого
+    человеку было не видно результат копирования без ручного
+    "Обновить список" И нельзя было сразу поправить копию. Теперь —
+    та же механика редиректа, что у create_calculation_slot_N/
+    build_invoice_slot_N (см. copyBrandCalculation в page.py:
+    window.location.href на этот redirect_url)."""
     from app.engine.document_numbering import next_document_number
 
     calculation_ids = payload.get("calculation_id")
@@ -416,7 +427,8 @@ def _copy_calculation_handler(instance: Request, session, payload: dict) -> dict
         ))
 
     session.commit()
-    return _refresh_brand_calculations_handler(instance, session)
+    session.refresh(copy)
+    return {"redirect_url": f"/calculation-v2/{copy.id}"}
 
 
 def _copy_invoice_handler(instance: Request, session, payload: dict) -> dict:
@@ -440,7 +452,12 @@ def _copy_invoice_handler(instance: Request, session, payload: dict) -> dict:
     кнопкой "Створити рахунок" (та ищет только НЕ замороженные счета
     слота), т.е. это снимок на момент копирования. Без пометки на
     удаление (is_deleted=False), даже если у оригинала стояла — тот
-    же принцип, что и у копии калькуляции."""
+    же принцип, что и у копии калькуляции.
+
+    Возвращает {"redirect_url": "/invoice-v2/{id}"} — та же правка
+    2026-09-23, что и у _copy_calculation_handler выше (см. докстринг
+    там про причину — сразу открыть копию для правки, а не молча
+    обновить список на месте)."""
     from app.engine.document_numbering import next_document_number
 
     invoice_ids = payload.get("invoice_id")
@@ -490,7 +507,8 @@ def _copy_invoice_handler(instance: Request, session, payload: dict) -> dict:
         ))
 
     session.commit()
-    return _refresh_brand_calculations_handler(instance, session)
+    session.refresh(copy)
+    return {"redirect_url": f"/invoice-v2/{copy.id}"}
 
 
 def _build_invoice_from_slot_handler(brand_slot: int):

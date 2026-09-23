@@ -594,9 +594,9 @@ _PAGE_TEMPLATE_SOURCE = r"""
               </thead>
               <tbody>
                 <template x-for="row in (editing.{{ bsc_field }} || [])" :key="row.id">
-                  <tr>
-                    <td><input type="checkbox" :checked="brandCalcChecked({{ bsc_slot }}, row.id)" @change="brandCalcToggle({{ bsc_slot }}, row.id)"></td>
-                    <td><input type="radio" :name="'brand-calc-copy-{{ bsc_slot }}'" :checked="brandCalcCopyTarget[{{ bsc_slot }}] === row.id" @change="brandCalcCopySelect({{ bsc_slot }}, row.id)"></td>
+                  <tr class="clickable-row" @click="window.location.href = '/calculation-v2/' + row.id">
+                    <td @click.stop><input type="checkbox" :checked="brandCalcChecked({{ bsc_slot }}, row.id)" @change="brandCalcToggle({{ bsc_slot }}, row.id)"></td>
+                    <td @click.stop><input type="radio" :name="'brand-calc-copy-{{ bsc_slot }}'" :checked="brandCalcCopyTarget[{{ bsc_slot }}] === row.id" @change="brandCalcCopySelect({{ bsc_slot }}, row.id)"></td>
                     {% for field_name, col_label, col_format in config.brand_slot_calc_columns %}
                     {% if col_format == 'money' %}
                     <td x-text="Number(row['{{ field_name }}'] ?? 0).toFixed(2)"></td>
@@ -638,8 +638,8 @@ _PAGE_TEMPLATE_SOURCE = r"""
               </thead>
               <tbody>
                 <template x-for="row in (editing.{{ bsi_field }} || [])" :key="row.id">
-                  <tr>
-                    <td><input type="radio" :name="'brand-invoice-copy-{{ bsc_slot }}'" :checked="brandInvoiceCopyTarget[{{ bsc_slot }}] === row.id" @change="brandInvoiceCopySelect({{ bsc_slot }}, row.id)"></td>
+                  <tr class="clickable-row" @click="window.location.href = '/invoice-v2/' + row.id">
+                    <td @click.stop><input type="radio" :name="'brand-invoice-copy-{{ bsc_slot }}'" :checked="brandInvoiceCopyTarget[{{ bsc_slot }}] === row.id" @change="brandInvoiceCopySelect({{ bsc_slot }}, row.id)"></td>
                     {% for field_name, col_label, col_format in config.brand_slot_invoice_columns %}
                     {% if col_format == 'money' %}
                     <td x-text="Number(row['{{ field_name }}'] ?? 0).toFixed(2)"></td>
@@ -2684,10 +2684,12 @@ function enginePage() {
       // заявки (2026-09-22, задача "калькуляция+счёт прямо из
       // заявки") — та же природа вызова, что buildInvoiceFromSlot()
       // выше (свой fetch с JSON body — нужно передать id отмеченной
-      // строки, которого runAction() не несёт), но БЕЗ redirect —
-      // сервер возвращает обновлённые brand_slot_N_calcs/_invoices
-      // (та же форма ответа, что refresh_brand_calculations), список
-      // на вкладке просто обновляется на месте.
+      // строки, которого runAction() не несёт). Правка 2026-09-23
+      // (Вахтанг: копия должна сразу открываться для правки) —
+      // сервер теперь возвращает {"redirect_url": ...}, СРАЗУ
+      // переходим на страницу копии, как и у "Створити рахунок"/
+      // "Створити калькуляцію" (раньше здесь был мердж в editing без
+      // перехода — заменено).
       const calcId = this.brandCalcCopyTarget[slot];
       if (!calcId) return;
       try {
@@ -2699,15 +2701,15 @@ function enginePage() {
         });
         if (!res.ok) { showJsError(await res.text()); return; }
         const data = await res.json();
-        this.editing = { ...this.editing, ...data };
-        this.brandCalcCopyTarget[slot] = null;
+        if (data.redirect_url) { window.location.href = data.redirect_url; }
       } catch (err) { showJsError(err); }
     },
 
     async copyBrandInvoice(slot) {
       // Кнопка "Скопіювати" раздела "Счета" на вкладке бренда заявки
       // (2026-09-22, та же задача) — зеркало copyBrandCalculation()
-      // выше, для второго списка.
+      // выше, для второго списка. Та же правка 2026-09-23 — редирект
+      // на копию вместо мерджа на месте.
       const invoiceId = this.brandInvoiceCopyTarget[slot];
       if (!invoiceId) return;
       try {
@@ -2719,8 +2721,7 @@ function enginePage() {
         });
         if (!res.ok) { showJsError(await res.text()); return; }
         const data = await res.json();
-        this.editing = { ...this.editing, ...data };
-        this.brandInvoiceCopyTarget[slot] = null;
+        if (data.redirect_url) { window.location.href = data.redirect_url; }
       } catch (err) { showJsError(err); }
     },
 

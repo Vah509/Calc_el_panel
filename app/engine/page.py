@@ -40,7 +40,8 @@ _NON_ROOT_HIERARCHY_TEMPLATE_SOURCE = r"""
 _PAGE_TEMPLATE_SOURCE = r"""
 {% extends "base.html" %}
 {% block content %}
-<div x-data="enginePage()" x-init="init()">
+<div x-data="enginePage()" x-init="init()"
+     @pageshow.window="onPageShow($event)">
 
   {% if render_mode != 'form' %}
   {% if not config.hierarchy %}
@@ -563,8 +564,11 @@ _PAGE_TEMPLATE_SOURCE = r"""
                  "Скопіювати" добавлены здесь же). Чекбоксы первой колонки
                  (brandCalcToggle/brandCalcChecked) остаются МНОЖЕСТВЕННЫМ
                  выбором — они же используются "Створити рахунок"; для
-                 копирования — ОТДЕЛЬНАЯ radio-колонка (ровно одна строка,
-                 см. brandCalcCopyTarget/brandCalcCopySelect). -->
+                 копирования — ОТДЕЛЬНАЯ колонка (не больше одной строки
+                 одновременно, снимается повторным кликом — см.
+                 brandCalcCopyTarget/brandCalcCopySelect; изначально была
+                 сделана как input[type=radio], заменена на checkbox
+                 2026-09-23, т.к. нативный radio нельзя снять кликом). -->
             <div class="materials-toolbar">
               <button type="button" class="btn btn-ghost"
                       @click="runAction('{{ config.brand_slot_calc_refresh_action }}')">Обновить список</button>
@@ -596,7 +600,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
                 <template x-for="row in (editing.{{ bsc_field }} || [])" :key="row.id">
                   <tr class="clickable-row" @click="window.location.href = '/calculation-v2/' + row.id">
                     <td @click.stop><input type="checkbox" :checked="brandCalcChecked({{ bsc_slot }}, row.id)" @change="brandCalcToggle({{ bsc_slot }}, row.id)"></td>
-                    <td @click.stop><input type="radio" :name="'brand-calc-copy-{{ bsc_slot }}'" :checked="brandCalcCopyTarget[{{ bsc_slot }}] === row.id" @change="brandCalcCopySelect({{ bsc_slot }}, row.id)"></td>
+                    <td @click.stop><input type="checkbox" :checked="brandCalcCopyTarget[{{ bsc_slot }}] === row.id" @change="brandCalcCopySelect({{ bsc_slot }}, row.id)"></td>
                     {% for field_name, col_label, col_format in config.brand_slot_calc_columns %}
                     {% if col_format == 'money' %}
                     <td x-text="Number(row['{{ field_name }}'] ?? 0).toFixed(2)"></td>
@@ -614,9 +618,10 @@ _PAGE_TEMPLATE_SOURCE = r"""
           <!-- Раздел "Счета" (2026-09-22, та же задача) — второй
                read-only список на вкладке бренда, под списком
                калькуляций: счета, собранные из калькуляций этого слота
-               (см. _brand_slot_invoices в tables.py). Своя radio-колонка
-               для копирования (brandInvoiceCopyTarget/
-               brandInvoiceCopySelect) — независимая от радиокнопок
+               (см. _brand_slot_invoices в tables.py). Своя колонка для
+               копирования (brandInvoiceCopyTarget/brandInvoiceCopySelect,
+               checkbox с 2026-09-23 — см. комментарий у раздела
+               "Калькуляции" выше) — независимая от колонки копирования
                раздела калькуляций выше. -->
           <div x-show="editing.id" x-cloak class="readonly-items-block brand-invoice-block">
             <div class="materials-toolbar">
@@ -639,7 +644,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
               <tbody>
                 <template x-for="row in (editing.{{ bsi_field }} || [])" :key="row.id">
                   <tr class="clickable-row" @click="window.location.href = '/invoice-v2/' + row.id">
-                    <td @click.stop><input type="radio" :name="'brand-invoice-copy-{{ bsc_slot }}'" :checked="brandInvoiceCopyTarget[{{ bsc_slot }}] === row.id" @change="brandInvoiceCopySelect({{ bsc_slot }}, row.id)"></td>
+                    <td @click.stop><input type="checkbox" :checked="brandInvoiceCopyTarget[{{ bsc_slot }}] === row.id" @change="brandInvoiceCopySelect({{ bsc_slot }}, row.id)"></td>
                     {% for field_name, col_label, col_format in config.brand_slot_invoice_columns %}
                     {% if col_format == 'money' %}
                     <td x-text="Number(row['{{ field_name }}'] ?? 0).toFixed(2)"></td>
@@ -1413,13 +1418,30 @@ function enginePage() {
     // brandCalcCopyTarget/brandInvoiceCopyTarget (2026-09-22, задача
     // "калькуляция+счёт прямо из заявки") — id ОДНОЙ отмеченной строки
     // для копирования, отдельно по слоту, отдельно для калькуляций и
-    // для счетов (радиокнопка — не Set, как brandCalcSelected выше,
-    // ровно одна строка). Живёт только в браузере, сбрасывается при
+    // для счетов (не Set, как brandCalcSelected выше — ровно одна
+    // строка максимум). Живёт только в браузере, сбрасывается при
     // каждом openEdit()/openCreate(), как и brandCalcSelected.
+    //
+    // ИСПРАВЛЕНО (2026-09-23, жалоба Вахтанга: "чекбокс для копирования
+    // нельзя снять повторным нажатием"): раньше разметка использовала
+    // <input type="radio"> — это НАТИВНОЕ поведение браузера для radio,
+    // его нельзя снять повторным кликом ни при каком JS-обработчике,
+    // только выбрав другую радиокнопку той же группы или сбросив форму.
+    // Теперь разметка — <input type="checkbox"> (см. brand-calc-table/
+    // brand-invoice-table в render), а *_CopySelect() ниже сами
+    // обеспечивают "не больше одной отмеченной строки": повторный клик
+    // по уже отмеченной строке снимает отметку (toggle), клик по другой
+    // строке молча снимает старую и ставит новую — то есть визуальное
+    // поведение "как радиокнопка" сохранено, но теперь оно полностью
+    // управляется этим кодом, а не природой input[type=radio].
     brandCalcCopyTarget: { 1: null, 2: null, 3: null },
     brandInvoiceCopyTarget: { 1: null, 2: null, 3: null },
-    brandCalcCopySelect(slot, calcId) { this.brandCalcCopyTarget[slot] = calcId; },
-    brandInvoiceCopySelect(slot, invoiceId) { this.brandInvoiceCopyTarget[slot] = invoiceId; },
+    brandCalcCopySelect(slot, calcId) {
+      this.brandCalcCopyTarget[slot] = (this.brandCalcCopyTarget[slot] === calcId) ? null : calcId;
+    },
+    brandInvoiceCopySelect(slot, invoiceId) {
+      this.brandInvoiceCopyTarget[slot] = (this.brandInvoiceCopyTarget[slot] === invoiceId) ? null : invoiceId;
+    },
     materialsSelectedIds: [],
     materialsMaterialOptions: [],
     materialsUnitOptions: [],
@@ -1718,9 +1740,45 @@ function enginePage() {
       } catch (err) { showJsError(err); }
     },
 
-    // scrollLockY: запомненная позиция скролла страницы НА МОМЕНТ
-    // блокировки — нужна, чтобы снять блокировку ровно в ту же точку
-    // (position:fixed на body сам по себе не помнит, откуда его
+    // onPageShow() (2026-09-23, жалоба Вахтанга: скопировал калькуляцию
+    // из вкладки заявки, поправил, "Сохранить и закрыть" → closeToList()
+    // → window.history.back() — вкладка "Заявка" вернулась НЕ обновлённой:
+    // K-000010 в списке калькуляций не появился, "Есть несохранённые
+    // изменения" осталась от предыдущего состояния формы.
+    //
+    // Причина: history.back() — это навигация браузера НАЗАД по истории,
+    // а не переход по URL и не перезагрузка. Браузер вправе (и обычно
+    // так и делает вне мобильного Safari с частой памятью) восстановить
+    // страницу заявки из bfcache (back-forward cache) — то есть отдать
+    // ровно тот DOM/JS-снимок, что был ДО ухода на страницу калькуляции,
+    // без повторного создания Alpine-компонента. x-init="init()" на
+    // <div x-data="enginePage()"> срабатывает только при создании
+    // компонента — при restore из bfcache он не создаётся заново, значит
+    // init() → maybeOpenOwnPage() → openEdit() → runAction(openEditAction)
+    // (см. openEdit() ниже, чем обновляется и refresh_brand_calculations
+    // для request) не выполняются повторно. Список остаётся тем, что был
+    // на момент ухода со страницы.
+    //
+    // pageshow — единственное штатное DOM-событие, которое браузер
+    // генерирует и при обычной загрузке, и при restore из bfcache;
+    // event.persisted === true — стандартный (не наш) признак именно
+    // restore-из-bfcache случая (см. MDN: PageTransitionEvent.persisted).
+    // В этом случае форсируем openEdit() заново для уже открытого
+    // документа — он сам сбрасывает brandCalc*-выборы, перегружает
+    // вкладочные данные (материалы/комплекты/строки) и повторно вызывает
+    // openEditAction, включая refresh_brand_calculations у request; заодно
+    // снимает свежий formSnapshot, так что устаревшее "Есть несохранённые
+    // изменения" тоже пропадает. Для CONFIG.renderMode !== 'form' (обычные
+    // списки) ничего не делаем — там list-страница и так перезапрашивает
+    // load() при обычных действиях, а openEdit() тут вызывать не по чему
+    // (нет гарантированно открытой формы).
+    onPageShow(event) {
+      if (!event.persisted) return;
+      if (CONFIG.renderMode !== 'form') return;
+      if (!this.editing || !this.editing.id) return;
+      this.openEdit(this.editing);
+    },
+
     // "зафиксировали").
     scrollLockY: 0,
 

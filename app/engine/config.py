@@ -43,7 +43,7 @@ class FieldConfig:
                                     # widget="select"/"radio" БЕЗ связи с другой
                                     # таблицей (в отличие от Relation — тот всегда
                                     # ссылается на реальную справочную таблицу с
-                                    # id/name). Пример: Calculation.status —
+                                    # id/name). Пример (историч., status убран в v109): Calculation.status —
                                     # фиксированный набор ["draft","active",...],
                                     # не таблица в БД. Для widget="radio" label
                                     # каждой опции — ЗАГЛУШКА на случай, если
@@ -190,7 +190,7 @@ class FieldConfig:
                                     # подписью значения во всплывающей подсказке
                                     # (title), а не отдельной текстовой колонкой.
                                     # Цвет точки берётся по value через
-                                    # dot_colors. Пример: Calculation.status —
+                                    # dot_colors. Пример (историч., status убран в v109): Calculation.status —
                                     # компактнее текстовой колонки, особенно на
                                     # телефоне. False — поле рендерится в списке
                                     # как обычно (см. f.options -> optionLabel()).

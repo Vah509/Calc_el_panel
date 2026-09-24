@@ -198,7 +198,7 @@ def _refresh_brand_calculations_handler(instance: Request, session) -> dict:
     runAction() на фронте не вызывает action без editing.id вообще."""
     result: dict[str, list[dict]] = {}
     for slot in (1, 2, 3):
-        calcs = _active_brand_slot_calculations(instance, slot, session)
+        calcs = _brand_slot_calculations(instance, slot, session)
         result[f"brand_slot_{slot}_calcs"] = [
             {
                 "id": c.id,
@@ -206,6 +206,9 @@ def _refresh_brand_calculations_handler(instance: Request, session) -> dict:
                 "full_name": c.full_name,
                 "final_total": c.final_total,
                 "document_date": c.document_date.isoformat() if c.document_date else "",
+                # v109: помеченные на удаление показываются в списке
+                # заявки наравне с остальными (серый бейдж "удаление").
+                "is_deleted": c.is_deleted,
             }
             for c in calcs
         ]
@@ -217,6 +220,7 @@ def _refresh_brand_calculations_handler(instance: Request, session) -> dict:
                 "total_incl_vat": inv.total_incl_vat,
                 "document_date": inv.document_date.isoformat() if inv.document_date else "",
                 "is_frozen": inv.is_frozen,
+                "is_deleted": inv.is_deleted,
             }
             for inv in invoices
         ]
@@ -224,10 +228,12 @@ def _refresh_brand_calculations_handler(instance: Request, session) -> dict:
 
 
 def _brand_slot_invoices(request_instance: Request, slot: int, session) -> list:
-    """Список НЕ удалённых счетов этой заявки для данного brand_slot
-    (2026-09-22, задача "калькуляция+счёт прямо из заявки") — второй
+    """Список ВСЕХ счетов этой заявки для данного brand_slot, включая
+    помеченные на удаление (v109: раньше помеченные скрывались — теперь
+    показываются с серым бейджем "удаление", решение Вахтанга; было:
+    "НЕ удалённых", 2026-09-22, задача "калькуляция+счёт прямо из заявки") — второй
     список на вкладке бренда, рядом со списком калькуляций (см.
-    _active_brand_slot_calculations выше). В отличие от него — не
+    _brand_slot_calculations выше). В отличие от него — не
     фильтруем по is_frozen, показываем И активный, И замороженные
     счета слота разом (фронт различает их по бейджу "заморожено",
     см. brand-invoice-table в page.py), чтобы копировать можно было
@@ -237,24 +243,25 @@ def _brand_slot_invoices(request_instance: Request, slot: int, session) -> list:
         select(Invoice)
         .where(Invoice.request_id == request_instance.id)
         .where(Invoice.brand_slot == slot)
-        .where(Invoice.is_deleted == False)  # noqa: E712
         .order_by(Invoice.document_date.desc(), Invoice.document_time.desc())
     ).all()
 
 
-def _active_brand_slot_calculations(request_instance: Request, slot: int, session) -> list:
-    """Общий запрос "активные калькуляции заявки для данного
-    brand_slot", выделен из _refresh_brand_calculations_handler
-    (2026-09-04, сессия 3 плана "Перепроведение") — тот же фильтр и
-    сортировка нужны ЕЩЁ И обработчику кнопки "Обновить цены"
-    (_recalc_brand_calculations_handler ниже), чтобы оба места не
-    расходились в критерии "что считать активными калькуляциями
-    слота", если он когда-нибудь изменится."""
+def _brand_slot_calculations(request_instance: Request, slot: int, session) -> list:
+    """Список ВСЕХ калькуляций заявки для данного brand_slot, включая
+    помеченные на удаление (v109, решение Вахтанга: "по заявке подтягиваются
+    абсолютно все документы, и помеченные на удаление тоже"). Единственный
+    признак "к удалению" — Calculation.is_deleted; поле status убрано в
+    v109 целиком (был дублирующий вариант "К удалению", ничего не значил).
+    Помеченные на удаление фронт рисует серым бейджем "удаление";
+    в счёт они не попадают (см. _build_invoice_from_slot_handler) и не
+    пересчитываются кнопкой "Обновить цены" (см.
+    _recalc_brand_calculations_handler). Сортировка — по document_date,
+    потом document_time, оба по убыванию (новые сверху)."""
     return session.exec(
         select(Calculation)
         .where(Calculation.request_id == request_instance.id)
         .where(Calculation.brand_slot == slot)
-        .where(Calculation.status == "active")
         .order_by(Calculation.document_date.desc(), Calculation.document_time.desc())
     ).all()
 
@@ -287,7 +294,9 @@ def _recalc_brand_calculations_handler(instance: Request, session) -> dict:
     же ожидаемым форматом ответа, дополнительного "Обновить список"
     не требуется (см. brandCalc-обвязку в page.py)."""
     for slot in (1, 2, 3):
-        for calc in _active_brand_slot_calculations(instance, slot, session):
+        for calc in _brand_slot_calculations(instance, slot, session):
+            if calc.is_deleted:
+                continue  # помеченные на удаление не пересчитываем
             _recalc_calculation_prices(calc, session)
     session.commit()
     return _refresh_brand_calculations_handler(instance, session)
@@ -356,9 +365,8 @@ def _copy_calculation_handler(instance: Request, session, payload: dict) -> dict
     (CalculationItem — материалы и комплекты, со снэпшот-ценами как
     есть). Копия — ОБЫЧНАЯ независимая калькуляция: без пометки на
     удаление (is_deleted=False, даже если у оригинала стояла — решено
-    с Вахтангом), status="active", свой новый document_number/
-    document_date/document_time (см. Calculation.status — "свободные
-    переходы", у калькуляций нет понятия "активна только одна", в
+    с Вахтангом), свой новый document_number/document_date/
+    document_time (у калькуляций нет понятия "активна только одна", в
     отличие от Invoice.is_frozen — копия ничем не ограничена).
 
     Возвращает {"redirect_url": "/calculation-v2/{id}"} — правка
@@ -396,7 +404,6 @@ def _copy_calculation_handler(instance: Request, session, payload: dict) -> dict
         brand_slot=original.brand_slot,
         unit_id=original.unit_id,
         quantity=original.quantity,
-        status="active",
         cost_method=original.cost_method,
         markup_percent=original.markup_percent,
         insurance_markup=original.insurance_markup,
@@ -511,6 +518,37 @@ def _copy_invoice_handler(instance: Request, session, payload: dict) -> dict:
     return {"redirect_url": f"/invoice-v2/{copy.id}"}
 
 
+def _toggle_brand_deleted_handler(instance: Request, session, payload: dict) -> dict:
+    """Кнопка «Видалення» на вкладке бренда заявки (v109): пометка на
+    удаление / снятие пометки по принципу ИНВЕРСИИ — каждому выделенному
+    документу is_deleted переключается на противоположное (помеченный →
+    снят, непомеченный → помечен). Один обработчик для обоих списков
+    (калькуляции и счета) — payload = {"kind": "calculation"|"invoice",
+    "ids": [1, 2, ...]}.
+
+    Работает только с документами ЭТОЙ заявки (чужие id молча
+    игнорируются — тот же принцип, что в _build_invoice_from_slot_handler).
+    Всё в одной транзакции (commit один раз в конце). Возвращает те же
+    ключи, что refresh_brand_calculations (brand_slot_N_calcs/_invoices),
+    чтобы фронт подмешал свежие списки в editing без отдельного запроса."""
+    kind = payload.get("kind")
+    ids = [int(i) for i in (payload.get("ids") or [])]
+    if kind not in ("calculation", "invoice"):
+        raise HTTPException(status_code=422, detail="Невідомий тип документа.")
+    if not ids:
+        raise HTTPException(status_code=422, detail="Не відмічено жодного документа.")
+
+    model = Calculation if kind == "calculation" else Invoice
+    rows = session.exec(
+        select(model).where(model.id.in_(ids), model.request_id == instance.id)
+    ).all()
+    for row in rows:
+        row.is_deleted = not row.is_deleted
+        session.add(row)
+    session.commit()
+    return _refresh_brand_calculations_handler(instance, session)
+
+
 def _build_invoice_from_slot_handler(brand_slot: int):
     """Фабрика обработчика кнопки «Створити рахунок» слота brand_slot
     (1/2/3) — сессия 4 плана "Перепроведение" (см.
@@ -593,10 +631,14 @@ def _build_invoice_from_slot_handler(brand_slot: int):
             c for c in calculations
             if c.request_id == instance.id and c.brand_slot == brand_slot
         ]
+        # v109: калькуляции, помеченные на удаление, в счёт НЕ попадают
+        # НИКОГДА (решение Вахтанга, однозначное). Фронт тоже не шлёт их
+        # id (см. buildInvoiceFromSlot в page.py), это вторая линия защиты.
+        calculations = [c for c in calculations if not c.is_deleted]
         if not calculations:
             raise HTTPException(
                 status_code=422,
-                detail="Не відмічено жодної калькуляції — нема з чого створювати рахунок.",
+                detail="Не відмічено жодної калькуляції (позначені на видалення до рахунку не потрапляють).",
             )
 
         active_invoices = session.exec(
@@ -792,6 +834,11 @@ request_table = TableConfig(
         # copyBrandCalculation()/copyBrandInvoice(), не runAction().
         "copy_brand_calculation": _copy_calculation_handler,
         "copy_brand_invoice": _copy_invoice_handler,
+        # toggle_brand_deleted (v109) — кнопка "Видалення": инверсия
+        # is_deleted у выделенных калькуляций/счетов вкладки бренда.
+        # Нужен payload (kind + ids) — вызывается своей JS-функцией
+        # toggleBrandDeleted(), не runAction().
+        "toggle_brand_deleted": _toggle_brand_deleted_handler,
     },
     fields=[
         FieldConfig(name="document_number", label="Номер", list_width="90px", tab="Основное"),
@@ -1247,28 +1294,6 @@ calculation_table = TableConfig(
                     list_width="90px", tab="Основное",
                     radio_labels_field="brand_slot_labels", radio_labels_action="brand_slot_labels",
                     options=[("1", "Вариант 1"), ("2", "Вариант 2"), ("3", "Вариант 3")]),
-        FieldConfig(name="status", label="Статус", widget="select", list_width="46px", tab="Основное",
-                    list_as_dot=True,
-                    # 2026-08-27: статус "draft" (черновик) и
-                    # "archived_pending" (к архивации) УБРАНЫ из
-                    # вариантов по решению Вахтанга — черновик как
-                    # промежуточное состояние оказался не нужен
-                    # (сохранил — значит сразу активна), а архив будет
-                    # сделан отдельно позже, когда до него дойдёт
-                    # очередь по дорожной карте. in_form теперь True
-                    # (было False) — статус стал видимым и РУЧНЫМ полем
-                    # выбора на форме, а не только точкой-индикатором в
-                    # списке: раньше сменить статус можно было только
-                    # через код/дефолт, теперь Вахтанг сам ставит
-                    # "Активна"/"К удалению" вручную.
-                    options=[
-                        ("active", "Активна"),
-                        ("delete_pending", "К удалению"),
-                    ],
-                    dot_colors={
-                        "active": "#3f7d4f",
-                        "delete_pending": "#9c3b2e",
-                    }),
         FieldConfig(name="name_template", label="Шаблон полного названия", widget="textarea",
                     in_list=False, tab="Настройки", default=DEFAULT_NAME_TEMPLATE,
                     default_from_constant="calculation_name_template",
@@ -1330,7 +1355,7 @@ calculation_table = TableConfig(
     ],
     form_rows=[
         FormRow(field_names=["document_number", "document_date", "document_time"]),
-        FormRow(field_names=["client_name", "quantity", "status"]),
+        FormRow(field_names=["client_name", "quantity"]),
         FormRow(field_names=["full_name", "unit_id"]),
         FormRow(field_names=["materials_total", "kits_total", "base_total"]),
         FormRow(field_names=["insurance_markup", "insured_total"]),

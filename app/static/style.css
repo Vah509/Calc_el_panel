@@ -854,6 +854,23 @@ footer.hint { padding: 10px 20px 30px; font-size: 12px; color: var(--ink-soft); 
   white-space: nowrap;
 }
 
+/* v109: бейдж "удаление" — серый (по решению Вахтанга красный "режет
+   глаза"), та же форма, что у "заморожено"; помеченная строка приглушена. */
+.badge-deleted {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #5f6368;
+  background: #e6e6e6;
+  border-radius: 5px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+.brand-calc-table tbody tr.row-deleted td,
+.brand-invoice-table tbody tr.row-deleted td {
+  color: #8a8f94;
+}
+
 /* Клик по строке открывает документ (2026-09-23, задача "клик по
    строке журнала открывает документ" — применено к разделам
    "Калькуляции"/"Счета" вкладки бренда, см. brand-calc-table/

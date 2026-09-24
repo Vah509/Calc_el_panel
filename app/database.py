@@ -185,6 +185,29 @@ def _ensure_is_deleted_columns() -> None:
                 conn.commit()
 
 
+def _migrate_calculation_status_to_is_deleted() -> None:
+    """v109: поле Calculation.status убрано (единственный признак "к
+    удалению" — is_deleted). ПЕРЕД дропом колонки переносим старые
+    пометки: status='delete_pending' -> is_deleted=true, иначе такие
+    калькуляции молча "воскресли" бы. Идемпотентно: если колонки status
+    уже нет (повторный старт после дропа) — ничего не делает.
+    Только PostgreSQL: на SQLite таблицы создаются с нуля без status."""
+    if not DATABASE_URL.startswith("postgres"):
+        return
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        has_status = conn.execute(text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = 'calculation' AND column_name = 'status'"
+        )).first()
+        if has_status:
+            conn.execute(text(
+                "UPDATE calculation SET is_deleted = true WHERE status = 'delete_pending'"
+            ))
+            conn.commit()
+
+
 def _drop_obsolete_columns() -> None:
     """
     Убирает колонки, которые остались в существующей Postgres-таблице
@@ -219,6 +242,9 @@ def _drop_obsolete_columns() -> None:
         ("material", "vat_rate"),
         ("invoice", "specification_id"),
         ("invoiceitem", "specification_item_id"),
+        # v109: calculation.status убран (см. _migrate_calculation_status_to_is_deleted,
+        # вызывается ПЕРЕД дропом — переносит delete_pending в is_deleted).
+        ("calculation", "status"),
     ]
     with engine.connect() as conn:
         for table, column in obsolete:
@@ -269,6 +295,7 @@ def init_db() -> None:
     колонки к уже существующим таблицам. На старте приложения."""
     SQLModel.metadata.create_all(engine)
     _ensure_is_deleted_columns()
+    _migrate_calculation_status_to_is_deleted()
     _drop_obsolete_columns()
     _drop_obsolete_tables()
 

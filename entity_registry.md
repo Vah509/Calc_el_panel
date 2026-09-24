@@ -325,14 +325,13 @@ action `refresh_brand_calculations`
 | brand_slot | int, nullable | 1/2/3 — совпадает по смыслу с `brand_slot_N` в request |
 | unit_id | int, FK→unit.id, nullable | Единица измерения ИЗДЕЛИЯ. Добавлено 2026-08-31 ПОСЛЕ первого деплоя таблицы — старые калькуляции имеют `unit_id=NULL` (см. `_ensure_is_deleted_columns`). Дефолт для новых калькуляций — "послуга" (`before_create_hook`, не первая опция списка) |
 | quantity | float, default 1.0 | Количество изделий |
-| status | str, default "active" | "active" / "delete_pending" — ручной выбор, без принудительного порядка переходов |
 | cost_method | str, default "markup" | "markup" (наценка) или "hours" (сборка по часам) — определяет, какая из двух ветвей формулы стоимости используется в `final_total` |
 | markup_percent | float, default 1.4 | |
 | insurance_markup | float, default 1.1 | |
 | assembly_hours | float, default 0.0 | Только для `cost_method="hours"` |
 | product_type_rate_id | int, FK→producttyperate.id, nullable | |
 | materials_total, kits_total, base_total, insured_total, markup_total, hours_total, final_total | float, default 0.0 | Расчётная цепочка (вкладка "Стоимость"): `base_total → insured_total → markup_total ИЛИ hours_total → final_total` |
-| is_deleted | bool, default False, indexed | |
+| is_deleted | bool, default False, indexed | Единственный признак "к удалению" (v109: поле `status` со значением `delete_pending` удалено, колонка дропнута миграцией; старые пометки перенесены сюда) |
 
 Движок: `delete_mode="soft"`, `own_page_url="/calculation-v2"`,
 `form_tabs=["Основное","Настройки","Материалы","Комплекты","Стоимость"]`,

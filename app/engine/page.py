@@ -561,14 +561,12 @@ _PAGE_TEMPLATE_SOURCE = r"""
           <div x-show="editing.id" x-cloak class="readonly-items-block">
             <!-- Раздел "Калькуляции" (2026-09-22, задача "калькуляция+
                  счёт прямо из заявки" — кнопки "Створити калькуляцію"/
-                 "Скопіювати" добавлены здесь же). Чекбоксы первой колонки
-                 (brandCalcToggle/brandCalcChecked) остаются МНОЖЕСТВЕННЫМ
-                 выбором — они же используются "Створити рахунок"; для
-                 копирования — ОТДЕЛЬНАЯ колонка (не больше одной строки
-                 одновременно, снимается повторным кликом — см.
-                 brandCalcCopyTarget/brandCalcCopySelect; изначально была
-                 сделана как input[type=radio], заменена на checkbox
-                 2026-09-23, т.к. нативный radio нельзя снять кликом). -->
+                 "Скопіювати" добавлены здесь же). Одна колонка чекбоксов (v109,
+                 brandCalcToggle/brandCalcChecked) — множественный выбор
+                 для трёх кнопок: "Створити рахунок" (без помеченных на
+                 удаление), "Скопіювати" (только при ровно одном
+                 выделенном), "Видалення" (инверсия is_deleted).
+                 Отдельной колонки копирования больше нет. -->
             <div class="materials-toolbar">
               <button type="button" class="btn btn-ghost"
                       @click="runAction('{{ config.brand_slot_calc_refresh_action }}')">Обновить список</button>
@@ -577,30 +575,33 @@ _PAGE_TEMPLATE_SOURCE = r"""
                       :disabled="(editing.{{ bsc_field }} || []).length === 0">Відмітити всі</button>
               <button type="button" class="btn btn-primary"
                       @click="buildInvoiceFromSlot({{ bsc_slot }})"
-                      :disabled="brandCalcSelectedCount({{ bsc_slot }}) === 0"
-                      :title="brandCalcSelectedCount({{ bsc_slot }}) === 0 ? 'Відмітьте хоча б одну калькуляцію' : ''">Створити рахунок</button>
+                      :disabled="brandCalcBuildableCount({{ bsc_slot }}) === 0"
+                      :title="brandCalcBuildableCount({{ bsc_slot }}) === 0 ? 'Відмітьте хоча б одну калькуляцію (позначені на видалення до рахунку не потрапляють)' : ''">Створити рахунок</button>
               <button type="button" class="btn btn-ghost"
                       @click="runAction('create_calculation_slot_{{ bsc_slot }}')">Створити калькуляцію</button>
               <button type="button" class="btn btn-ghost"
                       @click="copyBrandCalculation({{ bsc_slot }})"
-                      :disabled="!brandCalcCopyTarget[{{ bsc_slot }}]"
-                      :title="!brandCalcCopyTarget[{{ bsc_slot }}] ? 'Відмітьте рівно одну калькуляцію для копіювання' : ''">Скопіювати</button>
+                      :disabled="brandCalcSelectedCount({{ bsc_slot }}) !== 1"
+                      :title="brandCalcSelectedCount({{ bsc_slot }}) !== 1 ? 'Відмітьте рівно одну калькуляцію для копіювання' : ''">Скопіювати</button>
+              <button type="button" class="btn btn-ghost"
+                      @click="toggleBrandDeleted('calculation', {{ bsc_slot }})"
+                      :disabled="brandCalcSelectedCount({{ bsc_slot }}) === 0"
+                      title="Позначити на видалення / зняти позначку (інверсія для відмічених)">Видалення</button>
             </div>
             <table class="readonly-items-table brand-calc-table">
               <thead>
                 <tr>
                   <th></th>
-                  <th></th>
                   {% for field_name, col_label, col_format in config.brand_slot_calc_columns %}
                   <th>{{ col_label }}</th>
                   {% endfor %}
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
                 <template x-for="row in (editing.{{ bsc_field }} || [])" :key="row.id">
-                  <tr class="clickable-row" @click="window.location.href = '/calculation-v2/' + row.id">
+                  <tr class="clickable-row" :class="{ 'row-deleted': row.is_deleted }" @click="window.location.href = '/calculation-v2/' + row.id">
                     <td @click.stop><input type="checkbox" :checked="brandCalcChecked({{ bsc_slot }}, row.id)" @change="brandCalcToggle({{ bsc_slot }}, row.id)"></td>
-                    <td @click.stop><input type="checkbox" :checked="brandCalcCopyTarget[{{ bsc_slot }}] === row.id" @change="brandCalcCopySelect({{ bsc_slot }}, row.id)"></td>
                     {% for field_name, col_label, col_format in config.brand_slot_calc_columns %}
                     {% if col_format == 'money' %}
                     <td x-text="Number(row['{{ field_name }}'] ?? 0).toFixed(2)"></td>
@@ -608,6 +609,7 @@ _PAGE_TEMPLATE_SOURCE = r"""
                     <td x-text="row['{{ field_name }}'] ?? ''"></td>
                     {% endif %}
                     {% endfor %}
+                    <td><span x-show="row.is_deleted" class="badge-deleted">удаление</span></td>
                   </tr>
                 </template>
               </tbody>
@@ -618,18 +620,21 @@ _PAGE_TEMPLATE_SOURCE = r"""
           <!-- Раздел "Счета" (2026-09-22, та же задача) — второй
                read-only список на вкладке бренда, под списком
                калькуляций: счета, собранные из калькуляций этого слота
-               (см. _brand_slot_invoices в tables.py). Своя колонка для
-               копирования (brandInvoiceCopyTarget/brandInvoiceCopySelect,
-               checkbox с 2026-09-23 — см. комментарий у раздела
-               "Калькуляции" выше) — независимая от колонки копирования
-               раздела калькуляций выше. -->
+               (см. _brand_slot_invoices в tables.py). Одна колонка
+               чекбоксов (v109, brandInvoiceToggle/brandInvoiceChecked):
+               "Скопіювати" — при ровно одном выделенном, "Видалення" —
+               инверсия is_deleted. Помеченные показываются с бейджем. -->
           <div x-show="editing.id" x-cloak class="readonly-items-block brand-invoice-block">
             <div class="materials-toolbar">
               <span class="materials-toolbar-label">Счета</span>
               <button type="button" class="btn btn-ghost"
                       @click="copyBrandInvoice({{ bsc_slot }})"
-                      :disabled="!brandInvoiceCopyTarget[{{ bsc_slot }}]"
-                      :title="!brandInvoiceCopyTarget[{{ bsc_slot }}] ? 'Відмітьте рівно один рахунок для копіювання' : ''">Скопіювати</button>
+                      :disabled="brandInvoiceSelectedCount({{ bsc_slot }}) !== 1"
+                      :title="brandInvoiceSelectedCount({{ bsc_slot }}) !== 1 ? 'Відмітьте рівно один рахунок для копіювання' : ''">Скопіювати</button>
+              <button type="button" class="btn btn-ghost"
+                      @click="toggleBrandDeleted('invoice', {{ bsc_slot }})"
+                      :disabled="brandInvoiceSelectedCount({{ bsc_slot }}) === 0"
+                      title="Позначити на видалення / зняти позначку (інверсія для відмічених)">Видалення</button>
             </div>
             <table class="readonly-items-table brand-invoice-table">
               <thead>
@@ -643,8 +648,8 @@ _PAGE_TEMPLATE_SOURCE = r"""
               </thead>
               <tbody>
                 <template x-for="row in (editing.{{ bsi_field }} || [])" :key="row.id">
-                  <tr class="clickable-row" @click="window.location.href = '/invoice-v2/' + row.id">
-                    <td @click.stop><input type="checkbox" :checked="brandInvoiceCopyTarget[{{ bsc_slot }}] === row.id" @change="brandInvoiceCopySelect({{ bsc_slot }}, row.id)"></td>
+                  <tr class="clickable-row" :class="{ 'row-deleted': row.is_deleted }" @click="window.location.href = '/invoice-v2/' + row.id">
+                    <td @click.stop><input type="checkbox" :checked="brandInvoiceChecked({{ bsc_slot }}, row.id)" @change="brandInvoiceToggle({{ bsc_slot }}, row.id)"></td>
                     {% for field_name, col_label, col_format in config.brand_slot_invoice_columns %}
                     {% if col_format == 'money' %}
                     <td x-text="Number(row['{{ field_name }}'] ?? 0).toFixed(2)"></td>
@@ -652,7 +657,10 @@ _PAGE_TEMPLATE_SOURCE = r"""
                     <td x-text="row['{{ field_name }}'] ?? ''"></td>
                     {% endif %}
                     {% endfor %}
-                    <td><span x-show="row.is_frozen" class="badge-frozen">заморожено</span></td>
+                    <td>
+                      <span x-show="row.is_frozen" class="badge-frozen">заморожено</span>
+                      <span x-show="row.is_deleted" class="badge-deleted">удаление</span>
+                    </td>
                   </tr>
                 </template>
               </tbody>
@@ -1415,32 +1423,27 @@ function enginePage() {
       if (!(set instanceof Set)) { this.brandCalcSelected[slot] = new Set([calcId]); return; }
       if (set.has(calcId)) { set.delete(calcId); } else { set.add(calcId); }
     },
-    // brandCalcCopyTarget/brandInvoiceCopyTarget (2026-09-22, задача
-    // "калькуляция+счёт прямо из заявки") — id ОДНОЙ отмеченной строки
-    // для копирования, отдельно по слоту, отдельно для калькуляций и
-    // для счетов (не Set, как brandCalcSelected выше — ровно одна
-    // строка максимум). Живёт только в браузере, сбрасывается при
-    // каждом openEdit()/openCreate(), как и brandCalcSelected.
-    //
-    // ИСПРАВЛЕНО (2026-09-23, жалоба Вахтанга: "чекбокс для копирования
-    // нельзя снять повторным нажатием"): раньше разметка использовала
-    // <input type="radio"> — это НАТИВНОЕ поведение браузера для radio,
-    // его нельзя снять повторным кликом ни при каком JS-обработчике,
-    // только выбрав другую радиокнопку той же группы или сбросив форму.
-    // Теперь разметка — <input type="checkbox"> (см. brand-calc-table/
-    // brand-invoice-table в render), а *_CopySelect() ниже сами
-    // обеспечивают "не больше одной отмеченной строки": повторный клик
-    // по уже отмеченной строке снимает отметку (toggle), клик по другой
-    // строке молча снимает старую и ставит новую — то есть визуальное
-    // поведение "как радиокнопка" сохранено, но теперь оно полностью
-    // управляется этим кодом, а не природой input[type=radio].
-    brandCalcCopyTarget: { 1: null, 2: null, 3: null },
-    brandInvoiceCopyTarget: { 1: null, 2: null, 3: null },
-    brandCalcCopySelect(slot, calcId) {
-      this.brandCalcCopyTarget[slot] = (this.brandCalcCopyTarget[slot] === calcId) ? null : calcId;
+    // v109 (решение Вахтанга: "сделать только один ряд" чекбоксов):
+    // отдельные колонки для копирования УБРАНЫ (brandCalcCopyTarget/
+    // brandInvoiceCopyTarget/*CopySelect удалены). Одна колонка чекбоксов
+    // на список = набор выделенных документов; из него:
+    //   - "Скопіювати" работает ТОЛЬКО при ровно одном выделенном;
+    //   - "Видалення" — инверсия is_deleted у всех выделенных;
+    //   - "Створити рахунок" (только калькуляции) — берёт выделенные,
+    //     кроме помеченных на удаление.
+    // Для счетов — такой же Set по слоту (brandInvoiceSelected).
+    brandInvoiceSelected: { 1: new Set(), 2: new Set(), 3: new Set() },
+    brandInvoiceChecked(slot, invoiceId) {
+      return this.brandInvoiceSelected[slot] instanceof Set && this.brandInvoiceSelected[slot].has(invoiceId);
     },
-    brandInvoiceCopySelect(slot, invoiceId) {
-      this.brandInvoiceCopyTarget[slot] = (this.brandInvoiceCopyTarget[slot] === invoiceId) ? null : invoiceId;
+    brandInvoiceToggle(slot, invoiceId) {
+      const set = this.brandInvoiceSelected[slot];
+      if (!(set instanceof Set)) { this.brandInvoiceSelected[slot] = new Set([invoiceId]); return; }
+      if (set.has(invoiceId)) { set.delete(invoiceId); } else { set.add(invoiceId); }
+    },
+    brandInvoiceSelectedCount(slot) {
+      const set = this.brandInvoiceSelected[slot];
+      return set instanceof Set ? set.size : 0;
     },
     materialsSelectedIds: [],
     materialsMaterialOptions: [],
@@ -1938,7 +1941,7 @@ function enginePage() {
 
     optionLabel(fieldName, value) {
       // Русская подпись для полей со статичным списком опций
-      // (FieldConfig.options, например Calculation.status) — аналог
+      // (FieldConfig.options, например поле-справочник) — аналог
       // relationName(), но без обращения к relationOptions/API, т.к.
       // список опций целиком приходит уже в CONFIG.fields.
       const f = this.currentLevel().fields.find(x => x.name === fieldName);
@@ -2042,7 +2045,7 @@ function enginePage() {
         const blank = {};
         for (const f of lvl.fields) {
           if (f.inForm === false) {
-            // Поле не показывается в форме (например Calculation.status
+            // Поле не показывается в форме (например поле-справочник
             // — статус проставляется точкой в списке, не полем формы) —
             // не отправляем на сервер вообще, чтобы сработал
             // default модели/default_factory, а не пустая строка.
@@ -2106,8 +2109,7 @@ function enginePage() {
         this.modalOpen = true;
         this.activeFormTab = 0;
         this.brandCalcSelected = { 1: new Set(), 2: new Set(), 3: new Set() };
-        this.brandCalcCopyTarget = { 1: null, 2: null, 3: null };
-        this.brandInvoiceCopyTarget = { 1: null, 2: null, 3: null };
+        this.brandInvoiceSelected = { 1: new Set(), 2: new Set(), 3: new Set() };
         if (lvl.documentNumberField) {
           // Показываем человеку номер СРАЗУ при открытии формы, а не
           // только после сохранения — иначе поле выглядит "сломанным"
@@ -2133,8 +2135,7 @@ function enginePage() {
         this.modalOpen = true;
         this.activeFormTab = 0;
         this.brandCalcSelected = { 1: new Set(), 2: new Set(), 3: new Set() };
-        this.brandCalcCopyTarget = { 1: null, 2: null, 3: null };
-        this.brandInvoiceCopyTarget = { 1: null, 2: null, 3: null };
+        this.brandInvoiceSelected = { 1: new Set(), 2: new Set(), 3: new Set() };
         if (this.isItemsModal()) {
           this.loadKitItems();
         }
@@ -2716,9 +2717,19 @@ function enginePage() {
       // Кнопка на разметке уже disabled при пустом brandCalcSelected
       // (см. brandCalcSelectedCount() ниже) — проверка здесь вторым
       // рубежом на случай прямого вызова.
+      // v109: помеченные на удаление в счёт не попадают никогда — id
+      // таких калькуляций не отправляем (сервер тоже их отфильтрует).
+      // Если среди отмеченных есть помеченные — предупреждаем и просим
+      // подтвердить, т.к. после редиректа сообщение "пропущено N" было бы
+      // потеряно.
       const set = this.brandCalcSelected[slot];
-      const calculationIds = set instanceof Set ? Array.from(set) : [];
+      const rows = this.editing['brand_slot_' + slot + '_calcs'] || [];
+      const deletedIds = new Set(rows.filter((r) => r.is_deleted).map((r) => r.id));
+      const allSelected = set instanceof Set ? Array.from(set) : [];
+      const calculationIds = allSelected.filter((id) => !deletedIds.has(id));
+      const skipped = allSelected.length - calculationIds.length;
       if (calculationIds.length === 0) return;
+      if (skipped > 0 && !window.confirm(`Позначених на видалення: ${skipped} — вони не потраплять до рахунку. Продовжити?`)) return;
       try {
         hideJsError();
         const action = `build_invoice_slot_${slot}`;
@@ -2748,8 +2759,10 @@ function enginePage() {
       // переходим на страницу копии, как и у "Створити рахунок"/
       // "Створити калькуляцію" (раньше здесь был мердж в editing без
       // перехода — заменено).
-      const calcId = this.brandCalcCopyTarget[slot];
-      if (!calcId) return;
+      // v109: копирование — только при РОВНО одном выделенном документе.
+      const selected = this.brandCalcSelected[slot];
+      if (!(selected instanceof Set) || selected.size !== 1) return;
+      const calcId = Array.from(selected)[0];
       try {
         hideJsError();
         const res = await fetch(`/api/${this.currentLevel().key}/${this.editing.id}/actions/copy_brand_calculation`, {
@@ -2768,8 +2781,10 @@ function enginePage() {
       // (2026-09-22, та же задача) — зеркало copyBrandCalculation()
       // выше, для второго списка. Та же правка 2026-09-23 — редирект
       // на копию вместо мерджа на месте.
-      const invoiceId = this.brandInvoiceCopyTarget[slot];
-      if (!invoiceId) return;
+      // v109: копирование — только при РОВНО одном выделенном счёте.
+      const selected = this.brandInvoiceSelected[slot];
+      if (!(selected instanceof Set) || selected.size !== 1) return;
+      const invoiceId = Array.from(selected)[0];
       try {
         hideJsError();
         const res = await fetch(`/api/${this.currentLevel().key}/${this.editing.id}/actions/copy_brand_invoice`, {
@@ -2790,6 +2805,37 @@ function enginePage() {
       // неактивна, без отдельного сообщения об ошибке).
       const set = this.brandCalcSelected[slot];
       return set instanceof Set ? set.size : 0;
+    },
+
+    brandCalcBuildableCount(slot) {
+      // Сколько выделенных калькуляций слота реально пойдёт в счёт (без
+      // помеченных на удаление) — для :disabled кнопки "Створити рахунок".
+      const set = this.brandCalcSelected[slot];
+      if (!(set instanceof Set)) return 0;
+      const rows = this.editing['brand_slot_' + slot + '_calcs'] || [];
+      return rows.filter((r) => set.has(r.id) && !r.is_deleted).length;
+    },
+
+    async toggleBrandDeleted(kind, slot) {
+      // Кнопка "Видалення" (v109) — инверсия is_deleted у выделенных
+      // документов слота: помеченный -> снят, непомеченный -> помечен.
+      // kind: 'calculation' | 'invoice'. Сервер возвращает свежие списки
+      // (brand_slot_N_calcs/_invoices) — подмешиваем в editing; выделение
+      // сохраняем, чтобы результат инверсии был виден сразу.
+      const set = kind === 'calculation' ? this.brandCalcSelected[slot] : this.brandInvoiceSelected[slot];
+      const ids = set instanceof Set ? Array.from(set) : [];
+      if (ids.length === 0) return;
+      try {
+        hideJsError();
+        const res = await fetch(`/api/${this.currentLevel().key}/${this.editing.id}/actions/toggle_brand_deleted`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kind: kind, ids: ids }),
+        });
+        if (!res.ok) { showJsError(await extractErrorMessage(res)); return; }
+        const data = await res.json();
+        this.editing = { ...this.editing, ...data };
+      } catch (err) { showJsError(err); }
     },
 
     readonlyItemsColumnValue(row, fieldName, format) {
